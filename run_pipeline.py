@@ -13,7 +13,10 @@ def run(command, cwd=None):
     print(" ".join(command))
     print("=" * 60)
 
-    result = subprocess.run(command, cwd=cwd)
+    result = subprocess.run(
+        command,
+        cwd=cwd
+    )
 
     if result.returncode != 0:
         raise RuntimeError(
@@ -27,7 +30,9 @@ def main():
         description="Run video processing pipeline"
     )
 
-    parser.add_argument("episode_folder")
+    parser.add_argument(
+        "episode_folder"
+    )
 
     parser.add_argument(
         "--force",
@@ -66,7 +71,16 @@ def main():
     run(transcription_command)
 
 
-    # 3. Normalize transcripts
+    # 3. Validate transcripts
+    validation_command = [
+        str(project / "validate_transcripts.py"),
+        str(episode)
+    ]
+
+    run(validation_command)
+
+
+    # 4. Normalize transcripts
     normalize_command = [
         str(project / "normalize_transcripts.py"),
         str(episode)
@@ -78,7 +92,7 @@ def main():
     run(normalize_command)
 
 
-    # 4. Merge segments
+    # 5. Merge segments
     merge_command = [
         str(project / "merge_segments.py"),
         str(episode)
@@ -89,29 +103,6 @@ def main():
 
     run(merge_command)
 
-
-    # 5. Analyze episode
-    analyze_episode_command = [
-        str(project / "analyze_episode.py"),
-        str(episode)
-    ]
-
-    if args.force:
-        analyze_episode_command.append("--force")
-
-    run(analyze_episode_command)
-
-
-    # 6. Analyze segments
-    analyze_segments_command = [
-        str(project / "analyze_segments.py"),
-        str(episode)
-    ]
-
-    if args.force:
-        analyze_segments_command.append("--force")
-
-    run(analyze_segments_command)
 
     print()
     print("=" * 60)

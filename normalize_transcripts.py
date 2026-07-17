@@ -48,6 +48,11 @@ def normalize_transcript(
                 "start": segment["start"],
                 "end": segment["end"],
                 "text": segment["text"].strip(),
+                "metadata": {
+                    "avg_logprob": segment.get("avg_logprob"),
+                    "no_speech_prob": segment.get("no_speech_prob"),
+                    "compression_ratio": segment.get("compression_ratio"),
+                }
             }
             for segment in transcript.get("segments", [])
         ],
