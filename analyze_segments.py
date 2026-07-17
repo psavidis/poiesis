@@ -1,123 +1,210 @@
 #!/usr/bin/env python3
 
+import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 
-import ollama
 
+PROMPT_TEMPLATE = """
+You are analyzing a transcript segment from a video.
 
-MODEL = "qwen3.5:latest"
+Analyze this segment and provide information useful for reviewing and editing the video.
 
+Provide:
 
-PROMPT = """
-You are an expert technical YouTube video editor.
+1. Main topic or purpose of this segment
+2. Key ideas communicated
+3. What should be kept
+4. What could be improved
+5. Suggested editing actions
 
-Analyze the transcript segments below.
+Transcript:
 
-Your task:
-- Understand the technical argument.
-- Identify the purpose of each section.
-- Recommend what should be kept or removed.
-- Identify possible editing improvements.
-
-Return ONLY valid JSON.
-
-The JSON format must be:
-
-{
-  "topic": "...",
-  "summary": "...",
-  "segments": [
-    {
-      "start": 0.0,
-      "end": 0.0,
-      "purpose": "...",
-      "quality": "high|medium|low",
-      "action": "keep|cut|review",
-      "reason": "..."
-    }
-  ],
-  "editing_notes": [
-    {
-      "type": "...",
-      "reason": "..."
-    }
-  ]
-}
+{transcript}
 """
 
 
-def analyze_segments(data):
-    transcript = "\n".join(
-        [
-            f"[{segment['start']:.2f}s - {segment['end']:.2f}s] {segment['text']}"
-            for segment in data["segments"]
-        ]
+def load_json(path: Path):
+    with path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def write_json_atomic(path: Path, data):
+    path.parent.mkdir(
+        parents=True,
+        exist_ok=True
     )
 
-    prompt = PROMPT + "\n\nTranscript:\n" + transcript
+    temp = path.with_suffix(".tmp.json")
 
-    response = ollama.chat(
-        model=MODEL,
-        format="json",
-        messages=[
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ],
-    )
-
-    return json.loads(response["message"]["content"])
-
-
-def main():
-
-    if len(sys.argv) != 2:
-        print("Usage: analyze_segments.py <project_folder>")
-        sys.exit(1)
-
-    project_dir = Path(sys.argv[1]).resolve()
-
-    input_dir = project_dir / "processing" / "segments"
-    output_dir = project_dir / "processing" / "analysis"
-
-    if not input_dir.exists():
-        print(f"Missing input folder: {input_dir}")
-        sys.exit(1)
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    files = list(input_dir.glob("*.json"))
-
-    if not files:
-        print("No segment files found.")
-        sys.exit(1)
-
-    for file in files:
-
-        print(f"Analyzing {file.name}")
-
-        with file.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        analysis = analyze_segments(data)
-
-        output_file = output_dir / file.name
-
-        with output_file.open("w", encoding="utf-8") as f:
+    try:
+        with temp.open("w", encoding="utf-8") as f:
             json.dump(
-                {
-                    "source": file.stem,
-                    "analysis": analysis
-                },
+                data,
                 f,
                 indent=2,
                 ensure_ascii=False
             )
 
-    print("Analysis completed.")
+        temp.replace(path)
+
+    finally:
+        if temp.exists():
+            temp.unlink()
+
+
+def ask_ollama(prompt: str):
+
+    result = subprocess.run(
+        [
+            "ollama",
+            "run",
+            "qwen3.5:latest"
+        ],
+        input=prompt,
+        text=True,
+        capture_output=True
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            result.stderr
+        )
+
+    return result.stdout.strip()
+
+
+def analyze_segment(segment):
+
+    transcript = segment["text"]
+
+    prompt = PROMPT_TEMPLATE.format(
+        transcript=transcript
+    )
+
+    analysis = ask_ollama(prompt)
+
+    return {
+        "source": segment["source"],
+        "start": segment["start"],
+        "end": segment["end"],
+        "text": transcript,
+        "analysis": analysis
+    }
+
+
+def main():
+
+    parser = argparse.ArgumentParser(
+        description="Analyze transcript segments using Ollama"
+    )
+
+    parser.add_argument(
+        "episode_folder"
+    )
+
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Regenerate existing analyses"
+    )
+
+    args = parser.parse_args()
+
+    episode = Path(args.episode_folder).resolve()
+
+    transcript_file = (
+            episode
+            / "processing"
+            / "episode_transcript.json"
+    )
+
+    analysis_dir = (
+            episode
+            / "processing"
+            / "analysis"
+    )
+
+
+    if not transcript_file.exists():
+        print(
+            f"ERROR: Missing transcript: {transcript_file}"
+        )
+        sys.exit(1)
+
+
+    transcript = load_json(
+        transcript_file
+    )
+
+
+    processed = 0
+    skipped = 0
+    failed = 0
+
+
+    print("Analyzing segments...")
+    print()
+
+
+    for index, segment in enumerate(
+            transcript["segments"],
+            start=1
+    ):
+
+        output = analysis_dir / f"{index:03d}.json"
+
+
+        if output.exists() and not args.force:
+            print(
+                f"[{index:03d}] skipped (already exists)"
+            )
+            skipped += 1
+            continue
+
+
+        try:
+            print(
+                f"[{index:03d}] analyzing..."
+            )
+
+            result = analyze_segment(
+                segment
+            )
+
+            write_json_atomic(
+                output,
+                result
+            )
+
+            processed += 1
+
+            print(
+                "      completed"
+            )
+
+
+        except Exception as e:
+            print(
+                f"      FAILED: {e}"
+            )
+            failed += 1
+
+
+    print()
+    print("==============================")
+    print("Analysis summary")
+    print("==============================")
+    print(f"Processed: {processed}")
+    print(f"Skipped:   {skipped}")
+    print(f"Failed:    {failed}")
+    print("==============================")
+
+
+    if failed > 0:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

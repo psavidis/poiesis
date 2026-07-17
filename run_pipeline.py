@@ -65,10 +65,8 @@ def main():
         str(episode)
     ]
 
-    # Add this once transcribe_footage.sh supports it:
-    #
-    # if args.force:
-    #     transcription_command.append("--force")
+    if args.force:
+        transcription_command.append("--force")
 
     run(transcription_command)
 
@@ -95,6 +93,18 @@ def main():
         merge_command.append("--force")
 
     run(merge_command)
+
+
+    # 5. Analyze segments
+    analyze_command = [
+        str(project / "analyze_segments.py"),
+        str(episode)
+    ]
+
+    if args.force:
+        analyze_command.append("--force")
+
+    run(analyze_command)
 
 
     print()
