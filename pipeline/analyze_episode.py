@@ -5,10 +5,19 @@ import json
 import sys
 from pathlib import Path
 
+
+PIPELINE_DIR = Path(__file__).parent
+PROJECT_ROOT = PIPELINE_DIR.parent
+
+sys.path.insert(
+    0,
+    str(PROJECT_ROOT)
+)
+
 from llm.client import LLMClient
 
 
-PROMPT_FILE = Path(__file__).parent / "prompts" / "episode_analysis.txt"
+PROMPT_FILE = PIPELINE_DIR / "prompts" / "episode_analysis.txt"
 
 
 def load_json(path: Path):
@@ -115,9 +124,7 @@ def main():
 
     episode = Path(args.episode_folder).resolve()
 
-    project = Path(__file__).parent
-
-    llm = LLMClient(project / "config.json")
+    llm = LLMClient(PROJECT_ROOT / "config.json")
 
     prompt_template = load_prompt(PROMPT_FILE)
 

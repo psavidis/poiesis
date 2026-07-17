@@ -44,12 +44,12 @@ def main():
 
     episode = Path(args.episode_folder).resolve()
 
-    project = Path(__file__).parent
+    pipeline = Path(__file__).parent
 
 
     # 1. Prepare footage
     prepare_command = [
-        str(project / "prepare_footage.py"),
+        str(pipeline / "prepare_footage.py"),
         str(episode)
     ]
 
@@ -58,6 +58,8 @@ def main():
 
     run(prepare_command)
 
+
+    project = pipeline.parent
 
     # 2. Transcription
     transcription_command = [
@@ -73,7 +75,7 @@ def main():
 
     # 3. Validate transcripts
     validation_command = [
-        str(project / "validate_transcripts.py"),
+        str(pipeline / "validate_transcripts.py"),
         str(episode)
     ]
 
@@ -82,7 +84,7 @@ def main():
 
     # 4. Normalize transcripts
     normalize_command = [
-        str(project / "normalize_transcripts.py"),
+        str(pipeline / "normalize_transcripts.py"),
         str(episode)
     ]
 
@@ -94,7 +96,7 @@ def main():
 
     # 5. Merge segments
     merge_command = [
-        str(project / "merge_segments.py"),
+        str(pipeline / "merge_segments.py"),
         str(episode)
     ]
 
@@ -106,7 +108,7 @@ def main():
 
     # 6. Analyze episode
     analysis_command = [
-        str(project / "analyze_episode.py"),
+        str(pipeline / "analyze_episode.py"),
         str(episode)
     ]
 
@@ -117,7 +119,7 @@ def main():
 
     # 7. Generate episode assets
     assets_command = [
-        str(project / "generate_episode_assets.py"),
+        str(pipeline / "generate_episode_assets.py"),
         str(episode)
     ]
 

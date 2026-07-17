@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/content-automation.iml" filepath="$PROJECT_DIR$/content-automation.iml" />
+      <module fileurl="file://$PROJECT_DIR$/poiesis.iml" filepath="$PROJECT_DIR$/poiesis.iml" />
     </modules>
   </component>
 </project>
