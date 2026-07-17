@@ -115,6 +115,17 @@ def main():
 
     run(analysis_command)
 
+    # 7. Generate episode assets
+    assets_command = [
+        str(project / "generate_episode_assets.py"),
+        str(episode)
+    ]
+
+    if args.force:
+        assets_command.append("--force")
+
+    run(assets_command)
+
     print()
     print("=" * 60)
     print("Pipeline completed successfully")
