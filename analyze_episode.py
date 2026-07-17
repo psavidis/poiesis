@@ -30,13 +30,35 @@ def write_json_atomic(path: Path, data):
 
     try:
         with temp.open("w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+            json.dump(data,f,indent=2,ensure_ascii=False)
 
         temp.replace(path)
 
     finally:
         if temp.exists():
             temp.unlink()
+
+
+def clean_strings(value):
+
+    if isinstance(value, dict):
+        return {
+            key: clean_strings(item)
+            for key, item in value.items()
+        }
+
+    if isinstance(value, list):
+        return [
+            clean_strings(item)
+            for item in value
+        ]
+
+    if isinstance(value, str):
+        return " ".join(
+            value.split()
+        )
+
+    return value
 
 
 def analyze_episode(transcript, validation, llm: LLMClient, prompt_template: str):
@@ -46,7 +68,11 @@ def analyze_episode(transcript, validation, llm: LLMClient, prompt_template: str
         for segment in transcript["segments"]
     )
 
-    validation_text = json.dumps(validation, indent=2, ensure_ascii=False)
+    validation_text = json.dumps(
+        validation,
+        indent=2,
+        ensure_ascii=False
+    )
 
     prompt = prompt_template.replace(
         "{transcript}",
@@ -56,7 +82,14 @@ def analyze_episode(transcript, validation, llm: LLMClient, prompt_template: str
         validation_text
     )
 
-    analysis = llm.complete(prompt, thinking=False) # Thinking makes performance worse
+    analysis = llm.complete_json(
+        prompt,
+        thinking=False
+    )
+
+    analysis = clean_strings(
+        analysis
+    )
 
     return {
         "segments": len(transcript["segments"]),

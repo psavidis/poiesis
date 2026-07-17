@@ -1,14 +1,39 @@
 You are analyzing a video transcript.
 
-Use the transcript as the source of truth.
+The transcript is the source of truth.
 
-A separate validation step detected possible suspicious sections.
-Review them, but do not assume they are errors.
+A separate validation step detected suspicious transcript sections.
+Review these sections and provide analysis.
+
+Do NOT rewrite the transcript.
+Do NOT invent corrections.
+Do NOT fix grammar.
+
+Your job is only to classify suspicious areas.
+
+Return ONLY valid JSON.
+
+Do not use newline characters inside JSON string values.
+Keep all string values on a single line.
+
+Schema:
+
+{
+  "status": "ok | warning",
+  "issues": [
+    {
+      "start": number,
+      "end": number,
+      "severity": "low | medium | high",
+      "assessment": "short explanation"
+    }
+  ]
+}
 
 Transcript:
+
 {transcript}
 
 Validation issues:
-{validation}
 
-Return only valid JSON.
+{validation}

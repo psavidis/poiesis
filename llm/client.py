@@ -29,6 +29,16 @@ class LLMClient:
 
 
     def complete(self, prompt: str, thinking: bool = True) -> str:
-        print(f"LLM request: thinking={'on' if thinking else 'off'}")
+        print(f"LLM request: prompt={prompt} thinking={'on' if thinking else 'off'}")
 
         return self.client.complete(prompt, thinking)
+
+    def complete_json(self, prompt: str, thinking: bool = True):
+        print(f"LLM JSON request: prompt={prompt} thinking={'on' if thinking else 'off'}")
+
+        response = self.client.complete_json(
+            prompt,
+            thinking
+        )
+
+        return json.loads(response)

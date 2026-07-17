@@ -104,11 +104,6 @@ def main():
     run(merge_command)
 
 
-    print()
-    print("=" * 60)
-    print("Pipeline completed successfully")
-    print("=" * 60)
-
     # 6. Analyze episode
     analysis_command = [
         str(project / "analyze_episode.py"),
@@ -119,6 +114,11 @@ def main():
         analysis_command.append("--force")
 
     run(analysis_command)
+
+    print()
+    print("=" * 60)
+    print("Pipeline completed successfully")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
