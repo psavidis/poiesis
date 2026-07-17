@@ -1,3 +1,13 @@
+# Poiesis
+
+Poiesis (ποίησις) is an AI-powered content creation pipeline that transforms raw footage into polished, publish-ready videos.
+
+Built as an autonomous, agent-driven system, Poiesis orchestrates the entire production workflow—from ingesting recordings and generating transcripts to scripting, editing, rendering, and preparing content for publication. Its goal is to eliminate repetitive manual work while keeping creators in control of the creative process.
+
+# Vision
+
+Creating high-quality videos should be a creative task, not an editing marathon. Poiesis automates the production pipeline so creators can focus on ideas instead of repetitive workflows.
+
 # Python Library Dependencies
 
 - pip install json-repair
