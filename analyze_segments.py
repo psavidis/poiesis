@@ -8,19 +8,14 @@ from pathlib import Path
 from llm.client import LLMClient
 
 
-PROMPT_FILE = Path(__file__).parent / "prompts" / "segment_analysis.txt"
-
-
 def load_json(path: Path):
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
 
 
 def load_prompt(path: Path):
-    if not path.exists():
-        raise RuntimeError(f"Missing prompt file: {path}")
-
-    return path.read_text(encoding="utf-8")
+    with path.open("r", encoding="utf-8") as f:
+        return f.read()
 
 
 def write_json_atomic(path: Path, data):
@@ -39,11 +34,13 @@ def write_json_atomic(path: Path, data):
             temp.unlink()
 
 
-def analyze_segment(segment, llm: LLMClient, prompt_template: str):
-
+def analyze_segment(segment, episode_context, llm, prompt_template):
     transcript = segment["text"]
 
-    prompt = prompt_template.format(transcript=transcript)
+    prompt = prompt_template.format(
+        episode_analysis=json.dumps(episode_context, indent=2, ensure_ascii=False),
+        transcript=transcript
+    )
 
     analysis = llm.complete(prompt)
 
@@ -57,7 +54,6 @@ def analyze_segment(segment, llm: LLMClient, prompt_template: str):
 
 
 def main():
-
     parser = argparse.ArgumentParser(description="Analyze transcript segments using LLM")
 
     parser.add_argument("episode_folder")
@@ -76,19 +72,28 @@ def main():
 
     llm = LLMClient(project / "config.json")
 
-    prompt_template = load_prompt(PROMPT_FILE)
-
-    transcript_file = episode / "processing" / "episode_transcript.json"
-
+    episode_transcript_file = episode / "processing" / "episode_transcript.json"
+    episode_analysis_file = episode / "processing" / "episode_analysis.json"
     analysis_dir = episode / "processing" / "analysis"
+    prompt_file = project / "prompts" / "segment_analysis.txt"
 
 
-    if not transcript_file.exists():
-        print(f"ERROR: Missing transcript: {transcript_file}")
+    if not episode_transcript_file.exists():
+        print(f"ERROR: Missing transcript: {episode_transcript_file}")
+        sys.exit(1)
+
+    if not episode_analysis_file.exists():
+        print(f"ERROR: Missing episode analysis: {episode_analysis_file}")
+        sys.exit(1)
+
+    if not prompt_file.exists():
+        print(f"ERROR: Missing prompt template: {prompt_file}")
         sys.exit(1)
 
 
-    transcript = load_json(transcript_file)
+    transcript = load_json(episode_transcript_file)
+    episode_analysis = load_json(episode_analysis_file)
+    prompt_template = load_prompt(prompt_file)
 
 
     processed = 0
@@ -116,6 +121,7 @@ def main():
 
             result = analyze_segment(
                 segment,
+                episode_analysis,
                 llm,
                 prompt_template
             )

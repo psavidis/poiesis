@@ -1,15 +1,20 @@
-You are analyzing a transcript segment from a video.
+You are analyzing a segment from a larger video.
 
-Analyze this segment and provide information useful for reviewing and editing the video.
+Use the episode context to understand the role of this segment.
+
+Episode context:
+
+{episode_analysis}
+
+Segment transcript:
+
+{transcript}
 
 Provide:
 
-1. Main topic or purpose of this segment
+1. Purpose of this segment
 2. Key ideas communicated
-3. What should be kept
-4. What could be improved
-5. Suggested editing actions
-
-Transcript:
-
-{transcript}
+3. Relationship to the overall episode
+4. What should be kept
+5. Possible improvements
+6. Suggested editing actions
