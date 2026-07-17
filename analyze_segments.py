@@ -2,28 +2,13 @@
 
 import argparse
 import json
-import subprocess
 import sys
 from pathlib import Path
 
+from llm.client import LLMClient
 
-PROMPT_TEMPLATE = """
-You are analyzing a transcript segment from a video.
 
-Analyze this segment and provide information useful for reviewing and editing the video.
-
-Provide:
-
-1. Main topic or purpose of this segment
-2. Key ideas communicated
-3. What should be kept
-4. What could be improved
-5. Suggested editing actions
-
-Transcript:
-
-{transcript}
-"""
+PROMPT_FILE = Path(__file__).parent / "prompts" / "segment_analysis.txt"
 
 
 def load_json(path: Path):
@@ -31,22 +16,21 @@ def load_json(path: Path):
         return json.load(f)
 
 
+def load_prompt(path: Path):
+    if not path.exists():
+        raise RuntimeError(f"Missing prompt file: {path}")
+
+    return path.read_text(encoding="utf-8")
+
+
 def write_json_atomic(path: Path, data):
-    path.parent.mkdir(
-        parents=True,
-        exist_ok=True
-    )
+    path.parent.mkdir(parents=True, exist_ok=True)
 
     temp = path.with_suffix(".tmp.json")
 
     try:
         with temp.open("w", encoding="utf-8") as f:
-            json.dump(
-                data,
-                f,
-                indent=2,
-                ensure_ascii=False
-            )
+            json.dump(data, f, indent=2, ensure_ascii=False)
 
         temp.replace(path)
 
@@ -55,36 +39,13 @@ def write_json_atomic(path: Path, data):
             temp.unlink()
 
 
-def ask_ollama(prompt: str):
-
-    result = subprocess.run(
-        [
-            "ollama",
-            "run",
-            "qwen3.5:latest"
-        ],
-        input=prompt,
-        text=True,
-        capture_output=True
-    )
-
-    if result.returncode != 0:
-        raise RuntimeError(
-            result.stderr
-        )
-
-    return result.stdout.strip()
-
-
-def analyze_segment(segment):
+def analyze_segment(segment, llm: LLMClient, prompt_template: str):
 
     transcript = segment["text"]
 
-    prompt = PROMPT_TEMPLATE.format(
-        transcript=transcript
-    )
+    prompt = prompt_template.format(transcript=transcript)
 
-    analysis = ask_ollama(prompt)
+    analysis = llm.complete(prompt)
 
     return {
         "source": segment["source"],
@@ -97,13 +58,9 @@ def analyze_segment(segment):
 
 def main():
 
-    parser = argparse.ArgumentParser(
-        description="Analyze transcript segments using Ollama"
-    )
+    parser = argparse.ArgumentParser(description="Analyze transcript segments using LLM")
 
-    parser.add_argument(
-        "episode_folder"
-    )
+    parser.add_argument("episode_folder")
 
     parser.add_argument(
         "--force",
@@ -115,29 +72,23 @@ def main():
 
     episode = Path(args.episode_folder).resolve()
 
-    transcript_file = (
-            episode
-            / "processing"
-            / "episode_transcript.json"
-    )
+    project = Path(__file__).parent
 
-    analysis_dir = (
-            episode
-            / "processing"
-            / "analysis"
-    )
+    llm = LLMClient(project / "config.json")
+
+    prompt_template = load_prompt(PROMPT_FILE)
+
+    transcript_file = episode / "processing" / "episode_transcript.json"
+
+    analysis_dir = episode / "processing" / "analysis"
 
 
     if not transcript_file.exists():
-        print(
-            f"ERROR: Missing transcript: {transcript_file}"
-        )
+        print(f"ERROR: Missing transcript: {transcript_file}")
         sys.exit(1)
 
 
-    transcript = load_json(
-        transcript_file
-    )
+    transcript = load_json(transcript_file)
 
 
     processed = 0
@@ -149,47 +100,35 @@ def main():
     print()
 
 
-    for index, segment in enumerate(
-            transcript["segments"],
-            start=1
-    ):
+    for index, segment in enumerate(transcript["segments"], start=1):
 
         output = analysis_dir / f"{index:03d}.json"
 
 
         if output.exists() and not args.force:
-            print(
-                f"[{index:03d}] skipped (already exists)"
-            )
+            print(f"[{index:03d}] skipped (already exists)")
             skipped += 1
             continue
 
 
         try:
-            print(
-                f"[{index:03d}] analyzing..."
-            )
+            print(f"[{index:03d}] analyzing...")
 
             result = analyze_segment(
-                segment
+                segment,
+                llm,
+                prompt_template
             )
 
-            write_json_atomic(
-                output,
-                result
-            )
+            write_json_atomic(output, result)
 
             processed += 1
 
-            print(
-                "      completed"
-            )
+            print("      completed")
 
 
         except Exception as e:
-            print(
-                f"      FAILED: {e}"
-            )
+            print(f"      FAILED: {e}")
             failed += 1
 
 

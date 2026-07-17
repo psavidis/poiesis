@@ -1,0 +1,15 @@
+You are analyzing a transcript segment from a video.
+
+Analyze this segment and provide information useful for reviewing and editing the video.
+
+Provide:
+
+1. Main topic or purpose of this segment
+2. Key ideas communicated
+3. What should be kept
+4. What could be improved
+5. Suggested editing actions
+
+Transcript:
+
+{transcript}
