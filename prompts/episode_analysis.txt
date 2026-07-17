@@ -1,0 +1,16 @@
+You are analyzing a video transcript.
+
+Analyze the episode as a whole.
+
+Provide:
+
+1. Main topic
+2. Overall summary
+3. Main sections or chapters
+4. Key ideas
+5. Important moments
+6. Potential editing considerations
+
+Transcript:
+
+{transcript}
