@@ -109,6 +109,17 @@ def main():
     print("Pipeline completed successfully")
     print("=" * 60)
 
+    # 6. Analyze episode
+    analysis_command = [
+        str(project / "analyze_episode.py"),
+        str(episode)
+    ]
+
+    if args.force:
+        analysis_command.append("--force")
+
+    run(analysis_command)
+
 
 if __name__ == "__main__":
     try:

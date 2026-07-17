@@ -7,13 +7,19 @@ class OllamaClient:
         self.model = model
 
 
-    def complete(self, prompt: str) -> str:
+    def complete(self, prompt: str, thinking: bool = True) -> str:
+
+        command = [
+            "ollama",
+            "run",
+            self.model
+        ]
+
+        if not thinking:
+            command.append("--think=false")
+
         result = subprocess.run(
-            [
-                "ollama",
-                "run",
-                self.model
-            ],
+            command,
             input=prompt,
             text=True,
             capture_output=True

@@ -28,5 +28,7 @@ class LLMClient:
             )
 
 
-    def complete(self, prompt: str) -> str:
-        return self.client.complete(prompt)
+    def complete(self, prompt: str, thinking: bool = True) -> str:
+        print(f"LLM request: thinking={'on' if thinking else 'off'}")
+
+        return self.client.complete(prompt, thinking)

@@ -1,16 +1,14 @@
 You are analyzing a video transcript.
 
-Analyze the episode as a whole.
+Use the transcript as the source of truth.
 
-Provide:
-
-1. Main topic
-2. Overall summary
-3. Main sections or chapters
-4. Key ideas
-5. Important moments
-6. Potential editing considerations
+A separate validation step detected possible suspicious sections.
+Review them, but do not assume they are errors.
 
 Transcript:
-
 {transcript}
+
+Validation issues:
+{validation}
+
+Return only valid JSON.

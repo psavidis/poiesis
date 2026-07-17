@@ -39,18 +39,24 @@ def write_json_atomic(path: Path, data):
             temp.unlink()
 
 
-def analyze_episode(transcript, llm: LLMClient, prompt_template: str):
+def analyze_episode(transcript, validation, llm: LLMClient, prompt_template: str):
 
     text = "\n".join(
         segment["text"]
         for segment in transcript["segments"]
     )
 
-    prompt = prompt_template.format(
-        transcript=text
+    validation_text = json.dumps(validation, indent=2, ensure_ascii=False)
+
+    prompt = prompt_template.replace(
+        "{transcript}",
+        text
+    ).replace(
+        "{validation}",
+        validation_text
     )
 
-    analysis = llm.complete(prompt)
+    analysis = llm.complete(prompt, thinking=False) # Thinking makes performance worse
 
     return {
         "segments": len(transcript["segments"]),
@@ -89,6 +95,12 @@ def main():
             / "episode_transcript.json"
     )
 
+    validation_file = (
+            episode
+            / "processing"
+            / "transcript_validation.json"
+    )
+
     output_file = (
             episode
             / "processing"
@@ -115,8 +127,15 @@ def main():
 
         transcript = load_json(transcript_file)
 
+        validation = {}
+
+        if validation_file.exists():
+            validation = load_json(validation_file)
+
+
         result = analyze_episode(
             transcript,
+            validation,
             llm,
             prompt_template
         )
