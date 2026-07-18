@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 from datetime import datetime
@@ -60,6 +61,42 @@ def validate_original_footage(folder: Path):
     )
 
 
+def get_video_metadata(video: Path):
+    result = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "quiet",
+            "-print_format",
+            "json",
+            "-show_streams",
+            "-show_format",
+            str(video),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    data = json.loads(result.stdout)
+
+    video_stream = next(
+        stream
+        for stream in data["streams"]
+        if stream["codec_type"] == "video"
+    )
+
+    fps_parts = video_stream["r_frame_rate"].split("/")
+    fps = int(fps_parts[0]) / int(fps_parts[1])
+
+    return {
+        "duration": float(data["format"]["duration"]),
+        "fps": fps,
+        "width": video_stream["width"],
+        "height": video_stream["height"],
+    }
+
+
 def create_manifest(episode_folder: Path, videos):
     manifest = {
         "version": 1,
@@ -69,13 +106,16 @@ def create_manifest(episode_folder: Path, videos):
     }
 
     for index, video in enumerate(videos, start=1):
+        metadata = get_video_metadata(video)
+
         manifest["videos"].append(
             {
                 "id": f"{index:03d}",
                 "order": index,
                 "filename": video.name,
                 "stem": video.stem,
-                "path": str(video.relative_to(episode_folder))
+                "path": str(video.relative_to(episode_folder)),
+                **metadata,
             }
         )
 

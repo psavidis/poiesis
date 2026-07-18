@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 
-export function loadEpisodeProps(episodePath: string) {
+export const getEpisodeProps = (episodePath: string) => {
     const manifestPath = path.join(
         episodePath,
         "processing",
@@ -16,4 +16,4 @@ export function loadEpisodeProps(episodePath: string) {
         episodePath,
         videos: manifest.videos,
     };
-}
+};

@@ -1,28 +1,42 @@
-import { AbsoluteFill } from "remotion";
+import {
+    AbsoluteFill,
+    OffthreadVideo,
+    Sequence,
+    staticFile,
+} from "remotion";
+
 import type { EpisodeProps } from "../Composition";
 
 export const Episode: React.FC<EpisodeProps> = ({
-                                                    episodePath,
                                                     videos,
                                                 }) => {
-    return (
-        <AbsoluteFill
-            style={{
-                backgroundColor: "black",
-                color: "white",
-                fontSize: 50,
-                justifyContent: "center",
-                alignItems: "center",
-                flexDirection: "column",
-            }}
-        >
-            <div>
-                {episodePath}
-            </div>
+    let currentFrame = 0;
 
-            <div>
-                {videos.length} clips loaded
-            </div>
+    return (
+        <AbsoluteFill>
+            {videos.map((video) => {
+                const durationInFrames = Math.round(
+                    video.duration * 30
+                );
+
+                const sequence = (
+                    <Sequence
+                        key={video.id}
+                        from={currentFrame}
+                        durationInFrames={durationInFrames}
+                    >
+                        <OffthreadVideo
+                            src={staticFile(
+                                `episodes/episode-9/original_footage/${video.filename}`
+                            )}
+                        />
+                    </Sequence>
+                );
+
+                currentFrame += durationInFrames;
+
+                return sequence;
+            })}
         </AbsoluteFill>
     );
 };
