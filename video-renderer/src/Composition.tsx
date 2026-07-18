@@ -1,24 +1,11 @@
 import { Composition } from "remotion";
 import { Episode } from "./episode/Episode";
-import { episodeProps } from "./episode/episode-props";
-
-export type EpisodeVideo = {
-    id: string;
-    filename: string;
-    path: string;
-    duration: number;
-    fps: number;
-    width: number;
-    height: number;
-};
-
-export type EpisodeProps = {
-    videos: EpisodeVideo[];
-};
+import { episodeProps } from "../generated/episode/episode-props";
+import type { EpisodeVideo } from "./episode/types";
 
 export const MyComposition = () => {
     const durationInFrames = episodeProps.videos.reduce(
-        (total, video) =>
+        (total: number, video: EpisodeVideo) =>
             total + Math.round(video.duration * 30),
         0
     );

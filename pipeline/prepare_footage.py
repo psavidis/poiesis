@@ -157,7 +157,9 @@ def create_manifest(episode_folder: Path, videos):
                 "filename": video.name,
                 "stem": video.stem,
                 "path": str(
-                    video.relative_to(episode_folder)
+                    Path("episodes")
+                    / episode_folder.name
+                    / video.relative_to(episode_folder)
                 ),
                 **metadata,
             }
@@ -181,6 +183,62 @@ def write_manifest(path: Path, manifest):
         )
 
     temp_path.replace(path)
+
+
+def generate_episode_props_ts(
+        manifest,
+        renderer_folder: Path
+):
+    output = (
+            renderer_folder
+            / "generated"
+            / "episode"
+            / "episode-props.ts"
+    )
+
+    output.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    lines = [
+        "import type { EpisodeProps } from '../../src/episode/types';",
+        "",
+        "export const episodeProps: EpisodeProps = {",
+        "  videos: [",
+    ]
+
+    for video in manifest["videos"]:
+        lines.extend(
+            [
+                "    {",
+                f'      id: "{video["id"]}",',
+                f'      filename: "{video["filename"]}",',
+                f'      path: "{video["path"]}",',
+                f'      duration: {video["duration"]},',
+                f'      fps: {video["fps"]},',
+                f'      width: {video["width"]},',
+                f'      height: {video["height"]},',
+                "    },",
+            ]
+        )
+
+    lines.extend(
+        [
+            "  ],",
+            "};",
+            "",
+        ]
+    )
+
+    output.write_text(
+        "\n".join(lines),
+        encoding="utf-8"
+    )
+
+    print(
+        f"Generated episode props: {output}"
+    )
 
 
 def main():
@@ -219,24 +277,14 @@ def main():
             f"Cannot find renderer project: {renderer_folder}"
         )
 
-    original = (
-            episode_folder
-            / "original_footage"
-    )
+    original = episode_folder / "original_footage"
 
-    processing = (
-            episode_folder
-            / "processing"
-    )
-
+    processing = episode_folder / "processing"
     processing.mkdir(
         exist_ok=True
     )
 
-    manifest_path = (
-            processing
-            / "manifest.json"
-    )
+    manifest_path = processing / "manifest.json"
 
     print(f"Validating: {original}")
 
@@ -271,6 +319,11 @@ def main():
     write_manifest(
         manifest_path,
         manifest
+    )
+
+    generate_episode_props_ts(
+        manifest,
+        renderer_folder
     )
 
     print()

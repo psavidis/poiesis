@@ -5,7 +5,7 @@ import {
     staticFile,
 } from "remotion";
 
-import type { EpisodeProps } from "../Composition";
+import type { EpisodeProps } from "./types";
 
 export const Episode: React.FC<EpisodeProps> = ({
                                                     videos,
@@ -26,9 +26,12 @@ export const Episode: React.FC<EpisodeProps> = ({
                         durationInFrames={durationInFrames}
                     >
                         <OffthreadVideo
-                            src={staticFile(
-                                `episodes/episode-9/original_footage/${video.filename}`
-                            )}
+                            src={staticFile(video.path)}
+                            style={{
+                                width: "100%",
+                                height: "100%",
+                                objectFit: "cover",
+                            }}
                         />
                     </Sequence>
                 );
