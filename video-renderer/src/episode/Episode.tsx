@@ -34,13 +34,19 @@ export const Episode = ({
                 return (
                     <Sequence
                         key={scene.id}
-                        from={scene.startFrame}
+                        from={scene.timelineStartFrame}
                         durationInFrames={
                             scene.durationInFrames
                         }
                     >
                         <OffthreadVideo
                             src={staticFile(video.path)}
+                            startFrom={
+                                scene.sourceStartFrame
+                            }
+                            endAt={
+                                scene.sourceEndFrame
+                            }
                             style={{
                                 width: "100%",
                                 height: "100%",
