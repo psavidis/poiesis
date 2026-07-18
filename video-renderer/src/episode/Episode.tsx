@@ -41,12 +41,8 @@ export const Episode = ({
                     >
                         <OffthreadVideo
                             src={staticFile(video.path)}
-                            startFrom={
-                                scene.sourceStartFrame
-                            }
-                            endAt={
-                                scene.sourceEndFrame
-                            }
+                            trimBefore={scene.sourceStartFrame}
+                            trimAfter={scene.sourceEndFrame}
                             style={{
                                 width: "100%",
                                 height: "100%",
