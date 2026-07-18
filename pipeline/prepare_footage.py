@@ -195,14 +195,21 @@ def create_manifest(
             }
         )
 
+        duration_in_frames = round(
+            metadata["duration"] * render["fps"]
+        )
+
+        current_start_frame = sum(
+            scene["durationInFrames"]
+            for scene in manifest["scenes"]
+        )
+
         manifest["scenes"].append(
             {
                 "id": f"scene-{video_id}",
                 "videoId": video_id,
-                "startFrame": 0,
-                "durationInFrames": round(
-                    metadata["duration"] * render["fps"]
-                )
+                "startFrame": current_start_frame,
+                "durationInFrames": duration_in_frames
             }
         )
 
