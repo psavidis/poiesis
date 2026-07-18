@@ -180,6 +180,15 @@ def create_manifest(
 
         video_id = f"{index:03d}"
 
+        duration_in_frames = round(
+            metadata["duration"] * render["fps"]
+        )
+
+        start_frame = sum(
+            scene["durationInFrames"]
+            for scene in manifest["scenes"]
+        )
+
         manifest["videos"].append(
             {
                 "id": video_id,
@@ -195,20 +204,11 @@ def create_manifest(
             }
         )
 
-        duration_in_frames = round(
-            metadata["duration"] * render["fps"]
-        )
-
-        current_start_frame = sum(
-            scene["durationInFrames"]
-            for scene in manifest["scenes"]
-        )
-
         manifest["scenes"].append(
             {
                 "id": f"scene-{video_id}",
                 "videoId": video_id,
-                "startFrame": current_start_frame,
+                "startFrame": start_frame,
                 "durationInFrames": duration_in_frames
             }
         )
@@ -216,10 +216,7 @@ def create_manifest(
     return manifest
 
 
-def write_manifest(
-        path: Path,
-        manifest
-):
+def write_json(path: Path, data):
     temp_path = path.with_suffix(".tmp.json")
 
     with temp_path.open(
@@ -227,13 +224,57 @@ def write_manifest(
             encoding="utf-8"
     ) as f:
         json.dump(
-            manifest,
+            data,
             f,
             indent=2,
             ensure_ascii=False
         )
 
     temp_path.replace(path)
+
+
+def generate_scene_plan(
+        manifest,
+        episode_folder: Path
+):
+    output = (
+            episode_folder
+            / "processing"
+            / "scene-plan.json"
+    )
+
+    scene_plan = {
+        "version": 1,
+        "episode": manifest["episode"],
+        "created_at": manifest["created_at"],
+        "fps": manifest["fps"],
+        "scenes": []
+    }
+
+    for scene in manifest["scenes"]:
+        scene_plan["scenes"].append(
+            {
+                "id": scene["id"],
+                "videoId": scene["videoId"],
+                "sourceStartFrame": 0,
+                "sourceEndFrame": scene["durationInFrames"],
+                "timelineStartFrame": scene["startFrame"],
+                "durationInFrames": scene["durationInFrames"],
+                "effects": {
+                    "captions": False,
+                    "transition": "none"
+                }
+            }
+        )
+
+    write_json(
+        output,
+        scene_plan
+    )
+
+    print(
+        f"Generated scene plan: {output}"
+    )
 
 
 def generate_episode_props_ts(
@@ -321,14 +362,12 @@ def main():
     )
 
     parser.add_argument(
-        "episode_folder",
-        help="Episode folder"
+        "episode_folder"
     )
 
     parser.add_argument(
         "--force",
-        action="store_true",
-        help="Regenerate manifest"
+        action="store_true"
     )
 
     args = parser.parse_args()
@@ -344,17 +383,14 @@ def main():
         .parent
     )
 
-    config = load_config(project_root)
+    config = load_config(
+        project_root
+    )
 
     renderer_folder = (
             project_root
             / "video-renderer"
     )
-
-    if not renderer_folder.exists():
-        raise RuntimeError(
-            f"Cannot find renderer project: {renderer_folder}"
-        )
 
     original = episode_folder / "original_footage"
 
@@ -363,8 +399,6 @@ def main():
     processing.mkdir(
         exist_ok=True
     )
-
-    manifest_path = processing / "manifest.json"
 
     print(
         f"Validating: {original}"
@@ -383,25 +417,20 @@ def main():
         renderer_folder
     )
 
-    print("\nProcessing order:")
-
-    for index, video in enumerate(
-            videos,
-            start=1
-    ):
-        print(
-            f"{index:2}. {video.name}"
-        )
-
     manifest = create_manifest(
         episode_folder,
         videos,
         config
     )
 
-    write_manifest(
-        manifest_path,
+    write_json(
+        processing / "manifest.json",
         manifest
+    )
+
+    generate_scene_plan(
+        manifest,
+        episode_folder
     )
 
     generate_episode_props_ts(
@@ -409,9 +438,8 @@ def main():
         renderer_folder
     )
 
-    print()
     print(
-        f"Manifest created: {manifest_path}"
+        "Done."
     )
 
 
