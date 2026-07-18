@@ -46,6 +46,8 @@ def main():
 
     pipeline = Path(__file__).parent
 
+    project = pipeline.parent
+
 
     # 1. Prepare footage
     prepare_command = [
@@ -57,9 +59,6 @@ def main():
         prepare_command.append("--force")
 
     run(prepare_command)
-
-
-    project = pipeline.parent
 
 
     # 2. Transcription
@@ -113,13 +112,19 @@ def main():
         str(episode)
     ]
 
-    if args.force:
-        scene_analysis_command.append("--force")
-
     run(scene_analysis_command)
 
 
-    # 7. Analyze episode
+    # 7. Generate Remotion scene plan
+    scene_plan_command = [
+        str(pipeline / "generate_scene_plan_ts.py"),
+        str(episode)
+    ]
+
+    run(scene_plan_command)
+
+
+    # 8. Analyze episode
     analysis_command = [
         str(pipeline / "analyze_episode.py"),
         str(episode)
@@ -131,7 +136,7 @@ def main():
     run(analysis_command)
 
 
-    # 8. Generate episode assets
+    # 9. Generate episode assets
     assets_command = [
         str(pipeline / "generate_episode_assets.py"),
         str(episode)

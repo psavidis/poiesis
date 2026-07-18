@@ -38,16 +38,18 @@ def load_config(project_root: Path):
 
 
 def validate_original_footage(folder: Path):
-    if not folder.exists():
-        raise RuntimeError(f"Folder does not exist: {folder}")
 
-    if not folder.is_dir():
-        raise RuntimeError(f"Not a folder: {folder}")
+    if not folder.exists():
+        raise RuntimeError(
+            f"Folder does not exist: {folder}"
+        )
 
     files = list(folder.iterdir())
 
     if not files:
-        raise RuntimeError("original_footage is empty")
+        raise RuntimeError(
+            "original_footage is empty"
+        )
 
     invalid = [
         f.name
@@ -61,8 +63,8 @@ def validate_original_footage(folder: Path):
 
     if invalid:
         raise RuntimeError(
-            "original_footage must contain only video files:\n"
-            + "\n".join(f" - {name}" for name in invalid)
+            "Invalid files:\n"
+            + "\n".join(invalid)
         )
 
     return sorted(
@@ -95,21 +97,26 @@ def get_video_metadata(video: Path):
 
     data = json.loads(result.stdout)
 
-    video_stream = next(
-        stream
-        for stream in data["streams"]
-        if stream["codec_type"] == "video"
+    stream = next(
+        s for s in data["streams"]
+        if s["codec_type"] == "video"
     )
 
-    fps_parts = video_stream["r_frame_rate"].split("/")
+    fps_parts = stream["r_frame_rate"].split("/")
 
-    fps = int(fps_parts[0]) / int(fps_parts[1])
+    fps = (
+            int(fps_parts[0])
+            /
+            int(fps_parts[1])
+    )
 
     return {
-        "duration": float(data["format"]["duration"]),
+        "duration": float(
+            data["format"]["duration"]
+        ),
         "fps": fps,
-        "width": video_stream["width"],
-        "height": video_stream["height"],
+        "width": stream["width"],
+        "height": stream["height"],
     }
 
 
@@ -117,10 +124,13 @@ def create_episode_symlink(
         episode_folder: Path,
         renderer_folder: Path
 ):
+
     episodes_folder = (
             renderer_folder
-            / "public"
-            / "episodes"
+            /
+            "public"
+            /
+            "episodes"
     )
 
     episodes_folder.mkdir(
@@ -128,13 +138,18 @@ def create_episode_symlink(
         exist_ok=True
     )
 
-    link = episodes_folder / episode_folder.name
+    link = (
+            episodes_folder
+            /
+            episode_folder.name
+    )
 
     if link.exists() or link.is_symlink():
 
         if (
                 link.is_symlink()
-                and link.resolve() == episode_folder.resolve()
+                and link.resolve()
+                == episode_folder.resolve()
         ):
             print(
                 f"Episode link already exists: {link}"
@@ -142,7 +157,7 @@ def create_episode_symlink(
             return
 
         raise RuntimeError(
-            f"Existing path conflicts with episode link: {link}"
+            f"Conflicting path exists: {link}"
         )
 
     link.symlink_to(
@@ -151,7 +166,7 @@ def create_episode_symlink(
     )
 
     print(
-        "Created episode symlink:\n"
+        f"Created episode symlink:\n"
         f"{link} -> {episode_folder}"
     )
 
@@ -161,6 +176,7 @@ def create_manifest(
         videos,
         config
 ):
+
     render = config["render"]
 
     manifest = {
@@ -174,167 +190,71 @@ def create_manifest(
         "scenes": []
     }
 
-    for index, video in enumerate(videos, start=1):
 
-        metadata = get_video_metadata(video)
+    for index, video in enumerate(
+            videos,
+            start=1
+    ):
 
-        video_id = f"{index:03d}"
-
-        duration_in_frames = round(
-            metadata["duration"] * render["fps"]
-        )
-
-        start_frame = sum(
-            scene["durationInFrames"]
-            for scene in manifest["scenes"]
+        metadata = get_video_metadata(
+            video
         )
 
         manifest["videos"].append(
             {
-                "id": video_id,
+                "id": f"{index:03d}",
                 "order": index,
                 "filename": video.name,
                 "stem": video.stem,
                 "path": str(
-                    video.relative_to(episode_folder)
+                    video.relative_to(
+                        episode_folder
+                    )
                 ),
-                **metadata,
-            }
-        )
+                "renderPath": str(
+                    Path("episodes")
+                    / episode_folder.name
+                    / video.relative_to(episode_folder)
+                ),
 
-        manifest["scenes"].append(
-            {
-                "id": f"scene-{video_id}",
-                "videoId": video_id,
-                "startFrame": start_frame,
-                "durationInFrames": duration_in_frames
+                **metadata,
             }
         )
 
     return manifest
 
 
-def write_json(path: Path, data):
-    temp_path = path.with_suffix(".tmp.json")
+def write_manifest(
+        path: Path,
+        manifest
+):
 
-    with temp_path.open(
+    with path.open(
             "w",
             encoding="utf-8"
     ) as f:
+
         json.dump(
-            data,
+            manifest,
             f,
             indent=2,
             ensure_ascii=False
         )
 
-    temp_path.replace(path)
-
-
-def generate_scene_plan(
-        manifest,
-        episode_folder: Path
-):
-    output = (
-            episode_folder
-            / "processing"
-            / "scene-plan.json"
-    )
-
-    scene_plan = {
-        "version": 1,
-        "episode": manifest["episode"],
-        "created_at": manifest["created_at"],
-        "fps": manifest["fps"],
-        "scenes": []
-    }
-
-    for scene in manifest["scenes"]:
-        scene_plan["scenes"].append(
-            {
-                "id": scene["id"],
-                "videoId": scene["videoId"],
-                "sourceStartFrame": 0,
-                "sourceEndFrame": scene["durationInFrames"],
-                "timelineStartFrame": scene["startFrame"],
-                "durationInFrames": scene["durationInFrames"],
-                "effects": {
-                    "captions": False,
-                    "transition": "none"
-                }
-            }
-        )
-
-    write_json(
-        output,
-        scene_plan
-    )
-
-    print(
-        f"Generated scene plan: {output}"
-    )
-
-def generate_scene_plan_ts(
-        manifest,
-        renderer_folder: Path
-):
-    output = (
-            renderer_folder
-            / "generated"
-            / "episode"
-            / "scene-plan.ts"
-    )
-
-    output.parent.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    lines = [
-        "export const scenePlan = {",
-        f'  episode: "{manifest["episode"]}",',
-        f'  fps: {manifest["fps"]},',
-        "  scenes: [",
-    ]
-
-    for scene in manifest["scenes"]:
-        lines.extend(
-            [
-                "    {",
-                f'      id: "{scene["id"]}",',
-                f'      videoId: "{scene["videoId"]}",',
-                f'      startFrame: {scene["startFrame"]},',
-                f'      durationInFrames: {scene["durationInFrames"]},',
-                "    },",
-            ]
-        )
-
-    lines.extend(
-        [
-            "  ],",
-            "};",
-            "",
-        ]
-    )
-
-    output.write_text(
-        "\n".join(lines),
-        encoding="utf-8"
-    )
-
-    print(
-        f"Generated scene plan TS: {output}"
-    )
 
 def generate_episode_props_ts(
         manifest,
         renderer_folder: Path
 ):
+
     output = (
             renderer_folder
-            / "generated"
-            / "episode"
-            / "episode-props.ts"
+            /
+            "generated"
+            /
+            "episode"
+            /
+            "episode-props.ts"
     )
 
     output.parent.mkdir(
@@ -352,13 +272,15 @@ def generate_episode_props_ts(
         "  videos: [",
     ]
 
+
     for video in manifest["videos"]:
+
         lines.extend(
             [
                 "    {",
                 f'      id: "{video["id"]}",',
                 f'      filename: "{video["filename"]}",',
-                f'      path: "{video["path"]}",',
+                f'      path: "{video["renderPath"]}",',
                 f'      duration: {video["duration"]},',
                 f'      fps: {video["fps"]},',
                 f'      width: {video["width"]},',
@@ -367,32 +289,15 @@ def generate_episode_props_ts(
             ]
         )
 
-    lines.extend(
-        [
-            "  ],",
-            "  scenes: [",
-        ]
-    )
-
-    for scene in manifest["scenes"]:
-        lines.extend(
-            [
-                "    {",
-                f'      id: "{scene["id"]}",',
-                f'      videoId: "{scene["videoId"]}",',
-                f'      startFrame: {scene["startFrame"]},',
-                f'      durationInFrames: {scene["durationInFrames"]},',
-                "    },",
-            ]
-        )
 
     lines.extend(
         [
             "  ],",
             "};",
-            "",
+            ""
         ]
     )
+
 
     output.write_text(
         "\n".join(lines),
@@ -406,9 +311,7 @@ def generate_episode_props_ts(
 
 def main():
 
-    parser = argparse.ArgumentParser(
-        description="Prepare footage and create manifest"
-    )
+    parser = argparse.ArgumentParser()
 
     parser.add_argument(
         "episode_folder"
@@ -421,9 +324,11 @@ def main():
 
     args = parser.parse_args()
 
+
     episode_folder = Path(
         args.episode_folder
     ).resolve()
+
 
     project_root = (
         Path(__file__)
@@ -432,39 +337,57 @@ def main():
         .parent
     )
 
+
+    renderer_folder = (
+            project_root
+            /
+            "video-renderer"
+    )
+
+
     config = load_config(
         project_root
     )
 
-    renderer_folder = (
-            project_root
-            / "video-renderer"
+
+    original = (
+            episode_folder
+            /
+            "original_footage"
     )
 
-    original = episode_folder / "original_footage"
-
-    processing = episode_folder / "processing"
-
-    processing.mkdir(
-        exist_ok=True
-    )
 
     print(
         f"Validating: {original}"
     )
 
+
     videos = validate_original_footage(
         original
     )
+
 
     print(
         f"Found {len(videos)} videos"
     )
 
+
     create_episode_symlink(
         episode_folder,
         renderer_folder
     )
+
+
+    processing = (
+            episode_folder
+            /
+            "processing"
+    )
+
+    processing.mkdir(
+        exist_ok=True
+    )
+
 
     manifest = create_manifest(
         episode_folder,
@@ -472,29 +395,32 @@ def main():
         config
     )
 
-    write_json(
-        processing / "manifest.json",
+
+    manifest_path = (
+            processing
+            /
+            "manifest.json"
+    )
+
+
+    write_manifest(
+        manifest_path,
         manifest
     )
 
-    generate_scene_plan(
-        manifest,
-        episode_folder
-    )
-
-    generate_scene_plan_ts(
-        manifest,
-        renderer_folder
-    )
 
     generate_episode_props_ts(
         manifest,
         renderer_folder
     )
 
+
+    print()
     print(
-        "Done."
+        f"Manifest created: {manifest_path}"
     )
+
+    print("Done.")
 
 
 if __name__ == "__main__":
