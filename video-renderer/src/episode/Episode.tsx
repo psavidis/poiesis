@@ -7,26 +7,36 @@ import {
 
 import type { EpisodeProps } from "./types";
 
-export const Episode = (props: EpisodeProps) => {
-    const {
-        videos,
-        fps,
-    } = props;
+export const Episode = ({
+                            videos,
+                            scenes,
+                        }: EpisodeProps) => {
 
-    let currentFrame = 0;
+    const videoMap = new Map(
+        videos.map((video) => [
+            video.id,
+            video,
+        ])
+    );
 
     return (
         <AbsoluteFill>
-            {videos.map((video) => {
-                const durationInFrames = Math.round(
-                    video.duration * fps
+            {scenes.map((scene) => {
+                const video = videoMap.get(
+                    scene.videoId
                 );
 
-                const sequence = (
+                if (!video) {
+                    return null;
+                }
+
+                return (
                     <Sequence
-                        key={video.id}
-                        from={currentFrame}
-                        durationInFrames={durationInFrames}
+                        key={scene.id}
+                        from={scene.startFrame}
+                        durationInFrames={
+                            scene.durationInFrames
+                        }
                     >
                         <OffthreadVideo
                             src={staticFile(video.path)}
@@ -38,10 +48,6 @@ export const Episode = (props: EpisodeProps) => {
                         />
                     </Sequence>
                 );
-
-                currentFrame += durationInFrames;
-
-                return sequence;
             })}
         </AbsoluteFill>
     );

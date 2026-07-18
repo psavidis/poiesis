@@ -102,6 +102,7 @@ def get_video_metadata(video: Path):
     )
 
     fps_parts = video_stream["r_frame_rate"].split("/")
+
     fps = int(fps_parts[0]) / int(fps_parts[1])
 
     return {
@@ -135,7 +136,9 @@ def create_episode_symlink(
                 link.is_symlink()
                 and link.resolve() == episode_folder.resolve()
         ):
-            print(f"Episode link already exists: {link}")
+            print(
+                f"Episode link already exists: {link}"
+            )
             return
 
         raise RuntimeError(
@@ -167,16 +170,19 @@ def create_manifest(
         "width": render["width"],
         "height": render["height"],
         "fps": render["fps"],
-        "videos": []
+        "videos": [],
+        "scenes": []
     }
 
     for index, video in enumerate(videos, start=1):
 
         metadata = get_video_metadata(video)
 
+        video_id = f"{index:03d}"
+
         manifest["videos"].append(
             {
-                "id": f"{index:03d}",
+                "id": video_id,
                 "order": index,
                 "filename": video.name,
                 "stem": video.stem,
@@ -189,10 +195,24 @@ def create_manifest(
             }
         )
 
+        manifest["scenes"].append(
+            {
+                "id": f"scene-{video_id}",
+                "videoId": video_id,
+                "startFrame": 0,
+                "durationInFrames": round(
+                    metadata["duration"] * render["fps"]
+                )
+            }
+        )
+
     return manifest
 
 
-def write_manifest(path: Path, manifest):
+def write_manifest(
+        path: Path,
+        manifest
+):
     temp_path = path.with_suffix(".tmp.json")
 
     with temp_path.open(
@@ -246,6 +266,25 @@ def generate_episode_props_ts(
                 f'      fps: {video["fps"]},',
                 f'      width: {video["width"]},',
                 f'      height: {video["height"]},',
+                "    },",
+            ]
+        )
+
+    lines.extend(
+        [
+            "  ],",
+            "  scenes: [",
+        ]
+    )
+
+    for scene in manifest["scenes"]:
+        lines.extend(
+            [
+                "    {",
+                f'      id: "{scene["id"]}",',
+                f'      videoId: "{scene["videoId"]}",',
+                f'      startFrame: {scene["startFrame"]},',
+                f'      durationInFrames: {scene["durationInFrames"]},',
                 "    },",
             ]
         )
@@ -313,13 +352,16 @@ def main():
     original = episode_folder / "original_footage"
 
     processing = episode_folder / "processing"
+
     processing.mkdir(
         exist_ok=True
     )
 
     manifest_path = processing / "manifest.json"
 
-    print(f"Validating: {original}")
+    print(
+        f"Validating: {original}"
+    )
 
     videos = validate_original_footage(
         original
