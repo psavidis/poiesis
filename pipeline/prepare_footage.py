@@ -276,6 +276,57 @@ def generate_scene_plan(
         f"Generated scene plan: {output}"
     )
 
+def generate_scene_plan_ts(
+        manifest,
+        renderer_folder: Path
+):
+    output = (
+            renderer_folder
+            / "generated"
+            / "episode"
+            / "scene-plan.ts"
+    )
+
+    output.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    lines = [
+        "export const scenePlan = {",
+        f'  episode: "{manifest["episode"]}",',
+        f'  fps: {manifest["fps"]},',
+        "  scenes: [",
+    ]
+
+    for scene in manifest["scenes"]:
+        lines.extend(
+            [
+                "    {",
+                f'      id: "{scene["id"]}",',
+                f'      videoId: "{scene["videoId"]}",',
+                f'      startFrame: {scene["startFrame"]},',
+                f'      durationInFrames: {scene["durationInFrames"]},',
+                "    },",
+            ]
+        )
+
+    lines.extend(
+        [
+            "  ],",
+            "};",
+            "",
+        ]
+    )
+
+    output.write_text(
+        "\n".join(lines),
+        encoding="utf-8"
+    )
+
+    print(
+        f"Generated scene plan TS: {output}"
+    )
 
 def generate_episode_props_ts(
         manifest,
@@ -431,6 +482,11 @@ def main():
     generate_scene_plan(
         manifest,
         episode_folder
+    )
+
+    generate_scene_plan_ts(
+        manifest,
+        renderer_folder
     )
 
     generate_episode_props_ts(

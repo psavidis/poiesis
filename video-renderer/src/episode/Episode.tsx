@@ -6,10 +6,10 @@ import {
 } from "remotion";
 
 import type { EpisodeProps } from "./types";
+import { scenePlan } from "../../generated/episode/scene-plan";
 
 export const Episode = ({
                             videos,
-                            scenes,
                         }: EpisodeProps) => {
 
     const videoMap = new Map(
@@ -21,7 +21,8 @@ export const Episode = ({
 
     return (
         <AbsoluteFill>
-            {scenes.map((scene) => {
+            {scenePlan.scenes.map((scene) => {
+
                 const video = videoMap.get(
                     scene.videoId
                 );
