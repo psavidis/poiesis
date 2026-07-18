@@ -22,6 +22,21 @@ IGNORED_FILES = {
 }
 
 
+def load_config(project_root: Path):
+    config_path = project_root / "config.json"
+
+    if not config_path.exists():
+        raise RuntimeError(
+            f"Missing config file: {config_path}"
+        )
+
+    with config_path.open(
+            "r",
+            encoding="utf-8"
+    ) as f:
+        return json.load(f)
+
+
 def validate_original_footage(folder: Path):
     if not folder.exists():
         raise RuntimeError(f"Folder does not exist: {folder}")
@@ -138,14 +153,20 @@ def create_episode_symlink(
     )
 
 
-def create_manifest(episode_folder: Path, videos):
+def create_manifest(
+        episode_folder: Path,
+        videos,
+        config
+):
+    render = config["render"]
+
     manifest = {
         "version": 1,
         "episode": episode_folder.name,
         "created_at": datetime.now().isoformat(),
-        "width": 1280,
-        "height": 720,
-        "fps": 30,
+        "width": render["width"],
+        "height": render["height"],
+        "fps": render["fps"],
         "videos": []
     }
 
@@ -270,11 +291,17 @@ def main():
         args.episode_folder
     ).resolve()
 
+    project_root = (
+        Path(__file__)
+        .resolve()
+        .parent
+        .parent
+    )
+
+    config = load_config(project_root)
+
     renderer_folder = (
-            Path(__file__)
-            .resolve()
-            .parent
-            .parent
+            project_root
             / "video-renderer"
     )
 
@@ -319,7 +346,8 @@ def main():
 
     manifest = create_manifest(
         episode_folder,
-        videos
+        videos,
+        config
     )
 
     write_manifest(
