@@ -61,6 +61,7 @@ def main():
 
     project = pipeline.parent
 
+
     # 2. Transcription
     transcription_command = [
         str(project / "transcribe_footage.sh"),
@@ -94,7 +95,7 @@ def main():
     run(normalize_command)
 
 
-    # 5. Merge segments
+    # 5. Merge transcript segments
     merge_command = [
         str(pipeline / "merge_segments.py"),
         str(episode)
@@ -106,7 +107,19 @@ def main():
     run(merge_command)
 
 
-    # 6. Analyze episode
+    # 6. Analyze scenes and trim dead air
+    scene_analysis_command = [
+        str(pipeline / "analyze_scenes.py"),
+        str(episode)
+    ]
+
+    if args.force:
+        scene_analysis_command.append("--force")
+
+    run(scene_analysis_command)
+
+
+    # 7. Analyze episode
     analysis_command = [
         str(pipeline / "analyze_episode.py"),
         str(episode)
@@ -117,7 +130,8 @@ def main():
 
     run(analysis_command)
 
-    # 7. Generate episode assets
+
+    # 8. Generate episode assets
     assets_command = [
         str(pipeline / "generate_episode_assets.py"),
         str(episode)
@@ -127,6 +141,7 @@ def main():
         assets_command.append("--force")
 
     run(assets_command)
+
 
     print()
     print("=" * 60)

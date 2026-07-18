@@ -196,9 +196,7 @@ def create_manifest(
                 "filename": video.name,
                 "stem": video.stem,
                 "path": str(
-                    Path("episodes")
-                    / episode_folder.name
-                    / video.relative_to(episode_folder)
+                    video.relative_to(episode_folder)
                 ),
                 **metadata,
             }
