@@ -97,6 +97,47 @@ def get_video_metadata(video: Path):
     }
 
 
+def create_episode_symlink(
+        episode_folder: Path,
+        renderer_folder: Path
+):
+    episodes_folder = (
+            renderer_folder
+            / "public"
+            / "episodes"
+    )
+
+    episodes_folder.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    link = episodes_folder / episode_folder.name
+
+    if link.exists() or link.is_symlink():
+
+        if (
+                link.is_symlink()
+                and link.resolve() == episode_folder.resolve()
+        ):
+            print(f"Episode link already exists: {link}")
+            return
+
+        raise RuntimeError(
+            f"Existing path conflicts with episode link: {link}"
+        )
+
+    link.symlink_to(
+        episode_folder,
+        target_is_directory=True
+    )
+
+    print(
+        "Created episode symlink:\n"
+        f"{link} -> {episode_folder}"
+    )
+
+
 def create_manifest(episode_folder: Path, videos):
     manifest = {
         "version": 1,
@@ -106,6 +147,7 @@ def create_manifest(episode_folder: Path, videos):
     }
 
     for index, video in enumerate(videos, start=1):
+
         metadata = get_video_metadata(video)
 
         manifest["videos"].append(
@@ -114,7 +156,9 @@ def create_manifest(episode_folder: Path, videos):
                 "order": index,
                 "filename": video.name,
                 "stem": video.stem,
-                "path": str(video.relative_to(episode_folder)),
+                "path": str(
+                    video.relative_to(episode_folder)
+                ),
                 **metadata,
             }
         )
@@ -125,7 +169,10 @@ def create_manifest(episode_folder: Path, videos):
 def write_manifest(path: Path, manifest):
     temp_path = path.with_suffix(".tmp.json")
 
-    with temp_path.open("w", encoding="utf-8") as f:
+    with temp_path.open(
+            "w",
+            encoding="utf-8"
+    ) as f:
         json.dump(
             manifest,
             f,
@@ -150,34 +197,71 @@ def main():
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Regenerate manifest even if it exists"
+        help="Regenerate manifest"
     )
 
     args = parser.parse_args()
 
-    episode_folder = Path(args.episode_folder).resolve()
+    episode_folder = Path(
+        args.episode_folder
+    ).resolve()
 
-    original = episode_folder / "original_footage"
+    renderer_folder = (
+            Path(__file__)
+            .resolve()
+            .parent
+            .parent
+            / "video-renderer"
+    )
 
-    processing = episode_folder / "processing"
-    processing.mkdir(exist_ok=True)
+    if not renderer_folder.exists():
+        raise RuntimeError(
+            f"Cannot find renderer project: {renderer_folder}"
+        )
 
-    manifest_path = processing / "manifest.json"
+    original = (
+            episode_folder
+            / "original_footage"
+    )
 
-    if manifest_path.exists() and not args.force:
-        print("Manifest already exists. Skipping.")
-        print(manifest_path)
-        return
+    processing = (
+            episode_folder
+            / "processing"
+    )
+
+    processing.mkdir(
+        exist_ok=True
+    )
+
+    manifest_path = (
+            processing
+            / "manifest.json"
+    )
 
     print(f"Validating: {original}")
 
-    videos = validate_original_footage(original)
+    videos = validate_original_footage(
+        original
+    )
 
-    print(f"Found {len(videos)} videos")
+    print(
+        f"Found {len(videos)} videos"
+    )
+
+    create_episode_symlink(
+        episode_folder,
+        renderer_folder
+    )
 
     print("\nProcessing order:")
-    for index, video in enumerate(videos, start=1):
-        print(f"{index:2}. {video.name}")
+
+    for index, video in enumerate(
+            videos,
+            start=1
+    ):
+        print(
+            f"{index:2}. {video.name}"
+        )
 
     manifest = create_manifest(
         episode_folder,
@@ -190,12 +274,16 @@ def main():
     )
 
     print()
-    print(f"Manifest created: {manifest_path}")
+    print(
+        f"Manifest created: {manifest_path}"
+    )
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        print(f"ERROR: {e}")
+        print(
+            f"ERROR: {e}"
+        )
         sys.exit(1)
