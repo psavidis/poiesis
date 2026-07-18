@@ -1,22 +1,21 @@
 import { Composition } from "remotion";
 import { Episode } from "./episode/Episode";
 import { episodeProps } from "../generated/episode/episode-props";
-import type { EpisodeVideo } from "./episode/types";
 
 export const MyComposition = () => {
     const durationInFrames = episodeProps.videos.reduce(
-        (total: number, video: EpisodeVideo) =>
-            total + Math.round(video.duration * 30),
+        (total, video) =>
+            total + Math.round(video.duration * episodeProps.fps),
         0
     );
 
     return (
         <Composition
             id="Episode"
-            component={Episode}
-            width={1280}
-            height={720}
-            fps={30}
+            component={Episode as any}
+            width={episodeProps.width}
+            height={episodeProps.height}
+            fps={episodeProps.fps}
             durationInFrames={durationInFrames}
             defaultProps={episodeProps}
         />

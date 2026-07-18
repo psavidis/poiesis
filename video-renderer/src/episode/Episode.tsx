@@ -7,16 +7,19 @@ import {
 
 import type { EpisodeProps } from "./types";
 
-export const Episode: React.FC<EpisodeProps> = ({
-                                                    videos,
-                                                }) => {
+export const Episode = (props: EpisodeProps) => {
+    const {
+        videos,
+        fps,
+    } = props;
+
     let currentFrame = 0;
 
     return (
         <AbsoluteFill>
             {videos.map((video) => {
                 const durationInFrames = Math.round(
-                    video.duration * 30
+                    video.duration * fps
                 );
 
                 const sequence = (

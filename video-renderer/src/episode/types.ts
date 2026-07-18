@@ -9,5 +9,8 @@ export interface EpisodeVideo {
 }
 
 export interface EpisodeProps {
+    width: number;
+    height: number;
+    fps: number;
     videos: EpisodeVideo[];
 }

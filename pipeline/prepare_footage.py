@@ -143,6 +143,9 @@ def create_manifest(episode_folder: Path, videos):
         "version": 1,
         "episode": episode_folder.name,
         "created_at": datetime.now().isoformat(),
+        "width": 1280,
+        "height": 720,
+        "fps": 30,
         "videos": []
     }
 
@@ -205,6 +208,9 @@ def generate_episode_props_ts(
         "import type { EpisodeProps } from '../../src/episode/types';",
         "",
         "export const episodeProps: EpisodeProps = {",
+        f"  width: {manifest['width']},",
+        f"  height: {manifest['height']},",
+        f"  fps: {manifest['fps']},",
         "  videos: [",
     ]
 
