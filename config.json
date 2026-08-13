@@ -1,7 +1,7 @@
 {
   "llm": {
-    "provider": "ollama",
-    "model": "qwen3.5:latest"
+    "provider": "claude-code",
+    "model": "sonnet"
   },
 
   "render": {

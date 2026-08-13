@@ -8,11 +8,37 @@ export interface EpisodeVideo {
     height: number;
 }
 
-export interface EpisodeScene {
+export interface SceneEffects {
+    captions: boolean;
+    transition: string;
+}
+
+export interface PresenterScene {
+    type: "presenter";
     id: string;
     videoId: string;
-    startFrame: number;
+    sourceStartFrame: number;
+    sourceEndFrame: number;
+    timelineStartFrame: number;
     durationInFrames: number;
+    effects: SceneEffects;
+}
+
+export interface TitleScene {
+    type: "title";
+    id: string;
+    text: string;
+    timelineStartFrame: number;
+    durationInFrames: number;
+}
+
+export type Scene = PresenterScene | TitleScene;
+
+export interface ScenePlan {
+    version: number;
+    episode: string;
+    fps: number;
+    scenes: Scene[];
 }
 
 export interface EpisodeProps {
@@ -20,5 +46,4 @@ export interface EpisodeProps {
     height: number;
     fps: number;
     videos: EpisodeVideo[];
-    scenes: EpisodeScene[];
 }

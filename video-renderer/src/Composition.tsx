@@ -1,11 +1,15 @@
 import { Composition } from "remotion";
 import { Episode } from "./episode/Episode";
 import { episodeProps } from "../generated/episode/episode-props";
+import { scenePlan } from "../generated/episode/scene-plan";
+import type { ScenePlan } from "./episode/types";
+
+const typedScenePlan = scenePlan as ScenePlan;
 
 export const MyComposition = () => {
-    const durationInFrames = episodeProps.videos.reduce(
-        (total, video) =>
-            total + Math.round(video.duration * episodeProps.fps),
+    const durationInFrames = typedScenePlan.scenes.reduce(
+        (total, scene) =>
+            Math.max(total, scene.timelineStartFrame + scene.durationInFrames),
         0
     );
 

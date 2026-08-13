@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 
+import argparse
 import json
-import sys
 from pathlib import Path
 
 
-PADDING_SECONDS = 0.5
+LEAD_IN_SECONDS = 0.15
+TAIL_SECONDS = 0.40
 
 
-def load_json(path: Path):
+def load_manifest(episode):
+    path = episode / "processing" / "manifest.json"
+
     with path.open(
             "r",
             encoding="utf-8"
@@ -16,158 +19,184 @@ def load_json(path: Path):
         return json.load(f)
 
 
-def save_json(path: Path, data):
-    temp = path.with_suffix(".tmp.json")
+def load_transcript(episode, video_id):
+    path = (
+            episode
+            / "processing"
+            / "transcripts"
+            / f"{video_id}.json"
+    )
 
-    with temp.open(
-            "w",
+    if not path.exists():
+        return None
+
+    with path.open(
+            "r",
             encoding="utf-8"
     ) as f:
-        json.dump(
-            data,
-            f,
-            indent=2,
-            ensure_ascii=False
-        )
-
-    temp.replace(path)
+        return json.load(f)
 
 
-def get_last_speech_time(transcript):
+def analyze_speech_bounds(transcript, duration, fps):
+
+    if not transcript:
+        return 0, int(duration * fps)
+
+
     segments = transcript.get(
         "segments",
         []
     )
 
     if not segments:
-        return None
+        return 0, int(duration * fps)
 
-    return max(
-        segment["end"]
-        for segment in segments
+
+    first_start = segments[0]["start"]
+
+    last_end = segments[-1]["end"]
+
+
+    start_seconds = max(
+        0,
+        first_start - LEAD_IN_SECONDS
+    )
+
+    end_seconds = min(
+        duration,
+        last_end + TAIL_SECONDS
     )
 
 
-def analyze_scene_plan(
-        episode_folder: Path
-):
-
-    processing = (
-            episode_folder
-            / "processing"
+    return (
+        int(start_seconds * fps),
+        int(end_seconds * fps)
     )
 
-    scene_plan_path = (
-            processing
-            / "scene-plan.json"
-    )
 
-    transcripts_dir = (
-            processing
-            / "transcripts"
-    )
+def create_scene_plan(episode, manifest):
 
-    if not scene_plan_path.exists():
-        raise RuntimeError(
-            f"Missing scene plan: {scene_plan_path}"
+    fps = manifest["fps"]
+
+    scenes = []
+
+    timeline_frame = 0
+
+
+    for video in manifest["videos"]:
+
+        transcript = load_transcript(
+            episode,
+            video["id"]
         )
 
-    scene_plan = load_json(
-        scene_plan_path
-    )
 
-    fps = scene_plan["fps"]
-
-    updated = 0
-
-    for scene in scene_plan["scenes"]:
-
-        video_id = scene["videoId"]
-
-        transcript_file = (
-                transcripts_dir
-                / f"{video_id}.json"
+        source_start, source_end = (
+            analyze_speech_bounds(
+                transcript,
+                video["duration"],
+                fps
+            )
         )
 
-        if not transcript_file.exists():
-            print(
-                f"{video_id}: no transcript, skipped"
-            )
-            continue
 
-        transcript = load_json(
-            transcript_file
+        duration = (
+                source_end
+                -
+                source_start
         )
 
-        last_speech = get_last_speech_time(
-            transcript
+
+        scene = {
+            "id": f"scene-{video['id']}",
+            "type": "presenter",
+            "videoId": video["id"],
+
+            "sourceStartFrame": source_start,
+            "sourceEndFrame": source_end,
+
+            "timelineStartFrame": timeline_frame,
+
+            "durationInFrames": duration,
+
+            "effects": {
+                "captions": False,
+                "transition": "none"
+            }
+        }
+
+
+        scenes.append(scene)
+
+
+        timeline_frame += duration
+
+
+        print(
+            f"{video['id']}: "
+            f"{source_start} -> "
+            f"{source_end} frames"
         )
 
-        if last_speech is None:
-            print(
-                f"{video_id}: empty transcript, skipped"
-            )
-            continue
 
-        new_duration = round(
-            (
-                    last_speech
-                    + PADDING_SECONDS
-            )
-            * fps
-        )
-
-        old_duration = scene[
-            "durationInFrames"
-        ]
-
-        if new_duration < old_duration:
-
-            print(
-                f"{video_id}: "
-                f"{old_duration} -> {new_duration} frames"
-            )
-
-            scene[
-                "sourceEndFrame"
-            ] = new_duration
-
-            scene[
-                "durationInFrames"
-            ] = new_duration
-
-            updated += 1
-
-        else:
-            print(
-                f"{video_id}: no trim needed"
-            )
-
-    save_json(
-        scene_plan_path,
-        scene_plan
-    )
-
-    print()
-    print(
-        f"Updated scenes: {updated}"
-    )
+    return {
+        "version": 1,
+        "episode": manifest["episode"],
+        "fps": fps,
+        "scenes": scenes
+    }
 
 
 def main():
 
-    if len(sys.argv) != 2:
-        print(
-            "Usage: analyze_scenes.py <episode-folder>"
-        )
-        sys.exit(1)
+    parser = argparse.ArgumentParser()
 
-    episode_folder = Path(
-        sys.argv[1]
+    parser.add_argument(
+        "episode_folder"
+    )
+
+    args = parser.parse_args()
+
+
+    episode = Path(
+        args.episode_folder
     ).resolve()
 
-    analyze_scene_plan(
-        episode_folder
+
+    manifest = load_manifest(
+        episode
+    )
+
+
+    scene_plan = create_scene_plan(
+        episode,
+        manifest
+    )
+
+
+    output = (
+            episode
+            /
+            "processing"
+            /
+            "scene-plan.json"
+    )
+
+
+    with output.open(
+            "w",
+            encoding="utf-8"
+    ) as f:
+        json.dump(
+            scene_plan,
+            f,
+            indent=2
+        )
+
+
+    print()
+    print(
+        f"Updated scenes: {len(scene_plan['scenes'])}"
     )
 
 

@@ -115,6 +115,18 @@ def main():
     run(scene_analysis_command)
 
 
+    # 6b. Propose title scenes
+    title_scenes_command = [
+        str(pipeline / "generate_title_scenes.py"),
+        str(episode)
+    ]
+
+    if args.force:
+        title_scenes_command.append("--force")
+
+    run(title_scenes_command)
+
+
     # 7. Generate Remotion scene plan
     scene_plan_command = [
         str(pipeline / "generate_scene_plan_ts.py"),

@@ -2,6 +2,8 @@ from pathlib import Path
 import json
 
 from .ollama_client import OllamaClient
+from .anthropic_client import AnthropicClient
+from .claude_code_client import ClaudeCodeClient
 
 
 class LLMClient:
@@ -21,6 +23,12 @@ class LLMClient:
 
         if provider == "ollama":
             self.client = OllamaClient(model)
+
+        elif provider == "anthropic":
+            self.client = AnthropicClient(model)
+
+        elif provider == "claude-code":
+            self.client = ClaudeCodeClient(model)
 
         else:
             raise RuntimeError(
