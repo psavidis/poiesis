@@ -9,14 +9,24 @@
 <header>
   <h1>Poiesis</h1>
   <div class="episode-picker">
-    <input id="episode-path" type="text" placeholder="/path/to/episode" />
-    <button id="load-episode">Load</button>
+    <span id="current-episode-path" class="current-path"></span>
+    <button id="browse-episode">Choose episode…</button>
   </div>
 </header>
 
 <main id="app">
-  <p id="empty-state">Enter an episode folder path above to get started.</p>
+  <p id="empty-state">Click "Choose episode…" to pick a folder.</p>
 </main>
+
+<div id="browse-modal" class="modal-overlay" style="display:none">
+  <div class="modal">
+    <div class="modal-header">
+      <span id="browse-current-path"></span>
+      <button id="browse-close" class="secondary small">Close</button>
+    </div>
+    <div class="modal-body" id="browse-list"></div>
+  </div>
+</div>
 
 <script src="/app.js"></script>
 </body>

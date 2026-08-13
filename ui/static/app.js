@@ -1,3 +1,5 @@
+const DEFAULT_BROWSE_PATH = "/Users/petros/Youtube/Philosoftware/Videos";
+
 const state = {
   episodePath: null,
   status: null,
@@ -16,24 +18,113 @@ const ARTIFACT_STAGES = {
 };
 
 const app = document.getElementById("app");
-const pathInput = document.getElementById("episode-path");
-const loadButton = document.getElementById("load-episode");
+const currentPathLabel = document.getElementById("current-episode-path");
+const browseButton = document.getElementById("browse-episode");
+const browseModal = document.getElementById("browse-modal");
+const browseCloseButton = document.getElementById("browse-close");
+const browseCurrentPath = document.getElementById("browse-current-path");
+const browseList = document.getElementById("browse-list");
 
-loadButton.addEventListener("click", () => {
-  const path = pathInput.value.trim();
-  if (path) {
-    loadEpisode(path);
+browseButton.addEventListener("click", () => {
+  openBrowser(state.episodePath || DEFAULT_BROWSE_PATH);
+});
+
+browseCloseButton.addEventListener("click", closeBrowser);
+
+browseModal.addEventListener("click", (e) => {
+  if (e.target === browseModal) {
+    closeBrowser();
   }
 });
 
-pathInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") {
-    loadButton.click();
+openBrowser(DEFAULT_BROWSE_PATH);
+
+async function openBrowser(path) {
+  browseModal.style.display = "flex";
+  await loadBrowseDir(path);
+}
+
+function closeBrowser() {
+  browseModal.style.display = "none";
+}
+
+async function loadBrowseDir(path) {
+  browseCurrentPath.textContent = path;
+  browseList.innerHTML = `<p class="browse-empty">Loading…</p>`;
+
+  try {
+    const res = await fetch(`/api/browse?path=${encodeURIComponent(path)}`);
+    if (!res.ok) {
+      const err = await res.json();
+      browseList.innerHTML = `<p class="browse-empty">${escapeHtml(err.detail)}</p>`;
+      return;
+    }
+    const data = await res.json();
+    renderBrowseList(data);
+  } catch (e) {
+    browseList.innerHTML = `<p class="browse-empty">Failed to browse: ${escapeHtml(String(e))}</p>`;
   }
-});
+}
+
+function renderBrowseList(data) {
+  browseCurrentPath.textContent = data.path;
+
+  const rows = [];
+
+  if (data.parent) {
+    rows.push(`
+      <div class="browse-row" data-action="up">
+        <span class="icon">⬆</span>
+        <span class="name">.. (up one level)</span>
+      </div>
+    `);
+  }
+
+  if (data.isEpisode) {
+    rows.push(`
+      <div class="browse-row episode" data-action="select" data-path="${escapeHtml(data.path)}">
+        <span class="icon">📂</span>
+        <span class="name">Use this folder</span>
+        <span class="badge">Episode</span>
+      </div>
+    `);
+  }
+
+  if (!data.entries.length) {
+    rows.push(`<p class="browse-empty">No subfolders here.</p>`);
+  } else {
+    data.entries.forEach((entry) => {
+      rows.push(`
+        <div class="browse-row ${entry.isEpisode ? "episode" : ""}" data-action="${entry.isEpisode ? "select" : "open"}" data-path="${escapeHtml(entry.path)}">
+          <span class="icon">${entry.isEpisode ? "📂" : "📁"}</span>
+          <span class="name">${escapeHtml(entry.name)}</span>
+          ${entry.isEpisode ? `<span class="badge">Episode</span>` : ""}
+        </div>
+      `);
+    });
+  }
+
+  browseList.innerHTML = rows.join("");
+
+  browseList.querySelectorAll("[data-action]").forEach((el) => {
+    el.addEventListener("click", () => {
+      const action = el.dataset.action;
+
+      if (action === "up") {
+        loadBrowseDir(data.parent);
+      } else if (action === "select") {
+        closeBrowser();
+        loadEpisode(el.dataset.path);
+      } else if (action === "open") {
+        loadBrowseDir(el.dataset.path);
+      }
+    });
+  });
+}
 
 async function loadEpisode(path) {
   state.episodePath = path;
+  currentPathLabel.textContent = path;
 
   try {
     const res = await fetch(`/api/episode/status?path=${encodeURIComponent(path)}`);

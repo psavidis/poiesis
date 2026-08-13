@@ -68,3 +68,36 @@ def test_episode_artifact_returns_parsed_json(tmp_path):
 
     assert response.status_code == 200
     assert response.json()["titles"][0]["text"] == "Hello"
+
+
+def test_browse_returns_404_for_missing_folder(tmp_path):
+    response = client.get("/api/browse", params={"path": str(tmp_path / "nope")})
+    assert response.status_code == 404
+
+
+def test_browse_lists_subdirectories_and_flags_episodes(tmp_path):
+    episode = _make_episode(tmp_path)
+    (tmp_path / "not-an-episode").mkdir()
+    (tmp_path / ".hidden").mkdir()
+
+    response = client.get("/api/browse", params={"path": str(tmp_path)})
+
+    assert response.status_code == 200
+    body = response.json()
+    names = {e["name"] for e in body["entries"]}
+    assert names == {episode.name, "not-an-episode"}
+
+    by_name = {e["name"]: e for e in body["entries"]}
+    assert by_name[episode.name]["isEpisode"] is True
+    assert by_name["not-an-episode"]["isEpisode"] is False
+
+
+def test_browse_reports_parent_and_self_episode_flag(tmp_path):
+    episode = _make_episode(tmp_path)
+
+    response = client.get("/api/browse", params={"path": str(episode)})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["parent"] == str(tmp_path)
+    assert body["isEpisode"] is True

@@ -16,6 +16,8 @@ RESOLUTION_PATTERN = re.compile(r"^\d+x\d+$")
 UI_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = UI_DIR.parent
 
+DEFAULT_BROWSE_PATH = "/Users/petros/Youtube/Philosoftware/Videos"
+
 app = FastAPI(title="Poiesis Control Panel")
 
 
@@ -26,6 +28,33 @@ def resolve_episode(path: str) -> Path:
         raise HTTPException(status_code=404, detail=f"Episode folder not found: {episode}")
 
     return episode
+
+
+@app.get("/api/browse")
+def browse(path: str | None = None):
+    target = Path(path).expanduser().resolve() if path else Path(DEFAULT_BROWSE_PATH).expanduser().resolve()
+
+    if not target.exists() or not target.is_dir():
+        raise HTTPException(status_code=404, detail=f"Folder not found: {target}")
+
+    entries = sorted(
+        (child for child in target.iterdir() if child.is_dir() and not child.name.startswith(".")),
+        key=lambda child: child.name.lower(),
+    )
+
+    return {
+        "path": str(target),
+        "parent": str(target.parent) if target.parent != target else None,
+        "isEpisode": (target / "processing").exists() or (target / "original_footage").exists(),
+        "entries": [
+            {
+                "name": child.name,
+                "path": str(child),
+                "isEpisode": (child / "processing").exists() or (child / "original_footage").exists(),
+            }
+            for child in entries
+        ],
+    }
 
 
 @app.get("/api/episode/status")

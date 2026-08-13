@@ -33,16 +33,18 @@ header h1 {
 
 .episode-picker {
   display: flex;
-  gap: 8px;
+  align-items: center;
+  gap: 12px;
 }
 
-.episode-picker input {
-  width: 420px;
-  padding: 8px 12px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text);
+.current-path {
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  color: var(--text-muted);
+  max-width: 480px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 button {
@@ -244,4 +246,90 @@ button.small {
   overflow-x: auto;
   white-space: pre;
   color: var(--text-muted);
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal {
+  width: 560px;
+  max-width: 90vw;
+  max-height: 80vh;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+#browse-current-path {
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.modal-body {
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.browse-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.browse-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.browse-row .icon {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.browse-row .name {
+  flex: 1;
+}
+
+.browse-row.episode .name {
+  font-weight: 600;
+}
+
+.browse-row .badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--accent);
+  color: #1a1a1a;
+  flex-shrink: 0;
+}
+
+.browse-empty {
+  color: var(--text-muted);
+  padding: 16px 12px;
+  font-size: 13px;
 }
