@@ -333,6 +333,10 @@ async function showArtifact(stageId) {
     }
     const data = await res.json();
     reviewBody.innerHTML = config.render(data);
+
+    if (stageId === "generate_title_scenes") {
+      wireTitleSceneEditor(data.titles || []);
+    }
   } catch (e) {
     reviewBody.innerHTML = `<p class="error">Failed to load artifact: ${escapeHtml(String(e))}</p>`;
   }
@@ -340,24 +344,93 @@ async function showArtifact(stageId) {
 
 function renderTitleScenes(data) {
   const titles = data.titles || [];
-  if (!titles.length) return `<p class="hint">No title scenes proposed.</p>`;
 
   return `
-    <p class="hint">Titles Claude proposed for topic-change moments. Nothing here changes
-    the video until you re-run the codegen/render steps.</p>
-    <div class="scene-list">
-      ${titles
-        .map(
-          (t) => `
-        <div class="ai-decision">
-          <div><span class="scene-type">TITLE</span> <strong>${escapeHtml(t.text || "")}</strong></div>
-          <div class="reason">clip ${escapeHtml(t.videoId || "?")}</div>
+    <p class="hint">Titles Claude proposed for topic-change moments. Edit the text or remove
+    a title below, then save — this rewrites title_scenes.json and re-merges scene-plan.json
+    deterministically (no AI call). Re-run "Generate Remotion codegen" afterward to pick up
+    the change in a render.</p>
+    <div class="scene-list" id="title-scene-editor">
+      ${
+        titles.length
+          ? titles
+              .map(
+                (t, i) => `
+        <div class="ai-decision editable-scene" data-index="${i}">
+          <span class="scene-type">TITLE</span>
+          <input type="text" class="title-text-input" value="${escapeHtml(t.text || "")}" data-video-id="${escapeHtml(t.videoId || "")}" />
+          <span class="reason">clip ${escapeHtml(t.videoId || "?")}</span>
+          <button class="secondary small remove-title-btn" data-index="${i}">Remove</button>
         </div>
       `
-        )
-        .join("")}
+              )
+              .join("")
+          : `<p class="hint" id="no-titles-hint">No title scenes proposed.</p>`
+      }
+    </div>
+    <div class="editor-actions">
+      <button id="save-titles-btn">Save changes</button>
+      <span id="save-titles-status" class="hint"></span>
     </div>
   `;
+}
+
+function wireTitleSceneEditor(initialTitles) {
+  let titles = initialTitles.map((t) => ({ videoId: t.videoId, text: t.text }));
+
+  const editor = document.getElementById("title-scene-editor");
+  const statusLabel = document.getElementById("save-titles-status");
+  const saveBtn = document.getElementById("save-titles-btn");
+
+  if (!editor || !saveBtn) return;
+
+  editor.querySelectorAll(".title-text-input").forEach((input) => {
+    input.addEventListener("input", () => {
+      const index = Number(input.closest(".editable-scene").dataset.index);
+      titles[index] = { ...titles[index], text: input.value };
+    });
+  });
+
+  editor.querySelectorAll(".remove-title-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const index = Number(btn.dataset.index);
+      titles.splice(index, 1);
+      const reviewBody = document.getElementById("review-body");
+      reviewBody.innerHTML = renderTitleScenes({ titles });
+      wireTitleSceneEditor(titles);
+    });
+  });
+
+  saveBtn.addEventListener("click", async () => {
+    saveBtn.disabled = true;
+    statusLabel.textContent = "Saving…";
+    statusLabel.classList.remove("error");
+
+    try {
+      const res = await fetch(
+        `/api/episode/title-scenes?path=${encodeURIComponent(state.episodePath)}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ titles }),
+        }
+      );
+
+      if (!res.ok) {
+        const err = await res.json();
+        statusLabel.textContent = err.detail || "Save failed.";
+        statusLabel.classList.add("error");
+        return;
+      }
+
+      statusLabel.textContent = "Saved. Re-run \"Generate Remotion codegen\" to apply.";
+    } catch (e) {
+      statusLabel.textContent = `Save failed: ${e}`;
+      statusLabel.classList.add("error");
+    } finally {
+      saveBtn.disabled = false;
+    }
+  });
 }
 
 function renderVisualScenes(data) {

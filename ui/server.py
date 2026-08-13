@@ -5,11 +5,18 @@ import json
 import re
 from pathlib import Path
 
+import sys
+
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from pipeline_stages import SECONDARY_STAGES, find_stage, stage_status
 from process_runner import stream_process
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
+
+from generate_title_scenes import merge_title_scenes, write_json_atomic  # noqa: E402
 
 RESOLUTION_PATTERN = re.compile(r"^\d+x\d+$")
 
@@ -101,6 +108,47 @@ def episode_artifact(path: str, name: str):
 
     with artifact_path.open("r", encoding="utf-8") as f:
         return json.load(f)
+
+
+class TitleScene(BaseModel):
+    videoId: str
+    text: str
+
+
+class TitleScenesUpdate(BaseModel):
+    titles: list[TitleScene]
+
+
+@app.put("/api/episode/title-scenes")
+def update_title_scenes(path: str, body: TitleScenesUpdate):
+    """Human edits to AI-proposed title text. Writes the edited titles back
+    to title_scenes.json, then deterministically re-merges them into
+    scene-plan.json the same way generate_title_scenes.py does after the LLM
+    call — no LLM involved here, this only replays the merge with edited
+    text. merge_title_scenes rebuilds timelineStartFrame from scratch each
+    call, so re-running it against the current scene plan is safe even if
+    titles were already merged before."""
+
+    episode = resolve_episode(path)
+    processing = episode / "processing"
+
+    scene_plan_path = processing / "scene-plan.json"
+    title_scenes_path = processing / "title_scenes.json"
+
+    if not scene_plan_path.exists():
+        raise HTTPException(status_code=404, detail="scene-plan.json not found — run the pipeline first")
+
+    titles = [title.model_dump() for title in body.titles]
+
+    with scene_plan_path.open("r", encoding="utf-8") as f:
+        scene_plan = json.load(f)
+
+    scene_plan = merge_title_scenes(scene_plan, titles)
+
+    write_json_atomic(title_scenes_path, {"titles": titles})
+    write_json_atomic(scene_plan_path, scene_plan)
+
+    return {"titles": titles}
 
 
 async def _run_websocket(websocket: WebSocket, build_command):

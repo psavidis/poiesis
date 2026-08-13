@@ -247,6 +247,42 @@ button.small {
   margin-top: 4px;
 }
 
+.ai-decision.editable-scene {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ai-decision.editable-scene .title-text-input {
+  flex: 1;
+  padding: 6px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.ai-decision.editable-scene .reason {
+  margin-top: 0;
+  flex-shrink: 0;
+}
+
+.editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+#save-titles-status {
+  margin: 0;
+}
+
+#save-titles-status.error {
+  color: #ff8f8f;
+}
+
 .json-view {
   background: #050c14;
   border-radius: 6px;
