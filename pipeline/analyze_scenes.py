@@ -2,11 +2,19 @@
 
 import argparse
 import json
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from generate_title_scenes import merge_title_scenes
+from generate_visual_scenes import merge_emphasis_scenes, merge_image_scenes
 
 
 LEAD_IN_SECONDS = 0.15
-TAIL_SECONDS = 0.40
+TAIL_SECONDS = 0.25
+
+LOW_LOGPROB_THRESHOLD = -1.0
 
 
 def load_manifest(episode):
@@ -37,6 +45,22 @@ def load_transcript(episode, video_id):
         return json.load(f)
 
 
+def trim_trailing_low_confidence_segments(segments):
+
+    trimmed = list(segments)
+
+    while trimmed:
+
+        avg_logprob = trimmed[-1].get("avg_logprob")
+
+        if avg_logprob is None or avg_logprob >= LOW_LOGPROB_THRESHOLD:
+            break
+
+        trimmed.pop()
+
+    return trimmed
+
+
 def analyze_speech_bounds(transcript, duration, fps):
 
     if not transcript:
@@ -48,13 +72,18 @@ def analyze_speech_bounds(transcript, duration, fps):
         []
     )
 
+    segments = trim_trailing_low_confidence_segments(segments)
+
     if not segments:
         return 0, int(duration * fps)
 
 
     first_start = segments[0]["start"]
 
-    last_end = segments[-1]["end"]
+    last_end = min(
+        segments[-1]["end"],
+        duration
+    )
 
 
     start_seconds = max(
@@ -147,21 +176,7 @@ def create_scene_plan(episode, manifest):
     }
 
 
-def main():
-
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument(
-        "episode_folder"
-    )
-
-    args = parser.parse_args()
-
-
-    episode = Path(
-        args.episode_folder
-    ).resolve()
-
+def run_scene_analysis(episode):
 
     manifest = load_manifest(
         episode
@@ -172,6 +187,66 @@ def main():
         episode,
         manifest
     )
+
+
+    title_scenes_path = (
+            episode
+            /
+            "processing"
+            /
+            "title_scenes.json"
+    )
+
+    if title_scenes_path.exists():
+
+        with title_scenes_path.open(
+                "r",
+                encoding="utf-8"
+        ) as f:
+            titles = json.load(f)["titles"]
+
+        scene_plan = merge_title_scenes(
+            scene_plan,
+            titles
+        )
+
+        print(
+            f"Re-merged {len(titles)} existing title scene(s)."
+        )
+
+
+    visual_scenes_path = (
+            episode
+            /
+            "processing"
+            /
+            "visual_scenes.json"
+    )
+
+    if visual_scenes_path.exists():
+
+        with visual_scenes_path.open(
+                "r",
+                encoding="utf-8"
+        ) as f:
+            visual_scenes = json.load(f)
+            emphases = visual_scenes.get("emphases", [])
+            images = visual_scenes.get("images", [])
+
+        scene_plan = merge_emphasis_scenes(
+            scene_plan,
+            emphases
+        )
+
+        scene_plan = merge_image_scenes(
+            scene_plan,
+            images
+        )
+
+        print(
+            f"Re-merged {len(emphases)} existing emphasis scene(s) "
+            f"and {len(images)} existing image scene(s)."
+        )
 
 
     output = (
@@ -198,6 +273,27 @@ def main():
     print(
         f"Updated scenes: {len(scene_plan['scenes'])}"
     )
+
+    return scene_plan
+
+
+def main():
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "episode_folder"
+    )
+
+    args = parser.parse_args()
+
+
+    episode = Path(
+        args.episode_folder
+    ).resolve()
+
+
+    run_scene_analysis(episode)
 
 
 if __name__ == "__main__":

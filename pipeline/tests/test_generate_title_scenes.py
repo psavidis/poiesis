@@ -97,6 +97,33 @@ def test_merge_title_scenes_no_titles_leaves_plan_unchanged():
     assert result["scenes"] == scene_plan["scenes"]
 
 
+def test_merge_title_scenes_tolerates_scenes_without_video_id():
+    # regression: non-presenter scenes (title, emphasis) already merged into
+    # the plan don't have a videoId and shouldn't crash a re-run
+    scene_plan = {
+        "scenes": [
+            {
+                "id": "scene-001",
+                "type": "presenter",
+                "videoId": "001",
+                "timelineStartFrame": 0,
+                "durationInFrames": 100,
+            },
+            {
+                "id": "scene-emphasis-0",
+                "type": "emphasis",
+                "text": "already there",
+                "timelineStartFrame": 100,
+                "durationInFrames": 90,
+            },
+        ]
+    }
+
+    result = merge_title_scenes(scene_plan, [])
+
+    assert result["scenes"] == scene_plan["scenes"]
+
+
 def test_merge_title_scenes_multiple_titles_shift_cumulatively():
     scene_plan = {
         "scenes": [
@@ -191,3 +218,79 @@ def test_propose_title_scenes_filters_invalid_video_ids():
     titles = propose_title_scenes(transcript, manifest, llm, "{clips}")
 
     assert titles == [{"videoId": "001", "text": "Valid Title"}]
+
+
+def test_merge_title_scenes_is_idempotent_on_rerun():
+    # regression: re-merging against an already-merged plan should not
+    # produce duplicate title scenes or duplicate scene ids
+    scene_plan = {
+        "scenes": [
+            {
+                "id": "scene-001",
+                "type": "presenter",
+                "videoId": "001",
+                "timelineStartFrame": 0,
+                "durationInFrames": 100,
+            },
+        ],
+    }
+
+    titles = [{"videoId": "001", "text": "First Title"}]
+
+    once = merge_title_scenes(scene_plan, titles)
+    twice = merge_title_scenes(once, titles)
+
+    title_scenes = [s for s in twice["scenes"] if s["type"] == "title"]
+    assert len(title_scenes) == 1
+
+    ids = [s["id"] for s in twice["scenes"]]
+    assert len(ids) == len(set(ids))
+
+
+def test_merge_title_scenes_keeps_overlay_scenes_aligned_when_parent_moves():
+    # regression: emphasis/image overlays are anchored to a parent scene via
+    # parentSceneId + offsetInParentFrames. When a title gets added and
+    # shifts the parent presenter scene's timelineStartFrame, the overlay
+    # must NOT need repositioning — its absolute position is derived from
+    # wherever the parent currently is, not stored independently.
+    scene_plan = {
+        "scenes": [
+            {
+                "id": "scene-001",
+                "type": "presenter",
+                "videoId": "001",
+                "timelineStartFrame": 0,
+                "durationInFrames": 100,
+            },
+            {
+                "id": "scene-002",
+                "type": "presenter",
+                "videoId": "002",
+                "timelineStartFrame": 100,
+                "durationInFrames": 200,
+            },
+            {
+                "id": "scene-emphasis-0",
+                "type": "emphasis",
+                "text": "key phrase",
+                "parentSceneId": "scene-002",
+                "offsetInParentFrames": 50,
+                "durationInFrames": 90,
+            },
+        ],
+    }
+
+    # adding a title before scene-002 pushes scene-002 forward by TITLE_DURATION_FRAMES
+    titles = [{"videoId": "002", "text": "New Section"}]
+
+    result = merge_title_scenes(scene_plan, titles)
+
+    scene_002 = next(s for s in result["scenes"] if s["id"] == "scene-002")
+    emphasis_scene = next(s for s in result["scenes"] if s["id"] == "scene-emphasis-0")
+
+    assert scene_002["timelineStartFrame"] == 100 + TITLE_DURATION_FRAMES
+
+    # the overlay's own fields are untouched — it still resolves correctly
+    # via parentSceneId + offsetInParentFrames against scene_002's new position
+    assert emphasis_scene["parentSceneId"] == "scene-002"
+    assert emphasis_scene["offsetInParentFrames"] == 50

@@ -2,10 +2,25 @@ export interface EpisodeVideo {
     id: string;
     filename: string;
     path: string;
+    keyedPath?: string;
     duration: number;
     fps: number;
     width: number;
     height: number;
+}
+
+export interface EpisodeAsset {
+    id: string;
+    filename: string;
+    path: string;
+    caption: string;
+}
+
+export interface BackgroundVideo {
+    filename: string;
+    path: string;
+    duration: number;
+    fps: number;
 }
 
 export interface SceneEffects {
@@ -32,7 +47,27 @@ export interface TitleScene {
     durationInFrames: number;
 }
 
-export type Scene = PresenterScene | TitleScene;
+export interface EmphasisScene {
+    type: "emphasis";
+    id: string;
+    text: string;
+    parentSceneId: string;
+    offsetInParentFrames: number;
+    durationInFrames: number;
+}
+
+export interface ImageScene {
+    type: "image";
+    id: string;
+    assetId: string;
+    caption?: string;
+    display: "full" | "inset";
+    parentSceneId: string;
+    offsetInParentFrames: number;
+    durationInFrames: number;
+}
+
+export type Scene = PresenterScene | TitleScene | EmphasisScene | ImageScene;
 
 export interface ScenePlan {
     version: number;
@@ -46,4 +81,6 @@ export interface EpisodeProps {
     height: number;
     fps: number;
     videos: EpisodeVideo[];
+    assets: EpisodeAsset[];
+    backgroundVideo?: BackgroundVideo;
 }

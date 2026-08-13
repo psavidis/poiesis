@@ -2,7 +2,9 @@ from unittest.mock import patch
 
 from qa_check import (
     check_missing_media,
+    check_overlay_scenes_within_bounds,
     check_rendered_duration,
+    check_scene_plan_asset_ids,
     check_scene_plan_video_ids,
     check_timeline_continuity,
 )
@@ -61,11 +63,46 @@ def test_check_scene_plan_video_ids_ignores_non_presenter_scenes():
     assert check_scene_plan_video_ids(scene_plan, manifest) == []
 
 
+def test_check_scene_plan_asset_ids_flags_unknown_id():
+    scene_plan = {
+        "scenes": [
+            {"id": "scene-image-0", "type": "image", "assetId": "img-999"},
+        ]
+    }
+    assets = [{"id": "img-001"}]
+
+    issues = check_scene_plan_asset_ids(scene_plan, assets)
+
+    assert len(issues) == 1
+    assert issues[0]["check"] == "unknown_asset_id"
+
+
+def test_check_scene_plan_asset_ids_passes_for_known_id():
+    scene_plan = {
+        "scenes": [
+            {"id": "scene-image-0", "type": "image", "assetId": "img-001"},
+        ]
+    }
+    assets = [{"id": "img-001"}]
+
+    assert check_scene_plan_asset_ids(scene_plan, assets) == []
+
+
+def test_check_scene_plan_asset_ids_ignores_non_image_scenes():
+    scene_plan = {
+        "scenes": [
+            {"id": "scene-title-001", "type": "title", "text": "Intro"},
+        ]
+    }
+
+    assert check_scene_plan_asset_ids(scene_plan, []) == []
+
+
 def test_check_timeline_continuity_passes_for_contiguous_scenes():
     scene_plan = {
         "scenes": [
-            {"id": "a", "timelineStartFrame": 0, "durationInFrames": 100},
-            {"id": "b", "timelineStartFrame": 100, "durationInFrames": 50},
+            {"id": "a", "type": "presenter", "timelineStartFrame": 0, "durationInFrames": 100},
+            {"id": "b", "type": "presenter", "timelineStartFrame": 100, "durationInFrames": 50},
         ]
     }
 
@@ -75,8 +112,8 @@ def test_check_timeline_continuity_passes_for_contiguous_scenes():
 def test_check_timeline_continuity_flags_gap():
     scene_plan = {
         "scenes": [
-            {"id": "a", "timelineStartFrame": 0, "durationInFrames": 100},
-            {"id": "b", "timelineStartFrame": 150, "durationInFrames": 50},
+            {"id": "a", "type": "presenter", "timelineStartFrame": 0, "durationInFrames": 100},
+            {"id": "b", "type": "presenter", "timelineStartFrame": 150, "durationInFrames": 50},
         ]
     }
 
@@ -90,8 +127,8 @@ def test_check_timeline_continuity_flags_gap():
 def test_check_timeline_continuity_flags_overlap():
     scene_plan = {
         "scenes": [
-            {"id": "a", "timelineStartFrame": 0, "durationInFrames": 100},
-            {"id": "b", "timelineStartFrame": 80, "durationInFrames": 50},
+            {"id": "a", "type": "presenter", "timelineStartFrame": 0, "durationInFrames": 100},
+            {"id": "b", "type": "presenter", "timelineStartFrame": 80, "durationInFrames": 50},
         ]
     }
 
@@ -99,6 +136,112 @@ def test_check_timeline_continuity_flags_overlap():
 
     assert len(issues) == 1
     assert issues[0]["sceneId"] == "b"
+
+
+def test_check_timeline_continuity_ignores_overlay_scenes():
+    scene_plan = {
+        "scenes": [
+            {"id": "a", "type": "presenter", "timelineStartFrame": 0, "durationInFrames": 100},
+            {"id": "b", "type": "presenter", "timelineStartFrame": 100, "durationInFrames": 50},
+            {"id": "e", "type": "emphasis", "timelineStartFrame": 40, "durationInFrames": 30},
+        ]
+    }
+
+    assert check_timeline_continuity(scene_plan) == []
+
+
+def test_check_timeline_continuity_ignores_inset_image_scenes():
+    scene_plan = {
+        "scenes": [
+            {"id": "a", "type": "presenter", "timelineStartFrame": 0, "durationInFrames": 100},
+            {
+                "id": "i",
+                "type": "image",
+                "display": "inset",
+                "timelineStartFrame": 40,
+                "durationInFrames": 30,
+            },
+        ]
+    }
+
+    assert check_timeline_continuity(scene_plan) == []
+
+
+def test_check_timeline_continuity_treats_full_display_image_as_track_scene():
+    scene_plan = {
+        "scenes": [
+            {"id": "a", "type": "presenter", "timelineStartFrame": 0, "durationInFrames": 100},
+            {
+                "id": "i",
+                "type": "image",
+                "display": "full",
+                "timelineStartFrame": 200,  # gap: full-display images occupy the track
+                "durationInFrames": 30,
+            },
+        ]
+    }
+
+    issues = check_timeline_continuity(scene_plan)
+
+    assert len(issues) == 1
+    assert issues[0]["sceneId"] == "i"
+
+
+def test_check_overlay_scenes_within_bounds_passes_when_contained():
+    scene_plan = {
+        "scenes": [
+            {"id": "a", "type": "presenter", "timelineStartFrame": 0, "durationInFrames": 100},
+            {
+                "id": "e",
+                "type": "emphasis",
+                "parentSceneId": "a",
+                "offsetInParentFrames": 40,
+                "durationInFrames": 30,
+            },
+        ]
+    }
+
+    assert check_overlay_scenes_within_bounds(scene_plan) == []
+
+
+def test_check_overlay_scenes_within_bounds_flags_scene_outside_any_base_scene():
+    scene_plan = {
+        "scenes": [
+            {"id": "a", "type": "presenter", "timelineStartFrame": 0, "durationInFrames": 100},
+            {
+                "id": "e",
+                "type": "emphasis",
+                "parentSceneId": "a",
+                "offsetInParentFrames": 90,
+                "durationInFrames": 30,
+            },
+        ]
+    }
+
+    issues = check_overlay_scenes_within_bounds(scene_plan)
+
+    assert len(issues) == 1
+    assert issues[0]["check"] == "overlay_outside_bounds"
+    assert issues[0]["sceneId"] == "e"
+
+
+def test_check_overlay_scenes_within_bounds_flags_missing_parent():
+    scene_plan = {
+        "scenes": [
+            {
+                "id": "e",
+                "type": "emphasis",
+                "parentSceneId": "does-not-exist",
+                "offsetInParentFrames": 0,
+                "durationInFrames": 30,
+            },
+        ]
+    }
+
+    issues = check_overlay_scenes_within_bounds(scene_plan)
+
+    assert len(issues) == 1
+    assert issues[0]["sceneId"] == "e"
 
 
 def test_check_rendered_duration_skips_when_no_render_exists(tmp_path):
@@ -116,7 +259,7 @@ def test_check_rendered_duration_flags_mismatch(tmp_path):
     scene_plan = {
         "fps": 30,
         "scenes": [
-            {"timelineStartFrame": 0, "durationInFrames": 300},
+            {"type": "presenter", "timelineStartFrame": 0, "durationInFrames": 300},
         ],
     }
 
@@ -136,7 +279,7 @@ def test_check_rendered_duration_passes_within_tolerance(tmp_path):
     scene_plan = {
         "fps": 30,
         "scenes": [
-            {"timelineStartFrame": 0, "durationInFrames": 300},
+            {"type": "presenter", "timelineStartFrame": 0, "durationInFrames": 300},
         ],
     }
 

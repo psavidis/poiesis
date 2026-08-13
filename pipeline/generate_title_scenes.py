@@ -108,12 +108,30 @@ def merge_title_scenes(scene_plan, titles):
         for title in titles
     }
 
+    # Track scenes (presenter) define the contiguous timeline; overlay scenes
+    # (emphasis, inset images) don't consume track space. Rebuilding track
+    # positions from scratch — rather than incrementally shifting whatever
+    # positions happen to already be on the scenes — makes this merge safe
+    # to re-run on an already-merged plan (idempotent), since it never
+    # compounds a previous run's title offset.
+    track_scenes = [
+        scene
+        for scene in scene_plan["scenes"]
+        if scene["type"] == "presenter"
+    ]
+
+    overlay_scenes = [
+        scene
+        for scene in scene_plan["scenes"]
+        if scene["type"] not in ("presenter", "title")
+    ]
+
     merged_scenes = []
-    offset = 0
+    timeline_frame = 0
 
-    for scene in scene_plan["scenes"]:
+    for scene in track_scenes:
 
-        title_text = titles_by_video_id.get(scene["videoId"])
+        title_text = titles_by_video_id.get(scene.get("videoId"))
 
         if title_text:
 
@@ -122,17 +140,21 @@ def merge_title_scenes(scene_plan, titles):
                     "id": f"scene-title-{scene['videoId']}",
                     "type": "title",
                     "text": title_text,
-                    "timelineStartFrame": scene["timelineStartFrame"] + offset,
+                    "timelineStartFrame": timeline_frame,
                     "durationInFrames": TITLE_DURATION_FRAMES,
                 }
             )
 
-            offset += TITLE_DURATION_FRAMES
+            timeline_frame += TITLE_DURATION_FRAMES
 
         scene = dict(scene)
-        scene["timelineStartFrame"] += offset
+        scene["timelineStartFrame"] = timeline_frame
 
         merged_scenes.append(scene)
+
+        timeline_frame += scene["durationInFrames"]
+
+    merged_scenes.extend(overlay_scenes)
 
     scene_plan = dict(scene_plan)
     scene_plan["scenes"] = merged_scenes

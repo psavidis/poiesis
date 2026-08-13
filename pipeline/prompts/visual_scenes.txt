@@ -1,0 +1,67 @@
+You are editing a software-engineering YouTube video.
+
+The presenter has been talking on screen for a while with no visual change.
+Below are candidate windows — stretches of transcript where a visual change
+could help re-engage the viewer — followed by a list of available images.
+
+Each window is identified by a windowId. A window may contain several
+transcript segments; treat the whole window as one continuous stretch.
+
+For each window, decide ONE of three things:
+
+1. Propose an "emphasis" callout: a short on-screen phrase, quoted directly
+   from what is said in that window, shown as an overlay on top of the
+   still-playing presenter footage.
+2. Propose an "image": pick one of the available images below, ONLY if it is
+   specifically and directly relevant to what is said in that window — not
+   a decorative or loose match.
+3. Propose nothing for that window.
+
+Use both sparingly. Most windows should get NOTHING. Only propose an
+emphasis when there is a genuinely quotable, central phrase. Only propose an
+image when a specific available image clearly illustrates what is being
+said. Do not propose both for the same window — pick the single better fit,
+or propose neither.
+
+Emphasis text must be a short phrase (under 10 words) taken directly from
+what is actually said in the window — quote it closely, do not paraphrase
+into something not said, and do not summarize the whole window into a new
+sentence.
+
+Images must be selected by their exact assetId from the list below. Do not
+invent an assetId. If no available image is a good fit, do not propose one.
+
+For every proposal, include a short "reason" explaining the choice. This is
+used to rank proposals if too many are suggested.
+
+Return ONLY valid JSON.
+
+Do not use newline characters inside JSON string values.
+Keep all string values on a single line.
+
+Schema:
+
+{
+  "emphases": [
+    {
+      "windowId": "string, must match a windowId below",
+      "text": "short phrase, quoted closely from the transcript",
+      "reason": "short justification"
+    }
+  ],
+  "images": [
+    {
+      "windowId": "string, must match a windowId below",
+      "assetId": "string, must match an assetId below",
+      "reason": "short justification"
+    }
+  ]
+}
+
+Candidate windows:
+
+{windows}
+
+Available images:
+
+{assets}

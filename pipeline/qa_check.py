@@ -73,18 +73,57 @@ def check_scene_plan_video_ids(scene_plan, manifest):
     return issues
 
 
+def check_scene_plan_asset_ids(scene_plan, assets):
+
+    issues = []
+
+    known_ids = {asset["id"] for asset in assets}
+
+    for scene in scene_plan["scenes"]:
+
+        if scene["type"] != "image":
+            continue
+
+        if scene["assetId"] not in known_ids:
+            issues.append(
+                {
+                    "check": "unknown_asset_id",
+                    "severity": "high",
+                    "sceneId": scene["id"],
+                    "detail": f"Scene references unknown assetId: {scene['assetId']}",
+                }
+            )
+
+    return issues
+
+
+def is_overlay_scene(scene):
+
+    if scene["type"] == "emphasis":
+        return True
+
+    if scene["type"] == "image":
+        return scene.get("display") == "inset"
+
+    return False
+
+
 def check_timeline_continuity(scene_plan):
 
     issues = []
 
-    scenes = sorted(
-        scene_plan["scenes"],
+    track_scenes = sorted(
+        (
+            scene
+            for scene in scene_plan["scenes"]
+            if not is_overlay_scene(scene)
+        ),
         key=lambda s: s["timelineStartFrame"]
     )
 
     expected_frame = 0
 
-    for scene in scenes:
+    for scene in track_scenes:
 
         start = scene["timelineStartFrame"]
 
@@ -103,6 +142,59 @@ def check_timeline_continuity(scene_plan):
             )
 
         expected_frame = start + scene["durationInFrames"]
+
+    return issues
+
+
+def check_overlay_scenes_within_bounds(scene_plan):
+
+    issues = []
+
+    scenes_by_id = {scene["id"]: scene for scene in scene_plan["scenes"]}
+
+    overlay_scenes = [
+        scene
+        for scene in scene_plan["scenes"]
+        if is_overlay_scene(scene)
+    ]
+
+    for overlay in overlay_scenes:
+
+        parent = scenes_by_id.get(overlay.get("parentSceneId"))
+
+        if not parent or is_overlay_scene(parent):
+
+            issues.append(
+                {
+                    "check": "overlay_outside_bounds",
+                    "severity": "medium",
+                    "sceneId": overlay["id"],
+                    "detail": (
+                        f"Overlay scene references missing or invalid "
+                        f"parentSceneId: {overlay.get('parentSceneId')}"
+                    ),
+                }
+            )
+
+            continue
+
+        offset = overlay["offsetInParentFrames"]
+        overlay_end = offset + overlay["durationInFrames"]
+
+        if offset < 0 or overlay_end > parent["durationInFrames"]:
+
+            issues.append(
+                {
+                    "check": "overlay_outside_bounds",
+                    "severity": "medium",
+                    "sceneId": overlay["id"],
+                    "detail": (
+                        f"Overlay scene [{offset}, {overlay_end}) is not "
+                        f"fully contained within parent scene {parent['id']} "
+                        f"(duration {parent['durationInFrames']})"
+                    ),
+                }
+            )
 
     return issues
 
@@ -140,6 +232,7 @@ def check_rendered_duration(episode, scene_plan):
         (
             scene["timelineStartFrame"] + scene["durationInFrames"]
             for scene in scene_plan["scenes"]
+            if not is_overlay_scene(scene)
         ),
         default=0,
     )
@@ -182,11 +275,16 @@ def run_qa(episode: Path):
     manifest = load_json(manifest_path)
     scene_plan = load_json(scene_plan_path)
 
+    assets_path = processing / "assets.json"
+    assets = load_json(assets_path)["assets"] if assets_path.exists() else []
+
     issues = []
 
     issues += check_missing_media(episode, manifest)
     issues += check_scene_plan_video_ids(scene_plan, manifest)
+    issues += check_scene_plan_asset_ids(scene_plan, assets)
     issues += check_timeline_continuity(scene_plan)
+    issues += check_overlay_scenes_within_bounds(scene_plan)
     issues += check_rendered_duration(episode, scene_plan)
 
     return {

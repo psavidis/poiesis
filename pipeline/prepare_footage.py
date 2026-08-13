@@ -171,13 +171,59 @@ def create_episode_symlink(
     )
 
 
+def find_background_video(episode_folder: Path):
+
+    background_dir = episode_folder / "background"
+
+    if not background_dir.exists():
+        return None
+
+    candidates = sorted(
+        f
+        for f in background_dir.iterdir()
+        if f.is_file()
+           and f.name not in IGNORED_FILES
+           and f.suffix.lower() in VIDEO_EXTENSIONS
+    )
+
+    if not candidates:
+        return None
+
+    return candidates[0]
+
+
+def load_previous_manifest(episode_folder: Path):
+
+    manifest_path = episode_folder / "processing" / "manifest.json"
+
+    if not manifest_path.exists():
+        return None
+
+    with manifest_path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
 def create_manifest(
         episode_folder: Path,
         videos,
-        config
+        config,
+        previous_manifest=None
 ):
 
     render = config["render"]
+
+    previous_keying_by_id = {}
+
+    if previous_manifest:
+
+        previous_keying_by_id = {
+            video["id"]: {
+                key: video[key]
+                for key in ("keyedPath", "keyedRenderPath")
+                if key in video
+            }
+            for video in previous_manifest.get("videos", [])
+        }
 
     manifest = {
         "version": 1,
@@ -187,8 +233,29 @@ def create_manifest(
         "height": render["height"],
         "fps": render["fps"],
         "videos": [],
-        "scenes": []
+        "scenes": [],
+        "backgroundVideo": None
     }
+
+    background_video = find_background_video(episode_folder)
+
+    if background_video:
+
+        background_metadata = get_video_metadata(background_video)
+
+        manifest["backgroundVideo"] = {
+            "filename": background_video.name,
+            "path": str(
+                background_video.relative_to(episode_folder)
+            ),
+            "renderPath": str(
+                Path("episodes")
+                / episode_folder.name
+                / background_video.relative_to(episode_folder)
+            ),
+            "duration": background_metadata["duration"],
+            "fps": background_metadata["fps"],
+        }
 
 
     for index, video in enumerate(
@@ -196,13 +263,15 @@ def create_manifest(
             start=1
     ):
 
+        video_id = f"{index:03d}"
+
         metadata = get_video_metadata(
             video
         )
 
         manifest["videos"].append(
             {
-                "id": f"{index:03d}",
+                "id": video_id,
                 "order": index,
                 "filename": video.name,
                 "stem": video.stem,
@@ -218,6 +287,7 @@ def create_manifest(
                 ),
 
                 **metadata,
+                **previous_keying_by_id.get(video_id, {}),
             }
         )
 
@@ -244,8 +314,12 @@ def write_manifest(
 
 def generate_episode_props_ts(
         manifest,
-        renderer_folder: Path
+        renderer_folder: Path,
+        assets=None
 ):
+
+    if assets is None:
+        assets = []
 
     output = (
             renderer_folder
@@ -275,12 +349,20 @@ def generate_episode_props_ts(
 
     for video in manifest["videos"]:
 
-        lines.extend(
+        video_lines = [
+            "    {",
+            f'      id: "{video["id"]}",',
+            f'      filename: "{video["filename"]}",',
+            f'      path: "{video["renderPath"]}",',
+        ]
+
+        if video.get("keyedRenderPath"):
+            video_lines.append(
+                f'      keyedPath: "{video["keyedRenderPath"]}",'
+            )
+
+        video_lines.extend(
             [
-                "    {",
-                f'      id: "{video["id"]}",',
-                f'      filename: "{video["filename"]}",',
-                f'      path: "{video["renderPath"]}",',
                 f'      duration: {video["duration"]},',
                 f'      fps: {video["fps"]},',
                 f'      width: {video["width"]},',
@@ -289,10 +371,47 @@ def generate_episode_props_ts(
             ]
         )
 
+        lines.extend(video_lines)
+
 
     lines.extend(
         [
             "  ],",
+            "  assets: [",
+        ]
+    )
+
+    for asset in assets:
+
+        lines.extend(
+            [
+                "    {",
+                f'      id: {json.dumps(asset["id"])},',
+                f'      filename: {json.dumps(asset["filename"])},',
+                f'      path: {json.dumps(asset["renderPath"])},',
+                f'      caption: {json.dumps(asset["caption"])},',
+                "    },",
+            ]
+        )
+
+    lines.append("  ],")
+
+    background_video = manifest.get("backgroundVideo")
+
+    if background_video:
+        lines.extend(
+            [
+                "  backgroundVideo: {",
+                f'    filename: {json.dumps(background_video["filename"])},',
+                f'    path: {json.dumps(background_video["renderPath"])},',
+                f'    duration: {background_video["duration"]},',
+                f'    fps: {background_video["fps"]},',
+                "  },",
+            ]
+        )
+
+    lines.extend(
+        [
             "};",
             ""
         ]
@@ -389,10 +508,13 @@ def main():
     )
 
 
+    previous_manifest = load_previous_manifest(episode_folder)
+
     manifest = create_manifest(
         episode_folder,
         videos,
-        config
+        config,
+        previous_manifest=previous_manifest
     )
 
 
@@ -409,9 +531,17 @@ def main():
     )
 
 
+    assets_path = processing / "assets.json"
+    assets = []
+
+    if assets_path.exists():
+        with assets_path.open("r", encoding="utf-8") as f:
+            assets = json.load(f)["assets"]
+
     generate_episode_props_ts(
         manifest,
-        renderer_folder
+        renderer_folder,
+        assets=assets
     )
 
 

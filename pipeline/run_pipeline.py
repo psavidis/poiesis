@@ -115,6 +115,15 @@ def main():
     run(scene_analysis_command)
 
 
+    # 6a. Index episode graphics/ into an asset manifest
+    index_assets_command = [
+        str(pipeline / "index_assets.py"),
+        str(episode)
+    ]
+
+    run(index_assets_command)
+
+
     # 6b. Propose title scenes
     title_scenes_command = [
         str(pipeline / "generate_title_scenes.py"),
@@ -125,6 +134,18 @@ def main():
         title_scenes_command.append("--force")
 
     run(title_scenes_command)
+
+
+    # 6c. Propose emphasis overlay scenes
+    visual_scenes_command = [
+        str(pipeline / "generate_visual_scenes.py"),
+        str(episode)
+    ]
+
+    if args.force:
+        visual_scenes_command.append("--force")
+
+    run(visual_scenes_command)
 
 
     # 7. Generate Remotion scene plan
