@@ -1,4 +1,5 @@
 import sys
+import time
 
 from process_runner import stream_process
 
@@ -32,3 +33,27 @@ def test_stream_process_captures_stderr_too():
     )
 
     assert "oops" in lines[0]
+
+
+def test_stream_process_cancel_terminates_and_yields_cancelled_marker():
+    """Mirrors how server.py drives this: a background thread calls
+    handle.cancel() shortly after the process starts, while the generator
+    is being drained on another thread."""
+
+    import threading
+
+    def cancel_soon(handle):
+        def go():
+            time.sleep(0.2)
+            handle.cancel()
+
+        threading.Thread(target=go, daemon=True).start()
+
+    lines = list(
+        stream_process(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            on_start=cancel_soon,
+        )
+    )
+
+    assert lines[-1].startswith("__CANCELLED__")

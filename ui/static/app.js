@@ -168,7 +168,10 @@ function render() {
     </div>
 
     <div class="section" id="log-section" style="${state.logVisible ? "" : "display:none"}">
-      <h2>Output</h2>
+      <div class="section-header">
+        <h2>Output</h2>
+        ${running ? `<button id="cancel-run" class="danger small">Cancel</button>` : ""}
+      </div>
       <div class="log-panel" id="log-panel">${escapeHtml(state.logText)}</div>
     </div>
 
@@ -195,6 +198,9 @@ function render() {
   document.getElementById("run-all").addEventListener("click", runFullPipeline);
   document.getElementById("run-qa").addEventListener("click", () => runSecondaryStage("qa_check"));
   document.getElementById("run-render").addEventListener("click", runRender);
+
+  const cancelBtn = document.getElementById("cancel-run");
+  if (cancelBtn) cancelBtn.addEventListener("click", cancelRun);
 
   if (state.logVisible) {
     const logPanel = document.getElementById("log-panel");
@@ -279,12 +285,21 @@ function runOverWebSocket(path, params, runningId) {
     } else if (msg.type === "done") {
       appendLog(logPanel, `\n(exit code ${msg.exitCode})\n`);
       finishRun(msg.exitCode === 0);
+    } else if (msg.type === "cancelled") {
+      appendLog(logPanel, `\nCancelled.\n`);
+      finishRun(false);
     }
   });
 
   socket.addEventListener("close", () => {
     state.socket = null;
   });
+}
+
+function cancelRun() {
+  if (state.socket && state.socket.readyState === WebSocket.OPEN) {
+    state.socket.send(JSON.stringify({ type: "cancel" }));
+  }
 }
 
 function finishRun(success) {

@@ -131,6 +131,25 @@ async def _run_websocket(websocket: WebSocket, build_command):
             pass
 
 
+async def _watch_for_cancel(websocket: WebSocket, handle_holder: dict):
+    """Waits for a {"type": "cancel"} client message and signals the running
+    process's handle once it's available. Runs concurrently with log
+    streaming for the same connection's lifetime; cancelled/disconnected
+    without ceremony once the run finishes on its own."""
+
+    try:
+        while True:
+            message = await websocket.receive_json()
+
+            if message.get("type") == "cancel":
+                handle = handle_holder.get("handle")
+                if handle is not None:
+                    handle.cancel()
+                return
+    except (WebSocketDisconnect, asyncio.CancelledError):
+        pass
+
+
 @app.websocket("/ws/pipeline/run")
 async def ws_run_pipeline(websocket: WebSocket):
 
@@ -193,17 +212,20 @@ async def ws_run_render(websocket: WebSocket):
 async def _stream_command(websocket: WebSocket, command):
     """Runs the (blocking) process generator in a worker thread and relays
     each line to the websocket as it arrives, without blocking the event
-    loop for the whole (potentially very long) process lifetime."""
+    loop for the whole (potentially very long) process lifetime. Concurrently
+    watches for a client "cancel" message so a long render/pipeline run can
+    be stopped mid-flight."""
 
     await websocket.send_json({"type": "start", "command": " ".join(command)})
 
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
     error_holder = {}
+    handle_holder = {}
 
     def produce():
         try:
-            for line in stream_process(command):
+            for line in stream_process(command, on_start=lambda h: handle_holder.setdefault("handle", h)):
                 loop.call_soon_threadsafe(queue.put_nowait, line)
         except Exception as e:
             error_holder["error"] = str(e)
@@ -212,20 +234,33 @@ async def _stream_command(websocket: WebSocket, command):
 
     loop.run_in_executor(None, produce)
 
-    while True:
-        line = await queue.get()
+    cancel_task = asyncio.ensure_future(_watch_for_cancel(websocket, handle_holder))
 
-        if line is None:
-            if "error" in error_holder:
-                await websocket.send_json({"type": "error", "message": error_holder["error"]})
-            return
+    try:
+        while True:
+            line = await queue.get()
 
-        if line.startswith("__EXIT_CODE__"):
-            exit_code = int(line.removeprefix("__EXIT_CODE__"))
-            await websocket.send_json({"type": "done", "exitCode": exit_code})
-            continue
+            if line is None:
+                if "error" in error_holder:
+                    await websocket.send_json({"type": "error", "message": error_holder["error"]})
+                return
 
-        await websocket.send_json({"type": "log", "line": line})
+            if line.startswith("__EXIT_CODE__"):
+                exit_code = int(line.removeprefix("__EXIT_CODE__"))
+                await websocket.send_json({"type": "done", "exitCode": exit_code})
+                continue
+
+            if line.startswith("__CANCELLED__"):
+                await websocket.send_json({"type": "cancelled"})
+                continue
+
+            await websocket.send_json({"type": "log", "line": line})
+    finally:
+        cancel_task.cancel()
+        try:
+            await cancel_task
+        except asyncio.CancelledError:
+            pass
 
 
 app.mount("/", StaticFiles(directory=str(UI_DIR / "static"), html=True), name="static")
