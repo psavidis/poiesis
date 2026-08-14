@@ -149,7 +149,7 @@ def create_scene_plan(episode, manifest):
             "durationInFrames": duration,
 
             "effects": {
-                "captions": False,
+                "captions": True,
                 "transition": "none"
             }
         }

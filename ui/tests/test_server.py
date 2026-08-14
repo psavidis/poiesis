@@ -1,4 +1,5 @@
 import json
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -276,3 +277,56 @@ def test_update_visual_scenes_can_remove_scenes_by_omitting_them(tmp_path):
         s for s in scene_plan_on_disk["scenes"] if s["type"] in ("emphasis", "image")
     ]
     assert overlay_scenes == []
+
+
+def test_edit_scene_plan_returns_404_without_scene_plan(tmp_path):
+    episode = _make_episode(tmp_path)
+
+    response = client.post(
+        "/api/episode/edit-plan",
+        params={"path": str(episode)},
+        json={"instruction": "remove the title card"},
+    )
+
+    assert response.status_code == 404
+
+
+def test_edit_scene_plan_applies_validated_operations(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    fake_result = (
+        {"scenes": [{"id": "scene-001", "type": "presenter", "videoId": "001", "text": "unused"}]},
+        [{"op": "remove", "sceneId": "scene-002", "reason": "instruction said to remove it"}],
+        [],
+    )
+
+    with patch("server.edit_plan", return_value=fake_result) as mock_edit_plan:
+        response = client.post(
+            "/api/episode/edit-plan",
+            params={"path": str(episode)},
+            json={"instruction": "remove the second clip"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["applied"][0]["sceneId"] == "scene-002"
+    assert body["rejected"] == []
+    mock_edit_plan.assert_called_once()
+
+    scene_plan_on_disk = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    assert scene_plan_on_disk["scenes"][0]["id"] == "scene-001"
+
+
+def test_edit_scene_plan_returns_502_when_llm_call_fails(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    with patch("server.edit_plan", side_effect=RuntimeError("claude CLI not found")):
+        response = client.post(
+            "/api/episode/edit-plan",
+            params={"path": str(episode)},
+            json={"instruction": "remove the title card"},
+        )
+
+    assert response.status_code == 502

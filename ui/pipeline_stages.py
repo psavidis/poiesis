@@ -94,6 +94,12 @@ PIPELINE_STAGES = [
         "visual_scenes.json",
     ),
     Stage(
+        "generate_captions",
+        "Generate captions",
+        lambda ep: [PYTHON, PIPELINE_DIR / "generate_captions.py", ep],
+        "captions.json",
+    ),
+    Stage(
         "generate_scene_plan_ts",
         "Generate Remotion codegen",
         lambda ep: [PYTHON, PIPELINE_DIR / "generate_scene_plan_ts.py", ep],

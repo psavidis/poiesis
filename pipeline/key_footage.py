@@ -14,7 +14,26 @@ from prepare_footage import generate_episode_props_ts
 
 CHROMA_COLOR = "0x17FF1F"
 CHROMA_SIMILARITY = 0.10
-CHROMA_BLEND = 0.06
+
+# Widened from 0.06: chromakey's blend controls how much of the
+# similarity-to-color transition zone gets partial (rather than hard 0/1)
+# alpha. At 0.06 fine hair strands come out as a jagged, blocky silhouette
+# instead of soft translucent wisps. 0.20 was verified against real footage
+# (Episode 9, extracted frames composited over a contrasting background) —
+# visibly softer edges, no green fringe. A post-hoc alpha-channel blur was
+# also tried and rejected: it just spreads the residual green tint in the
+# fringe pixels into a visible halo instead of actually softening the edge,
+# because the color data under a hard-thresholded fringe is still green —
+# only widening the keyer's own blend zone (which lets despill clean the
+# transition pixels too) fixes that.
+CHROMA_BLEND = 0.20
+
+# Despill's mix (how strongly the green cast gets removed) also needed to
+# go up alongside the wider blend — a wider transition zone has more
+# partially-green fringe pixels than the old hard cutoff had, and mix=0.5
+# wasn't strong enough to fully clean them. Verified alongside CHROMA_BLEND
+# above.
+DESPILL_MIX = 1.0
 
 CROPDETECT_SAMPLE_FRAMES = 200
 
@@ -85,7 +104,7 @@ def key_clip(source: Path, output: Path, crop: str | None):
     filters.append(
         f"chromakey={CHROMA_COLOR}:{CHROMA_SIMILARITY}:{CHROMA_BLEND}"
     )
-    filters.append("despill=type=green:mix=0.5:expand=0")
+    filters.append(f"despill=type=green:mix={DESPILL_MIX}:expand=0")
 
     filter_chain = ",".join(filters)
 

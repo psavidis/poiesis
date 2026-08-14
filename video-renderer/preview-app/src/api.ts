@@ -35,3 +35,31 @@ export async function saveVisualScenes(
     }
     return res.json();
 }
+
+export interface EditPlanOperation {
+    op: "remove" | "update";
+    sceneId: string;
+    fields?: Record<string, unknown>;
+    reason?: string;
+}
+
+export interface EditPlanResult {
+    applied: EditPlanOperation[];
+    rejected: { operation: EditPlanOperation; reason: string }[];
+}
+
+export async function editPlan(episodePath: string, instruction: string): Promise<EditPlanResult> {
+    const res = await fetch(
+        `${API_BASE}/api/episode/edit-plan?path=${encodeURIComponent(episodePath)}`,
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ instruction }),
+        }
+    );
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || "Edit request failed");
+    }
+    return res.json();
+}

@@ -102,6 +102,9 @@ def is_overlay_scene(scene):
     if scene["type"] == "emphasis":
         return True
 
+    if scene["type"] == "caption":
+        return True
+
     if scene["type"] == "image":
         return scene.get("display") == "inset"
 

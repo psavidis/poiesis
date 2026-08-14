@@ -19,6 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
 
 from generate_title_scenes import merge_title_scenes, write_json_atomic  # noqa: E402
 from generate_visual_scenes import merge_emphasis_scenes, merge_image_scenes  # noqa: E402
+from edit_plan import edit_plan, load_prompt as load_edit_plan_prompt, PROMPT_FILE as EDIT_PLAN_PROMPT_FILE  # noqa: E402
+from llm.client import LLMClient  # noqa: E402
 
 RESOLUTION_PATTERN = re.compile(r"^\d+x\d+$")
 
@@ -40,7 +42,7 @@ app.add_middleware(
         "http://localhost:5173",
         "http://127.0.0.1:5173",
     ],
-    allow_methods=["GET", "PUT"],
+    allow_methods=["GET", "PUT", "POST"],
     allow_headers=["*"],
 )
 
@@ -108,6 +110,7 @@ def episode_artifact(path: str, name: str):
     allowed = {
         "title_scenes.json",
         "visual_scenes.json",
+        "captions.json",
         "assets.json",
         "scene-plan.json",
         "qa-report.json",
@@ -228,6 +231,51 @@ def update_visual_scenes(path: str, body: VisualScenesUpdate):
     write_json_atomic(scene_plan_path, scene_plan)
 
     return {"emphases": emphases, "images": images}
+
+
+class EditPlanRequest(BaseModel):
+    instruction: str
+
+
+@app.post("/api/episode/edit-plan")
+def edit_scene_plan(path: str, body: EditPlanRequest):
+    """Applies a natural-language instruction to scene-plan.json — the
+    in-app edit loop the preview app's chat box calls. Loads the current
+    plan, asks the LLM (same claude-code-CLI-backed LLMClient every other AI
+    stage uses, no separate API key) to propose remove/update operations
+    against real scene ids and an allowlisted set of fields per scene type,
+    rejects anything that fails validation (edit_plan.validate_operations —
+    unknown scene id, or a field outside that type's allowlist), applies
+    only what's valid, then reflows track-scene timelineStartFrame so the
+    timeline stays contiguous if a presenter trim changed a scene's
+    duration. A plain (not async) def — FastAPI runs sync routes in a
+    thread pool, so the LLM subprocess call here doesn't block the event
+    loop, same as every other route in this file."""
+
+    episode = resolve_episode(path)
+    processing = episode / "processing"
+
+    scene_plan_path = processing / "scene-plan.json"
+
+    if not scene_plan_path.exists():
+        raise HTTPException(status_code=404, detail="scene-plan.json not found — run the pipeline first")
+
+    with scene_plan_path.open("r", encoding="utf-8") as f:
+        scene_plan = json.load(f)
+
+    llm = LLMClient(PROJECT_ROOT / "config.json")
+    prompt_template = load_edit_plan_prompt(EDIT_PLAN_PROMPT_FILE)
+
+    try:
+        updated_plan, valid_ops, rejected = edit_plan(
+            scene_plan, body.instruction, llm, prompt_template
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Edit request failed: {e}")
+
+    write_json_atomic(scene_plan_path, updated_plan)
+
+    return {"applied": valid_ops, "rejected": rejected}
 
 
 async def _run_websocket(websocket: WebSocket, build_command):

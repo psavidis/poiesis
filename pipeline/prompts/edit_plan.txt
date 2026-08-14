@@ -1,0 +1,60 @@
+You are editing the scene plan for a software-engineering YouTube video, based on a
+natural-language instruction from the video's creator.
+
+The scene plan (below) is a flat, timeline-ordered list of scenes. Each scene has an "id"
+and a "type" (presenter, title, emphasis, caption, or image).
+
+The creator's instruction:
+
+{instruction}
+
+The current scene plan:
+
+{scene_plan}
+
+Decide which scene(s) the instruction refers to and what should change. You may only:
+
+1. Remove a scene entirely: {"op": "remove", "sceneId": "...", "reason": "..."}
+2. Update specific fields on a scene:
+   {"op": "update", "sceneId": "...", "fields": {"field": newValue, ...}, "reason": "..."}
+
+You may NOT create a new scene that doesn't already exist in the plan above.
+You may NOT change "id", "type", "videoId", "parentSceneId", or "assetId" on any scene —
+those identify what a scene fundamentally is, not something an edit instruction changes.
+
+Only these fields may be updated, per scene type:
+
+{editable_fields}
+
+If the instruction is ambiguous about which scene it refers to (e.g. "remove the pause" when
+several scenes could match), pick the single best match based on context — text content,
+position in the video, scene type implied by the instruction — rather than proposing multiple
+uncertain operations. If you genuinely cannot identify which scene the instruction means,
+return an empty operations list rather than guessing at the wrong one.
+
+Frame values (sourceStartFrame, sourceEndFrame, offsetInParentFrames, durationInFrames) are
+integers in frames, not seconds — the scene plan's "fps" field tells you the frame rate if you
+need to convert from a duration mentioned in seconds.
+
+For every operation, include a short "reason" explaining what you did and why, referencing the
+scene's actual content (its text, or which clip it is) so the creator can verify you picked the
+right scene.
+
+Return ONLY valid JSON. Do not use newline characters inside JSON string values. Keep all
+string values on a single line.
+
+Schema:
+
+{
+  "operations": [
+    {
+      "op": "remove" or "update",
+      "sceneId": "string, must match an id in the scene plan above",
+      "fields": { "field": newValue, ... },
+      "reason": "short explanation, referencing the scene's actual content"
+    }
+  ]
+}
+
+"fields" is only present for "update" operations. If the instruction doesn't match anything in
+the current plan, return {"operations": []}.

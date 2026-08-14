@@ -67,7 +67,16 @@ export interface ImageScene {
     durationInFrames: number;
 }
 
-export type Scene = PresenterScene | TitleScene | EmphasisScene | ImageScene;
+export interface CaptionScene {
+    type: "caption";
+    id: string;
+    text: string;
+    parentSceneId: string;
+    offsetInParentFrames: number;
+    durationInFrames: number;
+}
+
+export type Scene = PresenterScene | TitleScene | EmphasisScene | ImageScene | CaptionScene;
 
 export interface ScenePlan {
     version: number;

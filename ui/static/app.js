@@ -158,6 +158,7 @@ function render() {
         <h2>${escapeHtml(status.episode)}</h2>
         <div class="actions">
           <button id="run-all" ${running ? "disabled" : ""}>Run full pipeline</button>
+          <a class="secondary" href="${previewAppUrl(state.episodePath)}" target="_blank" rel="noopener">Preview episode</a>
           <button id="run-qa" class="secondary" ${running ? "disabled" : ""}>QA check</button>
           <button id="run-render" class="secondary" ${running ? "disabled" : ""}>Render</button>
         </div>
@@ -475,7 +476,8 @@ function renderVisualScenes(data) {
 const PREVIEW_APP_BASE = "http://127.0.0.1:5173";
 
 function previewAppUrl(episodePath, sceneId) {
-  return `${PREVIEW_APP_BASE}/?path=${encodeURIComponent(episodePath)}&sceneId=${encodeURIComponent(sceneId)}`;
+  const base = `${PREVIEW_APP_BASE}/?path=${encodeURIComponent(episodePath)}`;
+  return sceneId ? `${base}&sceneId=${encodeURIComponent(sceneId)}` : base;
 }
 
 function renderEmphasisRow(e, i) {

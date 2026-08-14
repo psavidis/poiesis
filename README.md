@@ -44,6 +44,42 @@ own dev server is also running (it's a separate process from the control panel):
 This starts it at http://127.0.0.1:5173. Keep it running alongside `./start_ui.sh` — the
 first time, install its dependencies: `cd video-renderer/preview-app && npm install`.
 
+## Natural-language editing
+
+The preview app (both "Preview episode" full-episode mode and the scene-scoped "Adjust
+timing" view) has a text box under the player. Type an instruction and Claude proposes a
+structured edit to `scene-plan.json`, applied only after server-side validation — every scene
+id must be real, every field must be on that scene type's editable allowlist, or the operation
+is rejected and shown as such rather than silently ignored. Whatever was applied (or rejected,
+and why) shows immediately, and the player reloads with the change.
+
+Deliberately scoped to editing/removing scenes that already exist — it won't invent a new
+scene from a description, since that requires the AI to make up valid offsets/durations from
+scratch rather than picking among real, already-validated options. Editable fields per type:
+
+| Type | Editable fields |
+|---|---|
+| `presenter` | `sourceStartFrame`, `sourceEndFrame`, `effects` |
+| `title` | `text` |
+| `emphasis` | `text`, `offsetInParentFrames`, `durationInFrames` |
+| `caption` | `text`, `offsetInParentFrames`, `durationInFrames` |
+| `image` | `caption`, `offsetInParentFrames`, `durationInFrames` |
+
+Any scene type can be removed outright. `id`, `type`, and any scene-linking field (`videoId`,
+`parentSceneId`, `assetId`) are never editable this way — those change what a scene
+fundamentally *is* rather than how it behaves, a different (and much riskier) operation than
+what this is for.
+
+Editing a presenter scene's trim points changes its duration, which shifts every later
+track scene's (`presenter`/`title`) position to keep the timeline contiguous — this happens
+automatically after every edit. Overlay scenes (`emphasis`/`caption`/`image`) never need
+touching for this, since they're positioned relative to their own parent scene, not an
+absolute timeline frame.
+
+Like "Adjust timing", each instruction is applied straight to `processing/scene-plan.json` —
+re-run `generate_scene_plan_ts.py` (or the control panel's "Generate Remotion codegen") to
+pick up the change in a render.
+
 # Python Library Dependencies
 
 - pip install json-repair
@@ -69,9 +105,10 @@ which runs, in order:
 7. `index_assets.py` — lists the episode's `graphics/` folder into `processing/assets.json` (id, filename, caption). Captions default to a filename-derived guess but are preserved across re-runs once you (or the AI) write a real one — see "Writing good asset captions" below.
 8. `generate_title_scenes.py` — proposes title-card scenes via the configured LLM provider, merges them into `scene-plan.json`, writes `processing/title_scenes.json` (the AI decision as an inspectable artifact).
 9. `generate_visual_scenes.py` — proposes sparse `emphasis` overlay scenes (short on-screen phrase callouts) and `image` overlay scenes (inset picture-in-picture, selected from `assets.json`) for stretches of presenter footage that have gone too long without a visual change. Uses a deterministic pre-filter (`pipeline/visual_placement.py`, default: 18s since the last title/emphasis/image) to decide which moments are even eligible before asking the LLM, and validates every proposal — emphasis text must be grounded in what was actually said (rejects fabricated/unrelated text), image selections must reference a real `assetId` (rejects hallucinated ids). Never proposes both types for the same moment. Writes `processing/visual_scenes.json`, merges into `scene-plan.json`.
-10. `generate_scene_plan_ts.py` — generates `video-renderer/generated/episode/scene-plan.ts` for Remotion.
-11. `analyze_episode.py` — LLM pass flagging transcript sections that may need a closer look, produces `processing/episode_analysis.json`.
-12. `generate_episode_assets.py` — subtitles, review notes, chapters.
+10. `generate_captions.py` — deterministic, no LLM: for each presenter scene, clips that clip's per-segment transcript (`processing/transcripts/<videoId>.json`) to the scene's post-silence-trim `sourceStartFrame`/`sourceEndFrame` window and emits `caption` overlay scenes positioned the same relative way emphasis/image scenes are. Caps any single caption at 6s on screen (Whisper's segments are sentence-length, not word-level, so there's no finer timing to split on). Writes `processing/captions.json`, merges into `scene-plan.json`. Rendering respects each presenter scene's `effects.captions` flag (defaults to `true`) — set it to `false` on a specific scene to hide captions there.
+11. `generate_scene_plan_ts.py` — generates `video-renderer/generated/episode/scene-plan.ts` for Remotion.
+12. `analyze_episode.py` — LLM pass flagging transcript sections that may need a closer look, produces `processing/episode_analysis.json`.
+13. `generate_episode_assets.py` — subtitles, review notes, chapters.
 
 ### Overlay scenes are positioned relative to their parent
 
@@ -112,9 +149,15 @@ plan — plain, human-readable JSON — and it's meant to be reviewed and adjust
   `durationInFrames` (`qa_check.py` will flag it if not).
 - **Clip trimming**: adjust `sourceStartFrame`/`sourceEndFrame` on any `type: "presenter"`
   scene if the automatic silence trim over- or under-cuts.
-- Ask Claude (in a coding session, e.g. this repo's Claude Code setup) to make specific edits
-  in natural language — "remove the third title card", "trim 10 more frames off the end of
-  scene-009" — since the plan is just JSON, this requires no special tooling.
+- **In the app**: the preview app (`./start_preview.sh`, "Preview episode" from the control
+  panel) has a text box under the player — "remove the third title card", "trim 10 more frames
+  off the end of scene-009" — that asks Claude to propose the edit, shows what it did (or
+  rejected, and why) before applying, then reloads the player with the change. Scoped to
+  editing/removing existing scenes only (title/emphasis/caption/image text and timing,
+  presenter trim points) — it won't invent a new scene from a description. See "Natural-language
+  editing" below for exactly which fields are editable this way.
+- Or ask Claude directly (in a coding session, e.g. this repo's Claude Code setup) to make the
+  same kind of edits — since the plan is just JSON, this requires no special tooling either.
 
 After editing `scene-plan.json` by hand, re-run just the codegen step to pick up the change
 without re-running the whole pipeline:
@@ -163,6 +206,25 @@ Override it per-render without touching config:
 Higher resolution means more pixels to decode/composite per frame — this directly increases
 render time, on top of whatever cost keyed (alpha) footage already adds.
 
+### Finishing in DaVinci Resolve (background, intro/outro, music)
+
+Poiesis renders presenter footage + AI-placed overlays (titles, emphasis, captions, images).
+It doesn't render the looping background, intro/outro, or music — those are channel-wide
+branding assets, mixed by hand on a DaVinci Resolve timeline, not per-episode AI decisions.
+`--transparent` renders a **transparent master** instead of the normal opaque MP4: presenter
++ overlays only, as an alpha-preserving ProRes 4444 `.mov`, meant to be dropped into a Resolve
+project that already has the background/intro/outro/music on the timeline:
+
+```bash
+./render_episode.sh /path/to/episode --transparent
+```
+
+This only produces real transparency where the presenter footage is actually keyed
+(`key_footage.py` must have run first — unkeyed footage has no alpha to preserve) and
+overrides any `backgroundVideo` configured on the episode to `null` at render time (so an
+episode's own looping background never gets baked in and blocks the transparency). Combine
+with a resolution override the same way: `./render_episode.sh /path/to/episode --transparent 3840x2160`.
+
 And check the result:
 
 ```bash
@@ -187,9 +249,11 @@ python3 pipeline/key_footage.py /path/to/episode
 This writes `processing/keyed/<id>.webm` per clip, records `keyedPath`/`keyedRenderPath` on
 each video in `manifest.json`, and regenerates `episode-props.ts` so Remotion picks up the
 keyed clips automatically. Like other stages, it skips clips that are already keyed unless
-you pass `--force`. Known limitations: green spill on hair/skin under strong lighting isn't
-fully eliminated by the despill pass, and hair edges are hard-keyed rather than softly matted
-— acceptable for typical talking-head framing, more visible in tight close-ups.
+you pass `--force` — episodes keyed before `CHROMA_BLEND`/`DESPILL_MIX` were widened need
+`--force` to pick up the softer edges. Known limitations: `chromakey`'s single-threshold model
+can't fully match a dedicated matte-refinement keyer (e.g. CapCut/Resolve) — flyaway hair
+strands are softer than before but still not a true edge-aware alpha matte, and green spill on
+hair/skin under strong lighting isn't always fully eliminated by the despill pass.
 
 ## Transcribing footage
 

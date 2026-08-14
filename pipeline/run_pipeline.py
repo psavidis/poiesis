@@ -148,6 +148,18 @@ def main():
     run(visual_scenes_command)
 
 
+    # 6d. Generate caption overlay scenes from trimmed transcripts
+    captions_command = [
+        str(pipeline / "generate_captions.py"),
+        str(episode)
+    ]
+
+    if args.force:
+        captions_command.append("--force")
+
+    run(captions_command)
+
+
     # 7. Generate Remotion scene plan
     scene_plan_command = [
         str(pipeline / "generate_scene_plan_ts.py"),

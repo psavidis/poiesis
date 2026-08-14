@@ -3,6 +3,7 @@ import { Player, type PlayerRef } from "@remotion/player";
 import { Episode } from "video-renderer-src/episode/Episode";
 import type { EpisodeProps, PresenterScene, ScenePlan } from "video-renderer-src/episode/types";
 import { getAssets, getManifest, getScenePlan, getVisualScenes, saveVisualScenes } from "./api";
+import { EditPlanChat } from "./EditPlanChat";
 import { manifestToEpisodeBaseProps } from "./episodeProps";
 import { OverlayStrip, type EditableOverlay } from "./OverlayStrip";
 
@@ -56,7 +57,18 @@ export function App() {
                     setError(String(e));
                 }
             });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [episodePath]);
+
+    // Re-fetches only scene-plan.json (not manifest/assets, which an edit-plan
+    // instruction never changes) and merges it into the existing episodeProps
+    // so the player picks up an applied edit without a full page reload.
+    const reloadScenePlan = () => {
+        if (!episodePath) return;
+        getScenePlan(episodePath).then((scenePlan) => {
+            setEpisodeProps((prev) => (prev ? { ...prev, scenePlan: scenePlan as ScenePlan } : prev));
+        });
+    };
 
     const parentScene: PresenterScene | undefined = useMemo(() => {
         if (!episodeProps || !sceneId) return undefined;
@@ -103,9 +115,9 @@ export function App() {
         }
     };
 
-    const seekToParentFrame = (offsetInParentFrames: number) => {
-        if (!playerRef.current || !parentScene) return;
-        playerRef.current.seekTo(parentScene.timelineStartFrame + offsetInParentFrames);
+    const seekToAbsoluteFrame = (absoluteFrame: number) => {
+        if (!playerRef.current) return;
+        playerRef.current.seekTo(absoluteFrame);
     };
 
     if (error) {
@@ -125,9 +137,15 @@ export function App() {
         return <div style={styles.message}>Scene "{sceneId}" not found in scene-plan.json</div>;
     }
 
+    // With no sceneId, this is a full-episode preview rather than a
+    // scene-scoped timing editor — give the player the full page width
+    // instead of the narrow strip-editor width, since there's no
+    // OverlayStrip/save UI competing for space below it.
+    const playerWrapStyle = sceneId ? styles.playerWrap : styles.playerWrapFullEpisode;
+
     return (
         <div style={styles.container}>
-            <div style={styles.playerWrap}>
+            <div style={playerWrapStyle}>
                 <Player
                     ref={playerRef}
                     component={Episode as any}
@@ -148,7 +166,22 @@ export function App() {
                     style={{ width: "100%" }}
                     controls
                     initialFrame={parentScene ? parentScene.timelineStartFrame : 0}
+                    // Constrain the scrubber to the scene being edited so
+                    // its range matches the overlay strip below one-to-one —
+                    // dragging a block to a position and seeing the player
+                    // land on the same position are the same frame number,
+                    // not two independently-scaled coordinate spaces.
+                    inFrame={parentScene ? parentScene.timelineStartFrame : undefined}
+                    outFrame={
+                        parentScene
+                            ? parentScene.timelineStartFrame + parentScene.durationInFrames - 1
+                            : undefined
+                    }
                 />
+            </div>
+
+            <div style={playerWrapStyle}>
+                <EditPlanChat episodePath={episodePath} onApplied={reloadScenePlan} />
             </div>
 
             {parentScene && (
@@ -156,7 +189,7 @@ export function App() {
                     parentScene={parentScene}
                     overlays={editableOverlays}
                     onChange={updateOverlay}
-                    onSeek={seekToParentFrame}
+                    onSeek={seekToAbsoluteFrame}
                 />
             )}
 
@@ -182,6 +215,10 @@ const styles: Record<string, React.CSSProperties> = {
     playerWrap: {
         width: "100%",
         maxWidth: 720,
+    },
+    playerWrapFullEpisode: {
+        width: "100%",
+        maxWidth: 1280,
     },
     message: {
         fontFamily: "system-ui, sans-serif",

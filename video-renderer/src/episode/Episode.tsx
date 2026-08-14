@@ -10,6 +10,7 @@ import {
 
 import type { EpisodeProps, EpisodeVideo, PresenterScene, Scene } from "./types";
 import { AnimatedTitle } from "./AnimatedTitle";
+import { CaptionText } from "./CaptionText";
 import { EmphasisText } from "./EmphasisText";
 import { EpisodeImage } from "./EpisodeImage";
 
@@ -158,6 +159,24 @@ export const Episode = ({
                             caption={scene.caption}
                             display={scene.display}
                         />
+                    </Sequence>
+                );
+            }
+
+            case "caption": {
+                const parent = presenterSceneMap.get(scene.parentSceneId);
+
+                if (!parent || !parent.effects.captions) {
+                    return null;
+                }
+
+                return (
+                    <Sequence
+                        key={scene.id}
+                        from={parent.timelineStartFrame + scene.offsetInParentFrames}
+                        durationInFrames={scene.durationInFrames}
+                    >
+                        <CaptionText text={scene.text} />
                     </Sequence>
                 );
             }
