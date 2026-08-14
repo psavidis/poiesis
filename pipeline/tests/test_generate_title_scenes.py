@@ -80,30 +80,40 @@ def test_propose_title_scenes_filters_invalid_segment_ids():
         "segments": [
             {"source": "a.mp4", "start": 0.0, "end": 2.0, "text": "hello"},
             {"source": "b.mp4", "start": 0.0, "end": 2.0, "text": "world"},
+            {"source": "b.mp4", "start": 3.0, "end": 5.0, "text": "second real segment"},
+        ]
+    }
+
+    manifest = {
+        "videos": [
+            {"id": "001", "filename": "a.mp4"},
+            {"id": "002", "filename": "b.mp4"},
         ]
     }
 
     llm = _FakeLLMClient(
         {
             "titles": [
-                {"segmentId": "s0", "text": "Valid Title"},
+                {"segmentId": "s1", "text": "Valid Title"},
                 {"segmentId": "s99", "text": "Unknown Segment"},
-                {"segmentId": "s1", "text": ""},
+                {"segmentId": "s2", "text": ""},
             ]
         }
     )
 
-    titles = propose_title_scenes(transcript, _manifest_two_videos(), llm, "{segments}")
+    titles = propose_title_scenes(transcript, manifest, llm, "{segments}")
 
-    assert titles == [{"segmentId": "s0", "text": "Valid Title"}]
+    assert titles == [{"segmentId": "s1", "text": "Valid Title"}]
 
 
-def test_propose_title_scenes_drops_titles_closer_together_than_min_spacing():
+def test_propose_title_scenes_never_proposes_a_title_for_the_opening_segment():
+    # Regression: the very start of the episode is always the presenter's
+    # performed intro — no video should ever get an on-screen title card
+    # at 00:00, regardless of what the LLM proposes for it.
     transcript = {
         "segments": [
-            {"source": "a.mp4", "start": 0.0, "end": 5.0, "text": "first"},
-            {"source": "a.mp4", "start": 5.0, "end": 10.0, "text": "second, right after"},
-            {"source": "a.mp4", "start": 60.0, "end": 65.0, "text": "third, much later"},
+            {"source": "a.mp4", "start": 0.0, "end": 3.0, "text": "welcome to the show"},
+            {"source": "a.mp4", "start": 30.0, "end": 33.0, "text": "a real topic begins"},
         ]
     }
 
@@ -112,10 +122,36 @@ def test_propose_title_scenes_drops_titles_closer_together_than_min_spacing():
     llm = _FakeLLMClient(
         {
             "titles": [
-                {"segmentId": "s0", "text": "First Topic"},
-                # s1 starts only 5s after s0 — well under MIN_TITLE_SPACING_SECONDS
-                {"segmentId": "s1", "text": "Too Close"},
-                {"segmentId": "s2", "text": "Third Topic"},
+                {"segmentId": "s0", "text": "Dependency Injection"},
+                {"segmentId": "s1", "text": "A Real Topic"},
+            ]
+        }
+    )
+
+    titles = propose_title_scenes(transcript, manifest, llm, "{segments}")
+
+    assert titles == [{"segmentId": "s1", "text": "A Real Topic"}]
+
+
+def test_propose_title_scenes_drops_titles_closer_together_than_min_spacing():
+    transcript = {
+        "segments": [
+            {"source": "a.mp4", "start": 0.0, "end": 5.0, "text": "opening intro, never a title"},
+            {"source": "a.mp4", "start": 5.0, "end": 10.0, "text": "first real topic"},
+            {"source": "a.mp4", "start": 15.0, "end": 20.0, "text": "second, right after"},
+            {"source": "a.mp4", "start": 70.0, "end": 75.0, "text": "third, much later"},
+        ]
+    }
+
+    manifest = {"videos": [{"id": "001", "filename": "a.mp4"}]}
+
+    llm = _FakeLLMClient(
+        {
+            "titles": [
+                {"segmentId": "s1", "text": "First Topic"},
+                # s2 starts only 5s after s1 — well under MIN_TITLE_SPACING_SECONDS
+                {"segmentId": "s2", "text": "Too Close"},
+                {"segmentId": "s3", "text": "Third Topic"},
             ]
         }
     )
@@ -123,8 +159,8 @@ def test_propose_title_scenes_drops_titles_closer_together_than_min_spacing():
     titles = propose_title_scenes(transcript, manifest, llm, "{segments}")
 
     assert titles == [
-        {"segmentId": "s0", "text": "First Topic"},
-        {"segmentId": "s2", "text": "Third Topic"},
+        {"segmentId": "s1", "text": "First Topic"},
+        {"segmentId": "s3", "text": "Third Topic"},
     ]
 
 
@@ -139,9 +175,10 @@ def test_propose_title_scenes_never_filters_titles_in_different_clips_by_spacing
     # spacing, regardless of their raw start values.
     transcript = {
         "segments": [
-            {"source": "a.mp4", "start": 0.0, "end": 5.0, "text": "end of clip a"},
+            {"source": "a.mp4", "start": 0.0, "end": 5.0, "text": "opening intro, never a title"},
+            {"source": "a.mp4", "start": 30.0, "end": 35.0, "text": "end of clip a"},
             # clip b's own timestamps reset to near 0 — nothing like a's
-            # "60.0" that a real multi-minute clip would have
+            # "30.0" that a real multi-minute clip would have
             {"source": "b.mp4", "start": 0.5, "end": 5.0, "text": "start of clip b"},
         ]
     }
@@ -156,8 +193,8 @@ def test_propose_title_scenes_never_filters_titles_in_different_clips_by_spacing
     llm = _FakeLLMClient(
         {
             "titles": [
-                {"segmentId": "s0", "text": "First Topic"},
-                {"segmentId": "s1", "text": "Second Topic"},
+                {"segmentId": "s1", "text": "First Topic"},
+                {"segmentId": "s2", "text": "Second Topic"},
             ]
         }
     )
@@ -165,8 +202,8 @@ def test_propose_title_scenes_never_filters_titles_in_different_clips_by_spacing
     titles = propose_title_scenes(transcript, manifest, llm, "{segments}")
 
     assert titles == [
-        {"segmentId": "s0", "text": "First Topic"},
-        {"segmentId": "s1", "text": "Second Topic"},
+        {"segmentId": "s1", "text": "First Topic"},
+        {"segmentId": "s2", "text": "Second Topic"},
     ]
 
 

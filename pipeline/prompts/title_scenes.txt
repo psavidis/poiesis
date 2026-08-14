@@ -10,6 +10,11 @@ Your job is to decide where genuinely new topics or sections begin, and
 propose a title card for each one. A title card is a short on-screen text
 that announces the topic about to be discussed.
 
+Never propose a title for the very start of the episode (segment s0, or
+any segment that is really just the presenter's spoken intro before the
+first real topic begins). The opening of every episode is always a
+performed introduction, not a topic that needs its own chapter card.
+
 Use title cards sparingly. Most segments should NOT start a new title.
 Only propose a title where a clearly new topic or section genuinely
 begins — not for every segment, and not for minor asides or continuations

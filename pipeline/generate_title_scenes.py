@@ -125,10 +125,19 @@ def propose_title_scenes(transcript, manifest, llm: LLMClient, prompt_template: 
 
     segments_by_id = {s["segmentId"]: s for s in segments}
 
+    # The opening segment is always the presenter's performed intro, never
+    # a topic that needs its own title card — enforced here, not just
+    # asked for in the prompt, since this is a fixed rule with no
+    # exceptions across any episode, not a judgment call worth leaving to
+    # the LLM.
+    opening_segment_id = segments[0]["segmentId"]
+
     titles = [
         title
         for title in response.get("titles", [])
-        if title.get("segmentId") in segments_by_id and title.get("text")
+        if title.get("segmentId") in segments_by_id
+        and title.get("text")
+        and title.get("segmentId") != opening_segment_id
     ]
 
     # Keep chronological order (segment index order — segmentIds are
