@@ -8,17 +8,18 @@ const state = {
   logText: "",
   logVisible: false,
   // Persisted per browser session (not per episode) — full-sentence
-  // captions are tiresome on some episodes; this skips generating them on
-  // the next full pipeline run rather than requiring a manual re-run of
-  // generate_captions.py --disable afterward.
-  skipCaptions: false,
+  // captions are tiresome on some episodes, so the default is opt-in
+  // (unticked = don't generate them). Ticking this includes captions on
+  // the next full pipeline run; translated to the inverted --skip-captions
+  // flag only where the backend command is actually built.
+  includeCaptions: false,
 };
 
 // Which stages produce an artifact worth showing the human for review —
 // this is the "make AI decisions transparent" surface the whole UI exists for.
 const ARTIFACT_STAGES = {
   generate_title_scenes: { artifact: "title_scenes.json", render: renderTitleScenes },
-  generate_visual_scenes: { artifact: "visual_scenes.json", render: renderVisualScenes },
+  generate_moments: { artifact: "moments.json", render: renderMoments },
   analyze_episode: { artifact: "episode_analysis.json", render: renderEpisodeAnalysis },
 };
 
@@ -169,8 +170,8 @@ function render() {
         </div>
       </div>
       <label class="checkbox-row">
-        <input type="checkbox" id="skip-captions-toggle" ${state.skipCaptions ? "checked" : ""} ${running ? "disabled" : ""} />
-        Skip captions on next full pipeline run (removes any already generated)
+        <input type="checkbox" id="include-captions-toggle" ${state.includeCaptions ? "checked" : ""} ${running ? "disabled" : ""} />
+        Include captions on next full pipeline run (leave unticked to remove any already generated)
       </label>
       <p class="hint">Every stage below shells out to the same scripts you'd run from the
       terminal, using your Claude Code CLI login — no separate API key, nothing hidden.</p>
@@ -209,8 +210,8 @@ function render() {
   document.getElementById("run-qa").addEventListener("click", () => runSecondaryStage("qa_check"));
   document.getElementById("run-render").addEventListener("click", runRender);
 
-  document.getElementById("skip-captions-toggle").addEventListener("change", (e) => {
-    state.skipCaptions = e.target.checked;
+  document.getElementById("include-captions-toggle").addEventListener("change", (e) => {
+    state.includeCaptions = e.target.checked;
   });
 
   const cancelBtn = document.getElementById("cancel-run");
@@ -261,7 +262,7 @@ function runSecondaryStage(stageId) {
 function runFullPipeline() {
   runOverWebSocket(
     "/ws/pipeline/run",
-    { path: state.episodePath, skipCaptions: state.skipCaptions },
+    { path: state.episodePath, skipCaptions: !state.includeCaptions },
     "__pipeline__"
   );
 }
@@ -356,8 +357,8 @@ async function showArtifact(stageId) {
       wireTitleSceneEditor(data.titles || []);
     }
 
-    if (stageId === "generate_visual_scenes") {
-      await wireVisualSceneEditor(data.emphases || [], data.images || []);
+    if (stageId === "generate_moments") {
+      await wireMomentEditor(data.moments || []);
     }
   } catch (e) {
     reviewBody.innerHTML = `<p class="error">Failed to load artifact: ${escapeHtml(String(e))}</p>`;
@@ -455,31 +456,28 @@ function wireTitleSceneEditor(initialTitles) {
   });
 }
 
-function renderVisualScenes(data) {
-  const emphases = data.emphases || [];
-  const images = data.images || [];
+function renderMoments(data) {
+  const moments = data.moments || [];
 
-  if (!emphases.length && !images.length) {
-    return `<p class="hint">No emphasis/image scenes proposed.</p>`;
+  if (!moments.length) {
+    return `<p class="hint">No moment scenes proposed.</p>`;
   }
 
   return `
-    <p class="hint">Overlays Claude proposed for moments that went too long without a visual
-    change. Each one is grounded in something actually said, with the AI's stated reason.
-    Edit text or (for images) which asset is shown, then save — this rewrites
-    visual_scenes.json and re-merges scene-plan.json deterministically (no AI call). Use
-    "Adjust timing" to scrub/drag when an overlay appears and how long it shows against the
-    real footage (opens in a new tab — video-renderer/preview-app must be running via
-    <code>npm run dev</code> in that folder; saves there apply immediately, no separate save
-    step here). Re-run "Generate Remotion codegen" afterward to pick up any change in a
-    render.</p>
-    <div class="scene-list" id="visual-scene-editor">
-      <div id="emphasis-scene-list"></div>
-      <div id="image-scene-list"></div>
-    </div>
+    <p class="hint">Moments Claude proposed for stretches that went too long without a visual
+    change — a bottom callout, or a side text/image treatment that also slides the presenter to
+    the opposite side of the frame. Each one is grounded in something actually said, with the
+    AI's stated reason. Edit text/asset or remove one, then save — this rewrites moments.json
+    and re-merges scene-plan.json deterministically (no AI call), including updating the
+    parent presenter scene's layout to match. Use "Adjust timing" to scrub/drag when a moment
+    appears and how long it shows against the real footage (opens in a new tab —
+    video-renderer/preview-app must be running via <code>npm run dev</code> in that folder;
+    saves there apply immediately, no separate save step here). Re-run "Generate Remotion
+    codegen" afterward to pick up any change in a render.</p>
+    <div class="scene-list" id="moment-scene-list"></div>
     <div class="editor-actions">
-      <button id="save-visual-scenes-btn">Save changes</button>
-      <span id="save-visual-scenes-status" class="hint"></span>
+      <button id="save-moments-btn">Save changes</button>
+      <span id="save-moments-status" class="hint"></span>
     </div>
   `;
 }
@@ -488,8 +486,8 @@ function renderVisualScenes(data) {
 // where "Adjust timing" opens a scrubbable, drag-to-adjust view of an
 // overlay's timing against the real presenter footage. Timing edits save
 // straight to the backend from that tab; this panel only re-fetches
-// visual_scenes.json when you come back to it (see wireVisualSceneEditor's
-// focus listener) rather than trying to keep two live edit buffers in sync.
+// moments.json when you come back to it (see wireMomentEditor's focus
+// listener) rather than trying to keep two live edit buffers in sync.
 const PREVIEW_APP_BASE = "http://127.0.0.1:5173";
 
 function previewAppUrl(episodePath, sceneId) {
@@ -497,60 +495,62 @@ function previewAppUrl(episodePath, sceneId) {
   return sceneId ? `${base}&sceneId=${encodeURIComponent(sceneId)}` : base;
 }
 
-function renderEmphasisRow(e, i) {
-  return `
-    <div class="ai-decision editable-scene" data-index="${i}">
-      <span class="scene-type">EMPHASIS</span>
-      <input type="text" class="emphasis-text-input" value="${escapeHtml(e.text || "")}" />
-      <a class="secondary small adjust-timing-link" href="${previewAppUrl(state.episodePath, e.sceneId)}" target="_blank" rel="noopener">Adjust timing</a>
-      <span class="reason">clip ${escapeHtml(e.videoId || "?")} — offset ${e.offsetInParentFrames}f, up to ${e.maxDurationInParentFrames}f${e.reason ? ` — ${escapeHtml(e.reason)}` : ""}</span>
-      <button class="secondary small remove-emphasis-btn" data-index="${i}">Remove</button>
-    </div>
-  `;
-}
+const TREATMENT_LABELS = {
+  "bottom-callout": "BOTTOM CALLOUT",
+  "side-text": "SIDE TEXT",
+  "side-image": "SIDE IMAGE",
+};
 
-function renderImageRow(img, i, assetOptions) {
-  return `
-    <div class="ai-decision editable-scene" data-index="${i}">
-      <span class="scene-type">IMAGE</span>
-      <select class="image-asset-input">
+function renderMomentRow(m, i, assetOptions) {
+  const label = TREATMENT_LABELS[m.treatment] || m.treatment.toUpperCase();
+
+  const contentInput =
+    m.treatment === "side-image"
+      ? `
+      <select class="moment-asset-input">
         ${assetOptions
           .map(
             (a) =>
-              `<option value="${escapeHtml(a.id)}" ${a.id === img.assetId ? "selected" : ""}>${escapeHtml(a.id)} — ${escapeHtml(a.caption || "")}</option>`
+              `<option value="${escapeHtml(a.id)}" ${a.id === m.assetId ? "selected" : ""}>${escapeHtml(a.id)} — ${escapeHtml(a.caption || "")}</option>`
           )
           .join("")}
       </select>
-      <a class="secondary small adjust-timing-link" href="${previewAppUrl(state.episodePath, img.sceneId)}" target="_blank" rel="noopener">Adjust timing</a>
-      <span class="reason">clip ${escapeHtml(img.videoId || "?")} — offset ${img.offsetInParentFrames}f, up to ${img.maxDurationInParentFrames}f${img.reason ? ` — ${escapeHtml(img.reason)}` : ""}</span>
-      <button class="secondary small remove-image-btn" data-index="${i}">Remove</button>
+    `
+      : `<input type="text" class="moment-text-input" value="${escapeHtml(m.text || "")}" />`;
+
+  return `
+    <div class="ai-decision editable-scene" data-index="${i}">
+      <span class="scene-type">${escapeHtml(label)}</span>
+      ${contentInput}
+      <span class="reason">presenter → ${escapeHtml(m.requiredLayout)} — clip ${escapeHtml(m.videoId || "?")} — offset ${m.offsetInParentFrames}f, up to ${m.maxDurationInParentFrames}f${m.reason ? ` — ${escapeHtml(m.reason)}` : ""}</span>
+      <a class="secondary small adjust-timing-link" href="${previewAppUrl(state.episodePath, m.sceneId)}" target="_blank" rel="noopener">Adjust timing</a>
+      <button class="secondary small remove-moment-btn" data-index="${i}">Remove</button>
     </div>
   `;
 }
 
-async function getVisualScenesArtifact() {
+async function getMomentsArtifact() {
   const res = await fetch(
-    `/api/episode/artifact?path=${encodeURIComponent(state.episodePath)}&name=visual_scenes.json`
+    `/api/episode/artifact?path=${encodeURIComponent(state.episodePath)}&name=moments.json`
   );
   if (!res.ok) {
-    throw new Error(`Failed to reload visual_scenes.json: ${res.status}`);
+    throw new Error(`Failed to reload moments.json: ${res.status}`);
   }
   return res.json();
 }
 
 // Tracks the currently-active visibilitychange listener so switching stages
 // (or re-opening this one) doesn't stack up duplicate listeners — each call
-// to wireVisualSceneEditor owns exactly one.
-let activeVisualSceneFocusListener = null;
+// to wireMomentEditor owns exactly one.
+let activeMomentFocusListener = null;
 
-async function wireVisualSceneEditor(initialEmphases, initialImages) {
-  if (activeVisualSceneFocusListener) {
-    document.removeEventListener("visibilitychange", activeVisualSceneFocusListener);
-    activeVisualSceneFocusListener = null;
+async function wireMomentEditor(initialMoments) {
+  if (activeMomentFocusListener) {
+    document.removeEventListener("visibilitychange", activeMomentFocusListener);
+    activeMomentFocusListener = null;
   }
 
-  let emphases = initialEmphases.map((e) => ({ ...e }));
-  let images = initialImages.map((i) => ({ ...i }));
+  let moments = initialMoments.map((m) => ({ ...m }));
 
   let assetOptions = [];
   try {
@@ -562,75 +562,70 @@ async function wireVisualSceneEditor(initialEmphases, initialImages) {
       assetOptions = data.assets || [];
     }
   } catch (e) {
-    // assets.json may not exist yet — image rows just won't offer a dropdown
+    // assets.json may not exist yet — side-image rows just won't offer a dropdown
   }
 
-  const emphasisList = document.getElementById("emphasis-scene-list");
-  const imageList = document.getElementById("image-scene-list");
-  const statusLabel = document.getElementById("save-visual-scenes-status");
-  const saveBtn = document.getElementById("save-visual-scenes-btn");
+  const momentList = document.getElementById("moment-scene-list");
+  const statusLabel = document.getElementById("save-moments-status");
+  const saveBtn = document.getElementById("save-moments-btn");
 
-  if (!emphasisList || !imageList || !saveBtn) return;
+  if (!momentList || !saveBtn) return;
 
-  function renderLists() {
-    emphasisList.innerHTML = emphases.length
-      ? emphases.map(renderEmphasisRow).join("")
-      : `<p class="hint">No emphasis scenes proposed.</p>`;
-    imageList.innerHTML = images.length
-      ? images.map((img, i) => renderImageRow(img, i, assetOptions)).join("")
-      : `<p class="hint">No image scenes proposed.</p>`;
+  function renderList() {
+    momentList.innerHTML = moments.length
+      ? moments.map((m, i) => renderMomentRow(m, i, assetOptions)).join("")
+      : `<p class="hint">No moment scenes proposed.</p>`;
     wireRows();
   }
 
   function wireRows() {
-    emphasisList.querySelectorAll(".editable-scene").forEach((row) => {
+    momentList.querySelectorAll(".editable-scene").forEach((row) => {
       const index = Number(row.dataset.index);
-      row.querySelector(".emphasis-text-input").addEventListener("input", (e) => {
-        emphases[index] = { ...emphases[index], text: e.target.value };
-      });
-      row.querySelector(".remove-emphasis-btn").addEventListener("click", () => {
-        emphases.splice(index, 1);
-        renderLists();
-      });
-    });
 
-    imageList.querySelectorAll(".editable-scene").forEach((row) => {
-      const index = Number(row.dataset.index);
-      const assetSelect = row.querySelector(".image-asset-input");
-      assetSelect.addEventListener("change", (e) => {
-        const asset = assetOptions.find((a) => a.id === e.target.value);
-        images[index] = {
-          ...images[index],
-          assetId: e.target.value,
-          caption: asset ? asset.caption : images[index].caption,
-        };
-      });
-      row.querySelector(".remove-image-btn").addEventListener("click", () => {
-        images.splice(index, 1);
-        renderLists();
+      const textInput = row.querySelector(".moment-text-input");
+      if (textInput) {
+        textInput.addEventListener("input", (e) => {
+          moments[index] = { ...moments[index], text: e.target.value };
+        });
+      }
+
+      const assetSelect = row.querySelector(".moment-asset-input");
+      if (assetSelect) {
+        assetSelect.addEventListener("change", (e) => {
+          const asset = assetOptions.find((a) => a.id === e.target.value);
+          moments[index] = {
+            ...moments[index],
+            assetId: e.target.value,
+            caption: asset ? asset.caption : moments[index].caption,
+          };
+        });
+      }
+
+      row.querySelector(".remove-moment-btn").addEventListener("click", () => {
+        moments.splice(index, 1);
+        renderList();
       });
     });
   }
 
   // Timing edits happen in the preview app (new tab, "Adjust timing") and
-  // save straight to visual_scenes.json there. Re-fetch and re-render
-  // whenever this tab regains focus so a timing change made in the preview
-  // tab shows up here too, instead of being silently overwritten by this
-  // panel's own (stale) local buffer on its next "Save changes".
-  activeVisualSceneFocusListener = async () => {
+  // save straight to moments.json there. Re-fetch and re-render whenever
+  // this tab regains focus so a timing change made in the preview tab shows
+  // up here too, instead of being silently overwritten by this panel's own
+  // (stale) local buffer on its next "Save changes".
+  activeMomentFocusListener = async () => {
     if (document.visibilityState !== "visible") return;
     try {
-      const fresh = await getVisualScenesArtifact();
-      emphases = (fresh.emphases || []).map((e) => ({ ...e }));
-      images = (fresh.images || []).map((i) => ({ ...i }));
-      renderLists();
+      const fresh = await getMomentsArtifact();
+      moments = (fresh.moments || []).map((m) => ({ ...m }));
+      renderList();
     } catch (e) {
       // control panel's own fetch failed — leave the current buffer as-is
     }
   };
-  document.addEventListener("visibilitychange", activeVisualSceneFocusListener);
+  document.addEventListener("visibilitychange", activeMomentFocusListener);
 
-  renderLists();
+  renderList();
 
   saveBtn.addEventListener("click", async () => {
     saveBtn.disabled = true;
@@ -639,11 +634,11 @@ async function wireVisualSceneEditor(initialEmphases, initialImages) {
 
     try {
       const res = await fetch(
-        `/api/episode/visual-scenes?path=${encodeURIComponent(state.episodePath)}`,
+        `/api/episode/moments?path=${encodeURIComponent(state.episodePath)}`,
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ emphases, images }),
+          body: JSON.stringify({ moments }),
         }
       );
 

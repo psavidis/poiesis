@@ -8,7 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from generate_title_scenes import merge_title_scenes
-from generate_visual_scenes import merge_emphasis_scenes, merge_image_scenes
+from generate_moments import merge_moment_scenes
 
 
 LEAD_IN_SECONDS = 0.15
@@ -215,37 +215,29 @@ def run_scene_analysis(episode):
         )
 
 
-    visual_scenes_path = (
+    moments_path = (
             episode
             /
             "processing"
             /
-            "visual_scenes.json"
+            "moments.json"
     )
 
-    if visual_scenes_path.exists():
+    if moments_path.exists():
 
-        with visual_scenes_path.open(
+        with moments_path.open(
                 "r",
                 encoding="utf-8"
         ) as f:
-            visual_scenes = json.load(f)
-            emphases = visual_scenes.get("emphases", [])
-            images = visual_scenes.get("images", [])
+            moments = json.load(f).get("moments", [])
 
-        scene_plan = merge_emphasis_scenes(
+        scene_plan = merge_moment_scenes(
             scene_plan,
-            emphases
-        )
-
-        scene_plan = merge_image_scenes(
-            scene_plan,
-            images
+            moments
         )
 
         print(
-            f"Re-merged {len(emphases)} existing emphasis scene(s) "
-            f"and {len(images)} existing image scene(s)."
+            f"Re-merged {len(moments)} existing moment scene(s)."
         )
 
 

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Player, type PlayerRef } from "@remotion/player";
 import { Episode } from "video-renderer-src/episode/Episode";
 import type { EpisodeProps, PresenterScene, Scene, ScenePlan } from "video-renderer-src/episode/types";
-import { getAssets, getManifest, getScenePlan, getVisualScenes, saveVisualScenes } from "./api";
+import { getAssets, getManifest, getMoments, getScenePlan, saveMoments } from "./api";
 import { ActiveSceneBar } from "./ActiveSceneBar";
 import { EditPlanChat } from "./EditPlanChat";
 import { manifestToEpisodeBaseProps } from "./episodeProps";
@@ -20,7 +20,7 @@ export function App() {
     const { episodePath, sceneId } = useQueryParams();
 
     const [episodeProps, setEpisodeProps] = useState<EpisodeProps | null>(null);
-    const [visualScenes, setVisualScenes] = useState<{ emphases: any[]; images: any[] } | null>(null);
+    const [moments, setMoments] = useState<{ moments: any[] } | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [saveStatus, setSaveStatus] = useState("");
 
@@ -52,12 +52,12 @@ export function App() {
             getScenePlan(episodePath),
             getManifest(episodePath),
             getAssets(episodePath),
-            getVisualScenes(episodePath),
+            getMoments(episodePath),
         ])
-            .then(([scenePlan, manifest, assets, visualScenesData]) => {
+            .then(([scenePlan, manifest, assets, momentsData]) => {
                 const baseProps = manifestToEpisodeBaseProps(manifest, assets);
                 setEpisodeProps({ ...baseProps, scenePlan: scenePlan as ScenePlan });
-                setVisualScenes(visualScenesData);
+                setMoments(momentsData);
             })
             .catch((e) => {
                 // A raw network failure (browser's generic "Failed to
@@ -116,7 +116,7 @@ export function App() {
 
     // What's actually on screen at currentFrame: exactly one track scene
     // (presenter/title, absolute timelineStartFrame) plus zero or more
-    // overlay scenes (emphasis/caption/image) anchored to whichever
+    // overlay scenes (moment/caption/image) anchored to whichever
     // presenter scene is active — so the id shown here is always something
     // that can be typed straight into an edit-plan instruction ("shorten
     // scene-caption-42") without having to open scene-plan.json to find it.
@@ -144,37 +144,28 @@ export function App() {
     }, [episodeProps, currentFrame]);
 
     const editableOverlays: EditableOverlay[] = useMemo(() => {
-        if (!visualScenes || !sceneId) return [];
+        if (!moments || !sceneId) return [];
 
-        const emphases: EditableOverlay[] = visualScenes.emphases
-            .filter((e: any) => e.sceneId === sceneId)
-            .map((e: any) => ({ kind: "emphasis" as const, data: e }));
-
-        const images: EditableOverlay[] = visualScenes.images
-            .filter((i: any) => i.sceneId === sceneId)
-            .map((i: any) => ({ kind: "image" as const, data: i }));
-
-        return [...emphases, ...images];
-    }, [visualScenes, sceneId]);
+        return moments.moments
+            .filter((m: any) => m.sceneId === sceneId)
+            .map((m: any) => ({ kind: "moment" as const, data: m }));
+    }, [moments, sceneId]);
 
     const updateOverlay = (updated: EditableOverlay) => {
-        if (!visualScenes) return;
+        if (!moments) return;
 
-        setVisualScenes({
-            emphases: visualScenes.emphases.map((e: any) =>
-                updated.kind === "emphasis" && e.windowId === updated.data.windowId ? updated.data : e
-            ),
-            images: visualScenes.images.map((i: any) =>
-                updated.kind === "image" && i.windowId === updated.data.windowId ? updated.data : i
+        setMoments({
+            moments: moments.moments.map((m: any) =>
+                updated.kind === "moment" && m.windowId === updated.data.windowId ? updated.data : m
             ),
         });
     };
 
     const handleSave = async () => {
-        if (!visualScenes) return;
+        if (!moments) return;
         setSaveStatus("Saving…");
         try {
-            await saveVisualScenes(episodePath, visualScenes.emphases, visualScenes.images);
+            await saveMoments(episodePath, moments.moments);
             setSaveStatus('Saved. Re-run "Generate Remotion codegen" to apply to a render.');
         } catch (e) {
             setSaveStatus(`Save failed: ${e}`);

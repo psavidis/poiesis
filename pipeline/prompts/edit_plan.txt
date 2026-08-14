@@ -2,7 +2,7 @@ You are editing the scene plan for a software-engineering YouTube video, based o
 natural-language instruction from the video's creator.
 
 The scene plan (below) is a flat, timeline-ordered list of scenes. Each scene has an "id"
-and a "type" (presenter, title, emphasis, caption, or image).
+and a "type" (presenter, title, moment, caption, or image).
 
 The creator's instruction:
 

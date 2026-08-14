@@ -14,19 +14,15 @@ export const getScenePlan = (episodePath: string) => getArtifact(episodePath, "s
 export const getManifest = (episodePath: string) => getArtifact(episodePath, "manifest.json");
 export const getAssets = (episodePath: string) =>
     getArtifact(episodePath, "assets.json").then((data) => data.assets ?? []);
-export const getVisualScenes = (episodePath: string) => getArtifact(episodePath, "visual_scenes.json");
+export const getMoments = (episodePath: string) => getArtifact(episodePath, "moments.json");
 
-export async function saveVisualScenes(
-    episodePath: string,
-    emphases: unknown[],
-    images: unknown[]
-) {
+export async function saveMoments(episodePath: string, moments: unknown[]) {
     const res = await fetch(
-        `${API_BASE}/api/episode/visual-scenes?path=${encodeURIComponent(episodePath)}`,
+        `${API_BASE}/api/episode/moments?path=${encodeURIComponent(episodePath)}`,
         {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ emphases, images }),
+            body: JSON.stringify({ moments }),
         }
     );
     if (!res.ok) {

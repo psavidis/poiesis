@@ -193,7 +193,7 @@ def test_run_scene_analysis_preserves_existing_title_scenes(tmp_path):
     assert written == scene_plan
 
 
-def test_run_scene_analysis_preserves_existing_emphasis_scenes(tmp_path):
+def test_run_scene_analysis_preserves_existing_moment_scenes(tmp_path):
     episode = tmp_path / "episode"
     processing = episode / "processing"
 
@@ -207,15 +207,17 @@ def test_run_scene_analysis_preserves_existing_emphasis_scenes(tmp_path):
     )
 
     _write_json(
-        processing / "visual_scenes.json",
+        processing / "moments.json",
         {
-            "emphases": [
+            "moments": [
                 {
                     "windowId": "w0",
                     "sceneId": "scene-001",
                     "videoId": "001",
                     "offsetInParentFrames": 500,
                     "maxDurationInParentFrames": 400,
+                    "treatment": "bottom-callout",
+                    "requiredLayout": "center",
                     "text": "key phrase",
                     "reason": "central",
                 }
@@ -226,7 +228,7 @@ def test_run_scene_analysis_preserves_existing_emphasis_scenes(tmp_path):
     scene_plan = run_scene_analysis(episode)
 
     types = [scene["type"] for scene in scene_plan["scenes"]]
-    assert "emphasis" in types
+    assert "moment" in types
 
-    emphasis_scene = next(s for s in scene_plan["scenes"] if s["type"] == "emphasis")
-    assert emphasis_scene["text"] == "key phrase"
+    moment_scene = next(s for s in scene_plan["scenes"] if s["type"] == "moment")
+    assert moment_scene["text"] == "key phrase"

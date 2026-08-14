@@ -18,7 +18,7 @@ from process_runner import stream_process
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
 
 from generate_title_scenes import merge_title_scenes, write_json_atomic  # noqa: E402
-from generate_visual_scenes import merge_emphasis_scenes, merge_image_scenes  # noqa: E402
+from generate_moments import merge_moment_scenes  # noqa: E402
 from edit_plan import edit_plan, load_prompt as load_edit_plan_prompt, PROMPT_FILE as EDIT_PLAN_PROMPT_FILE  # noqa: E402
 from llm.client import LLMClient  # noqa: E402
 
@@ -109,7 +109,7 @@ def episode_artifact(path: str, name: str):
 
     allowed = {
         "title_scenes.json",
-        "visual_scenes.json",
+        "moments.json",
         "captions.json",
         "assets.json",
         "scene-plan.json",
@@ -171,66 +171,57 @@ def update_title_scenes(path: str, body: TitleScenesUpdate):
     return {"titles": titles}
 
 
-class EmphasisProposal(BaseModel):
+class MomentProposal(BaseModel):
     windowId: str
     sceneId: str
     videoId: str
     offsetInParentFrames: int
     maxDurationInParentFrames: int
-    text: str
+    treatment: str
+    requiredLayout: str
+    text: str | None = None
+    assetId: str | None = None
+    caption: str | None = None
     reason: str = ""
 
 
-class ImageProposal(BaseModel):
-    windowId: str
-    sceneId: str
-    videoId: str
-    offsetInParentFrames: int
-    maxDurationInParentFrames: int
-    assetId: str
-    caption: str
-    reason: str = ""
+class MomentsUpdate(BaseModel):
+    moments: list[MomentProposal]
 
 
-class VisualScenesUpdate(BaseModel):
-    emphases: list[EmphasisProposal]
-    images: list[ImageProposal]
-
-
-@app.put("/api/episode/visual-scenes")
-def update_visual_scenes(path: str, body: VisualScenesUpdate):
-    """Human edits to AI-proposed emphasis/image overlay text, timing
-    (offsetInParentFrames), duration (maxDurationInParentFrames, capped by
-    merge_*_scenes at EMPHASIS_DURATION_FRAMES/IMAGE_DURATION_FRAMES), and
-    (for images) assetId/caption. Writes the edited proposals back to
-    visual_scenes.json, then deterministically re-merges them into
-    scene-plan.json the same way generate_visual_scenes.py does after the
-    LLM call — no LLM involved here. Both merges rebuild all emphasis/image
-    scenes from scratch each call, so this is safe to call repeatedly even
-    if scenes were already merged before."""
+@app.put("/api/episode/moments")
+def update_moments(path: str, body: MomentsUpdate):
+    """Human edits to AI-proposed moment overlays: treatment, text/assetId,
+    timing (offsetInParentFrames), duration (maxDurationInParentFrames,
+    capped by merge_moment_scenes at duration_for_treatment(...)), and the
+    parent presenter scene's requiredLayout. Writes the edited proposals
+    back to moments.json, then deterministically re-merges them into
+    scene-plan.json the same way generate_moments.py does after the LLM
+    call — no LLM involved here. merge_moment_scenes rebuilds all moment
+    scenes (and their parents' layout field) from scratch each call, so
+    this is safe to call repeatedly even if scenes were already merged
+    before."""
 
     episode = resolve_episode(path)
     processing = episode / "processing"
 
     scene_plan_path = processing / "scene-plan.json"
-    visual_scenes_path = processing / "visual_scenes.json"
+    moments_path = processing / "moments.json"
 
     if not scene_plan_path.exists():
         raise HTTPException(status_code=404, detail="scene-plan.json not found — run the pipeline first")
 
-    emphases = [e.model_dump() for e in body.emphases]
-    images = [i.model_dump() for i in body.images]
+    moments = [m.model_dump() for m in body.moments]
 
     with scene_plan_path.open("r", encoding="utf-8") as f:
         scene_plan = json.load(f)
 
-    scene_plan = merge_emphasis_scenes(scene_plan, emphases)
-    scene_plan = merge_image_scenes(scene_plan, images)
+    scene_plan = merge_moment_scenes(scene_plan, moments)
 
-    write_json_atomic(visual_scenes_path, {"emphases": emphases, "images": images})
+    write_json_atomic(moments_path, {"moments": moments})
     write_json_atomic(scene_plan_path, scene_plan)
 
-    return {"emphases": emphases, "images": images}
+    return {"moments": moments}
 
 
 class EditPlanRequest(BaseModel):

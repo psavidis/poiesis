@@ -9,7 +9,7 @@ const defaultEpisodeProps: EpisodeProps = {
     scenePlan: generatedScenePlan as ScenePlan,
 };
 
-// Overlay scenes (emphasis, inset image) are anchored to a parent scene and
+// Overlay scenes (moment, inset image) are anchored to a parent scene and
 // never extend past it, so only track scenes (those with an absolute
 // timelineStartFrame) determine the episode's total duration.
 const durationForScenePlan = (scenePlan: ScenePlan) =>

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { PresenterScene } from "video-renderer-src/episode/types";
 
 export type EditableOverlay =
-    | { kind: "emphasis"; data: any }
+    | { kind: "moment"; data: any }
     | { kind: "image"; data: any };
 
 type DragMode = "move" | "resize";
@@ -214,6 +214,10 @@ export function OverlayStrip({ parentScene, overlays, onChange, onSeek }: Props)
                     // instead of drawing them off-canvas indefinitely.
                     if (leftPct + widthPct < 0 || leftPct > 100) return null;
 
+                    const isMomentImage =
+                        overlay.kind === "moment" && overlay.data.treatment === "side-image";
+                    const showsText = overlay.kind === "moment" && !isMomentImage;
+
                     return (
                         <div
                             key={overlay.data.windowId}
@@ -221,17 +225,22 @@ export function OverlayStrip({ parentScene, overlays, onChange, onSeek }: Props)
                                 ...styles.block,
                                 left: `${leftPct}%`,
                                 width: `${widthPct}%`,
-                                background: overlay.kind === "emphasis" ? "#3a7bd5" : "#c96f2a",
+                                background:
+                                    overlay.kind === "moment"
+                                        ? isMomentImage
+                                            ? "#c96f2a"
+                                            : "#3a7bd5"
+                                        : "#c96f2a",
                             }}
                             onMouseDown={(e) => startDrag(e, overlay, "move")}
                             title={
-                                overlay.kind === "emphasis"
+                                showsText
                                     ? overlay.data.text
                                     : `${overlay.data.assetId} — ${overlay.data.caption}`
                             }
                         >
                             <span style={styles.blockLabel}>
-                                {overlay.kind === "emphasis" ? overlay.data.text : overlay.data.assetId}
+                                {showsText ? overlay.data.text : overlay.data.assetId}
                             </span>
                             <div
                                 style={styles.resizeHandle}

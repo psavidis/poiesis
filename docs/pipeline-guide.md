@@ -40,7 +40,7 @@ original_footage/*.mov
  generate_title_scenes.py  -> processing/title_scenes.json + merges "title" scenes into scene-plan.json
       |
       v
- generate_visual_scenes.py -> processing/visual_scenes.json + merges "emphasis"/"image" scenes
+ generate_moments.py       -> processing/moments.json + merges "moment" scenes (and parent layout)
       |
       v
  generate_captions.py      -> processing/captions.json + merges "caption" scenes
@@ -67,16 +67,19 @@ Run all the stages above `key_footage.py` in one shot with `./create_episode.sh 
 |---|---|---|---|
 | `presenter` | `analyze_scenes.py` (deterministic) | your talking-head footage, silence-trimmed | absolute `timelineStartFrame` |
 | `title` | `generate_title_scenes.py` (AI) | full-screen text card between clips | absolute `timelineStartFrame` |
-| `emphasis` | `generate_visual_scenes.py` (AI) | short phrase overlaid on the presenter, lower-third | relative to a parent `presenter` scene |
-| `image` | `generate_visual_scenes.py` (AI) | inset picture-in-picture overlay from `graphics/` | relative to a parent `presenter` scene |
+| `moment` | `generate_moments.py` (AI) | `bottom-callout` (short phrase over the full-frame presenter), `side-text` (longer phrase filling one side), or `side-image` (an asset filling one side) | relative to a parent `presenter` scene |
+| `image` | hand-authored / edit-plan only | inset picture-in-picture overlay from `graphics/` | relative to a parent `presenter` scene |
 | `caption` | `generate_captions.py` (deterministic) | burned-in subtitle text, lower-third | relative to a parent `presenter` scene |
 
 The AI never places these randomly. Titles get proposed once per clip, only for genuine
-topic changes. Emphasis/image scenes only get *offered* to the AI for moments that have gone
-≥18 seconds without a visual change (computed in code, not left to the LLM's judgment) — and
-even then the AI is told to skip most of them and only act on the strongest candidates. Every
-proposal is validated: emphasis text must actually appear in what was said; image selections
-must reference a real, indexed asset. Nothing is trusted blindly.
+topic changes. Moment scenes only get *offered* to the AI for windows that have gone ≥18
+seconds without a visual change (computed in code, not left to the LLM's judgment) — and even
+then the AI is told to skip most of them and only act on the strongest candidates. Every
+proposal is validated: `bottom-callout`/`side-text` text must actually appear in what was
+said; `side-image` selections must reference a real, indexed asset. `side-text`/`side-image`
+also assign the parent presenter scene's `layout` (`"left"`/`"right"`) so the presenter
+animates to make room — two moments can't assign conflicting layouts to the same parent, and
+a `bottom-callout`'s parent must stay `"center"`. Nothing is trusted blindly.
 
 ## How to process a new episode end to end
 
@@ -112,7 +115,8 @@ you ever want to switch.)
 
 **The edit plan itself** — `processing/scene-plan.json` is plain JSON, meant to be
 hand-edited:
-- Delete/edit any `title` or `emphasis` scene's `text`.
+- Delete/edit any `title` scene's `text`, or a `moment` scene's `text` (bottom-callout/
+  side-text) or `assetId`/`caption` (side-image).
 - Delete/edit any `image` scene's `assetId` (must match an id in `processing/assets.json`)
   or `caption`.
 - Adjust a `presenter` scene's `sourceStartFrame`/`sourceEndFrame` if the automatic
@@ -134,8 +138,8 @@ bad; write real ones.
 
 **How sparse/frequent the AI visual additions are** — `pipeline/visual_placement.py`'s
 `MONOTONY_THRESHOLD_SECONDS` (currently 18s) controls how long the presenter has to talk
-uninterrupted before a moment even becomes eligible for an emphasis/image overlay.
-`generate_visual_scenes.py`'s `MAX_VISUAL_SCENES_PER_1000_FRAMES` caps total density.
+uninterrupted before a window even becomes eligible for a moment overlay.
+`generate_moments.py`'s `MAX_MOMENTS_PER_1000_FRAMES` caps total density.
 
 ## Fast iteration — don't full-render to check a small change
 
@@ -202,12 +206,12 @@ is hardcoded to Episode 9's specific file. If the clip isn't a perfectly seamles
 soft/organic clip (particles, gradients, blur) tends to hide the seam well since there's no
 hard geometry to jump; a clip with sharp shapes or text would show the cut more.
 
-## Visual design (titles, emphasis text, image overlays)
+## Visual design (titles, moment overlays, image overlays)
 
 `video-renderer/src/episode/brand.ts` holds the shared palette (`background`, `accent`,
-text colors, corner radii) — change it there and `AnimatedTitle.tsx`, `EmphasisText.tsx`, and
-`EpisodeImage.tsx` all update consistently, since they all import from it rather than
-hardcoding their own colors.
+text colors, corner radii) — change it there and `AnimatedTitle.tsx`, `MomentTreatments.tsx`
+(`BottomCallout`/`SideText`/`SideImage`), and `EpisodeImage.tsx` all update consistently,
+since they all import from it rather than hardcoding their own colors.
 
 The current look (dark navy background, orange accent border/underline, subtle background
 grid) was chosen after reviewing a specific reference channel's visual style — it's an
@@ -225,7 +229,7 @@ palette/motion from it, same process as this round.
   code content.
 - **Diagram scenes** — plausible next step, but needs a design decision first (hand-authored
   Mermaid templates the AI only fills in with labels, vs. fully generative diagrams — the
-  former is safer and matches how titles/emphasis/images already work: AI selects/fills
+  former is safer and matches how titles/moments/images already work: AI selects/fills
   structured fields, never invents free-form content).
 - **A DaVinci Resolve export path** — considered and explicitly rejected. Exporting to an
   editable Resolve timeline would break the core architecture: `scene-plan.json` stops being
@@ -235,10 +239,11 @@ palette/motion from it, same process as this round.
 
 ## Everything is tested
 
-99 automated tests currently cover: transcript normalization, silence trimming (including two
+180 automated tests currently cover: transcript normalization, silence trimming (including two
 real bugs found and fixed — Whisper hallucinating trailing garbage text, and unclamped frame
 math exceeding clip duration), scene-plan merging (including idempotency — re-running a stage
-twice no longer duplicates scenes), QA checks, and the LLM client providers. Run them with:
+twice no longer duplicates scenes), QA checks, the natural-language edit-plan endpoint, and the
+LLM client providers. Run them with:
 
 ```bash
 .venv/bin/pytest

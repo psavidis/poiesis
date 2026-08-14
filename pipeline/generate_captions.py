@@ -11,7 +11,7 @@ PROJECT_ROOT = PIPELINE_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from generate_title_scenes import write_json_atomic  # noqa: E402
-from generate_visual_scenes import _insert_overlay_scene  # noqa: E402
+from overlay_placement import insert_overlay_scene  # noqa: E402
 
 
 def load_json(path: Path):
@@ -127,7 +127,7 @@ def merge_caption_scenes(scene_plan, proposals):
             "durationInFrames": proposal["durationInFrames"],
         }
 
-        _insert_overlay_scene(
+        insert_overlay_scene(
             merged_scenes,
             scenes_by_id,
             caption_scene,

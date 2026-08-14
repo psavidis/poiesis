@@ -16,7 +16,7 @@ see [`docs/pipeline-guide.md`](docs/pipeline-guide.md).
 
 A local web UI for driving the pipeline without the terminal — every stage, the full
 pipeline, render, and QA check are all buttons that stream real-time output, and any AI-
-proposed scene (titles, emphasis text, image overlays) is shown for review with the model's
+proposed scene (titles, moment overlays) is shown for review with the model's
 stated reasoning. It runs the exact same scripts as the CLI, using your Claude Code CLI login
 (`config.json`'s `llm.provider: "claude-code"`) — no separate API key required.
 
@@ -29,13 +29,13 @@ episode folder to get started. Pass a different port with `./start_ui.sh 8080` i
 taken. (For development with auto-reload on code changes, run
 `cd ui && ../.venv/bin/uvicorn server:app --reload` instead.)
 
-## Adjusting emphasis/image overlay timing
+## Adjusting moment overlay timing
 
-The control panel's "Propose emphasis/image scenes (AI)" review lets you edit overlay text
-and (for images) which asset is shown directly. Timing — when an overlay appears and how
-long it shows — is adjusted in a separate scrubbable preview instead of typing frame numbers:
-click "Adjust timing" on any emphasis/image row. That link only works if the preview app's
-own dev server is also running (it's a separate process from the control panel):
+The control panel's "Propose moment scenes (AI)" review lets you edit a moment's text
+(bottom-callout/side-text) or which asset is shown (side-image) directly. Timing — when a
+moment appears and how long it shows — is adjusted in a separate scrubbable preview instead
+of typing frame numbers: click "Adjust timing" on any moment row. That link only works if the
+preview app's own dev server is also running (it's a separate process from the control panel):
 
 ```bash
 ./start_preview.sh
@@ -61,18 +61,19 @@ scratch rather than picking among real, already-validated options. Editable fiel
 |---|---|
 | `presenter` | `sourceStartFrame`, `sourceEndFrame`, `effects` |
 | `title` | `text` |
-| `emphasis` | `text`, `offsetInParentFrames`, `durationInFrames` |
+| `moment` | `text`, `assetId`, `caption`, `offsetInParentFrames`, `durationInFrames` |
 | `caption` | `text`, `offsetInParentFrames`, `durationInFrames` |
 | `image` | `caption`, `offsetInParentFrames`, `durationInFrames` |
 
 Any scene type can be removed outright. `id`, `type`, and any scene-linking field (`videoId`,
 `parentSceneId`, `assetId`) are never editable this way — those change what a scene
 fundamentally *is* rather than how it behaves, a different (and much riskier) operation than
-what this is for.
+what this is for. A moment's `treatment` (and its parent presenter's `layout`) is likewise
+excluded — switching treatments is `generate_moments.py`'s job, not a text edit.
 
 Editing a presenter scene's trim points changes its duration, which shifts every later
 track scene's (`presenter`/`title`) position to keep the timeline contiguous — this happens
-automatically after every edit. Overlay scenes (`emphasis`/`caption`/`image`) never need
+automatically after every edit. Overlay scenes (`moment`/`caption`/`image`) never need
 touching for this, since they're positioned relative to their own parent scene, not an
 absolute timeline frame.
 
@@ -101,18 +102,18 @@ which runs, in order:
 3. `validate_transcripts.py` — flags low-confidence transcript segments, produces `processing/transcript_validation.json`.
 4. `normalize_transcripts.py` — cleans transcripts into a consistent shape, produces `processing/segments/`.
 5. `merge_segments.py` — combines per-clip segments into `processing/episode_transcript.json`.
-6. `analyze_scenes.py` — trims silence/dead air at each clip's start and tail, produces `processing/scene-plan.json`. Re-runs are safe: if `title_scenes.json`/`visual_scenes.json` already exist, it re-merges them into the freshly regenerated presenter scenes rather than losing them.
+6. `analyze_scenes.py` — trims silence/dead air at each clip's start and tail, produces `processing/scene-plan.json`. Re-runs are safe: if `title_scenes.json`/`moments.json` already exist, it re-merges them into the freshly regenerated presenter scenes rather than losing them.
 7. `index_assets.py` — lists the episode's `graphics/` folder into `processing/assets.json` (id, filename, caption). Captions default to a filename-derived guess but are preserved across re-runs once you (or the AI) write a real one — see "Writing good asset captions" below.
 8. `generate_title_scenes.py` — proposes title-card scenes via the configured LLM provider, merges them into `scene-plan.json`, writes `processing/title_scenes.json` (the AI decision as an inspectable artifact).
-9. `generate_visual_scenes.py` — proposes sparse `emphasis` overlay scenes (short on-screen phrase callouts) and `image` overlay scenes (inset picture-in-picture, selected from `assets.json`) for stretches of presenter footage that have gone too long without a visual change. Uses a deterministic pre-filter (`pipeline/visual_placement.py`, default: 18s since the last title/emphasis/image) to decide which moments are even eligible before asking the LLM, and validates every proposal — emphasis text must be grounded in what was actually said (rejects fabricated/unrelated text), image selections must reference a real `assetId` (rejects hallucinated ids). Never proposes both types for the same moment. Writes `processing/visual_scenes.json`, merges into `scene-plan.json`.
-10. `generate_captions.py` — deterministic, no LLM: for each presenter scene, clips that clip's per-segment transcript (`processing/transcripts/<videoId>.json`) to the scene's post-silence-trim `sourceStartFrame`/`sourceEndFrame` window and emits `caption` overlay scenes positioned the same relative way emphasis/image scenes are. Caps any single caption at 6s on screen (Whisper's segments are sentence-length, not word-level, so there's no finer timing to split on). Writes `processing/captions.json`, merges into `scene-plan.json`. Rendering respects each presenter scene's `effects.captions` flag (defaults to `true`) — set it to `false` on a specific scene to hide captions there.
+9. `generate_moments.py` — proposes sparse `moment` overlay scenes for stretches of presenter footage that have gone too long without a visual change, choosing one of three treatments: `bottom-callout` (a short phrase overlaid on the still full-frame presenter), `side-text` (a longer phrase filling one side of the frame), or `side-image` (an asset from `assets.json` filling one side). `side-text`/`side-image` also set the parent presenter scene's `layout` to `"left"`/`"right"`, so the presenter animates to the opposite side to make room — Episode.tsx renders this as a slide, not a cut. Uses a deterministic pre-filter (`pipeline/visual_placement.py`, default: 18s since the last title/moment) to decide which windows are even eligible before asking the LLM, and validates every proposal — text must be grounded in what was actually said (rejects fabricated/unrelated text), image selections must reference a real `assetId` (rejects hallucinated ids). Never proposes more than one treatment for the same window, and never lets two moments assign conflicting layouts to the same parent scene. Writes `processing/moments.json`, merges into `scene-plan.json`.
+10. `generate_captions.py` — deterministic, no LLM: for each presenter scene, clips that clip's per-segment transcript (`processing/transcripts/<videoId>.json`) to the scene's post-silence-trim `sourceStartFrame`/`sourceEndFrame` window and emits `caption` overlay scenes positioned the same relative way moment/image scenes are. Writes `processing/captions.json`, merges into `scene-plan.json`. Rendering respects each presenter scene's `effects.captions` flag (defaults to `true`) — set it to `false` on a specific scene to hide captions there.
 11. `generate_scene_plan_ts.py` — generates `video-renderer/generated/episode/scene-plan.ts` for Remotion.
 12. `analyze_episode.py` — LLM pass flagging transcript sections that may need a closer look, produces `processing/episode_analysis.json`.
 13. `generate_episode_assets.py` — subtitles, review notes, chapters.
 
 ### Overlay scenes are positioned relative to their parent
 
-`emphasis` scenes and inset `image` scenes don't store an absolute `timelineStartFrame`.
+`moment` scenes and inset `image` scenes don't store an absolute `timelineStartFrame`.
 Instead they carry `parentSceneId` (a presenter scene's `id`) and `offsetInParentFrames`
 (frames from that scene's own start). Remotion resolves the absolute position at render time
 by looking up the parent's *current* position. This means re-running `analyze_scenes.py` or
@@ -141,19 +142,22 @@ plan — plain, human-readable JSON — and it's meant to be reviewed and adjust
 
 - **Title cards**: edit `text` on any `type: "title"` scene, delete ones you don't want,
   or add new ones by hand (same shape as the ones `generate_title_scenes.py` writes).
-- **Emphasis callouts and inset images**: same idea for `type: "emphasis"` and `type: "image"`
+- **Moment overlays and inset images**: same idea for `type: "moment"` and `type: "image"`
   (`display: "inset"`) scenes — edit/remove/add. These render as an overlay on top of the
   presenter, positioned via `parentSceneId` (a presenter scene's `id`) and
   `offsetInParentFrames` (frames from that scene's start) — not an absolute timeline frame.
   `offsetInParentFrames + durationInFrames` must not exceed the parent scene's own
-  `durationInFrames` (`qa_check.py` will flag it if not).
+  `durationInFrames` (`qa_check.py` will flag it if not). A `moment`'s `treatment`
+  (`bottom-callout`/`side-text`/`side-image`) must agree with its parent presenter scene's
+  `layout` (`center` for bottom-callout, `left`/`right` for the side treatments) —
+  `qa_check.py` flags a mismatch there too.
 - **Clip trimming**: adjust `sourceStartFrame`/`sourceEndFrame` on any `type: "presenter"`
   scene if the automatic silence trim over- or under-cuts.
 - **In the app**: the preview app (`./start_preview.sh`, "Preview episode" from the control
   panel) has a text box under the player — "remove the third title card", "trim 10 more frames
   off the end of scene-009" — that asks Claude to propose the edit, shows what it did (or
   rejected, and why) before applying, then reloads the player with the change. Scoped to
-  editing/removing existing scenes only (title/emphasis/caption/image text and timing,
+  editing/removing existing scenes only (title/moment/caption/image text and timing,
   presenter trim points) — it won't invent a new scene from a description. See "Natural-language
   editing" below for exactly which fields are editable this way.
 - Or ask Claude directly (in a coding session, e.g. this repo's Claude Code setup) to make the
@@ -208,7 +212,7 @@ render time, on top of whatever cost keyed (alpha) footage already adds.
 
 ### Finishing in DaVinci Resolve (background, intro/outro, music)
 
-Poiesis renders presenter footage + AI-placed overlays (titles, emphasis, captions, images).
+Poiesis renders presenter footage + AI-placed overlays (titles, moments, captions, images).
 It doesn't render the looping background, intro/outro, or music — those are channel-wide
 branding assets, mixed by hand on a DaVinci Resolve timeline, not per-episode AI decisions.
 `--transparent` renders a **transparent master** instead of the normal opaque MP4: presenter

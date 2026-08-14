@@ -59,6 +59,7 @@ def main():
 
     # 1. Prepare footage
     prepare_command = [
+        sys.executable,
         str(pipeline / "prepare_footage.py"),
         str(episode)
     ]
@@ -83,6 +84,7 @@ def main():
 
     # 3. Validate transcripts
     validation_command = [
+        sys.executable,
         str(pipeline / "validate_transcripts.py"),
         str(episode)
     ]
@@ -92,6 +94,7 @@ def main():
 
     # 4. Normalize transcripts
     normalize_command = [
+        sys.executable,
         str(pipeline / "normalize_transcripts.py"),
         str(episode)
     ]
@@ -104,6 +107,7 @@ def main():
 
     # 5. Merge transcript segments
     merge_command = [
+        sys.executable,
         str(pipeline / "merge_segments.py"),
         str(episode)
     ]
@@ -116,6 +120,7 @@ def main():
 
     # 6. Analyze scenes and trim dead air
     scene_analysis_command = [
+        sys.executable,
         str(pipeline / "analyze_scenes.py"),
         str(episode)
     ]
@@ -125,6 +130,7 @@ def main():
 
     # 6a. Index episode graphics/ into an asset manifest
     index_assets_command = [
+        sys.executable,
         str(pipeline / "index_assets.py"),
         str(episode)
     ]
@@ -134,6 +140,7 @@ def main():
 
     # 6b. Propose title scenes
     title_scenes_command = [
+        sys.executable,
         str(pipeline / "generate_title_scenes.py"),
         str(episode)
     ]
@@ -144,20 +151,22 @@ def main():
     run(title_scenes_command)
 
 
-    # 6c. Propose emphasis overlay scenes
-    visual_scenes_command = [
-        str(pipeline / "generate_visual_scenes.py"),
+    # 6c. Propose moment overlay scenes (bottom-callout/side-text/side-image)
+    moments_command = [
+        sys.executable,
+        str(pipeline / "generate_moments.py"),
         str(episode)
     ]
 
     if args.force:
-        visual_scenes_command.append("--force")
+        moments_command.append("--force")
 
-    run(visual_scenes_command)
+    run(moments_command)
 
 
     # 6d. Generate caption overlay scenes from trimmed transcripts
     captions_command = [
+        sys.executable,
         str(pipeline / "generate_captions.py"),
         str(episode)
     ]
@@ -172,6 +181,7 @@ def main():
 
     # 7. Generate Remotion scene plan
     scene_plan_command = [
+        sys.executable,
         str(pipeline / "generate_scene_plan_ts.py"),
         str(episode)
     ]
@@ -181,6 +191,7 @@ def main():
 
     # 8. Analyze episode
     analysis_command = [
+        sys.executable,
         str(pipeline / "analyze_episode.py"),
         str(episode)
     ]
@@ -193,6 +204,7 @@ def main():
 
     # 9. Generate episode assets
     assets_command = [
+        sys.executable,
         str(pipeline / "generate_episode_assets.py"),
         str(episode)
     ]

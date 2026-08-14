@@ -19,11 +19,17 @@ PROMPT_FILE = PIPELINE_DIR / "prompts" / "edit_plan.txt"
 # never change what a scene fundamentally is, and videoId/parentSceneId/
 # assetId repoint a scene at different footage/parent/asset rather than
 # editing "this" scene — a structurally different (and much riskier)
-# operation than the ones this endpoint is meant for.
+# operation than the ones this endpoint is meant for. A moment's "treatment"
+# is excluded for the same reason as "type": switching bottom-callout to
+# side-text/side-image also changes what layout its parent presenter scene
+# needs, which isn't something this endpoint reasons about — that's
+# generate_moments.py's job, not a text edit. "layout" on presenter itself is
+# likewise excluded — it's driven by whichever moment(s) target that scene,
+# not edited independently.
 EDITABLE_FIELDS = {
     "presenter": {"sourceStartFrame", "sourceEndFrame", "effects"},
     "title": {"text"},
-    "emphasis": {"text", "offsetInParentFrames", "durationInFrames"},
+    "moment": {"text", "assetId", "caption", "offsetInParentFrames", "durationInFrames"},
     "caption": {"text", "offsetInParentFrames", "durationInFrames"},
     "image": {"caption", "offsetInParentFrames", "durationInFrames"},
 }
@@ -66,8 +72,8 @@ def write_json_atomic(path: Path, data):
 def validate_operations(scene_plan, operations):
     """Rejects any operation referencing a scene that doesn't exist or a
     field outside that scene type's editable allowlist — the LLM's output is
-    never trusted blindly, same discipline generate_visual_scenes.py already
-    applies to emphasis/image proposals. Returns (valid_ops, rejected) where
+    never trusted blindly, same discipline generate_moments.py already
+    applies to moment proposals. Returns (valid_ops, rejected) where
     rejected is a list of {operation, reason} for transparency."""
 
     scenes_by_id = {scene["id"]: scene for scene in scene_plan["scenes"]}
@@ -156,7 +162,7 @@ def reflow_timeline(scene_plan):
     any edit that can change a track scene's duration (e.g. a presenter
     trim), since qa_check.py's check_timeline_continuity requires track
     scenes to be contiguous with no gaps/overlaps. Overlay scenes
-    (emphasis/caption/image) are positioned relative to their parent via
+    (moment/caption/image) are positioned relative to their parent via
     offsetInParentFrames and never need touching here — they resolve
     correctly at render time regardless of where their parent ends up."""
 

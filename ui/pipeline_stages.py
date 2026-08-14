@@ -88,10 +88,10 @@ PIPELINE_STAGES = [
         "title_scenes.json",
     ),
     Stage(
-        "generate_visual_scenes",
-        "Propose emphasis/image scenes (AI)",
-        lambda ep: [PYTHON, PIPELINE_DIR / "generate_visual_scenes.py", ep],
-        "visual_scenes.json",
+        "generate_moments",
+        "Propose moment scenes (AI)",
+        lambda ep: [PYTHON, PIPELINE_DIR / "generate_moments.py", ep],
+        "moments.json",
     ),
     Stage(
         "generate_captions",

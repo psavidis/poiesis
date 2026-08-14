@@ -28,6 +28,14 @@ export interface SceneEffects {
     transition: string;
 }
 
+// Where the presenter sits in the frame. Defaults to "center" (today's only
+// behavior — full-frame) when absent, so every existing episode's
+// scene-plan.json keeps rendering exactly as before with no migration.
+// "left"/"right" free up the opposite side of the frame for a moment's
+// side-text/side-image treatment (see MomentScene below) — the presenter
+// animates to/from this position rather than cutting, see PresenterSequence.
+export type PresenterLayout = "center" | "left" | "right";
+
 export interface PresenterScene {
     type: "presenter";
     id: string;
@@ -37,6 +45,7 @@ export interface PresenterScene {
     timelineStartFrame: number;
     durationInFrames: number;
     effects: SceneEffects;
+    layout?: PresenterLayout;
 }
 
 export interface TitleScene {
@@ -47,10 +56,20 @@ export interface TitleScene {
     durationInFrames: number;
 }
 
-export interface EmphasisScene {
-    type: "emphasis";
+// A moment's treatment must agree with its parent presenter scene's layout:
+// "bottom-callout" requires layout "center" (today's emphasis-chip look);
+// "side-text"/"side-image" require layout "left" or "right" (content fills
+// whichever side the presenter isn't occupying). Validated in
+// pipeline/generate_moments.py, not just assumed.
+export type MomentTreatment = "bottom-callout" | "side-text" | "side-image";
+
+export interface MomentScene {
+    type: "moment";
     id: string;
-    text: string;
+    treatment: MomentTreatment;
+    text?: string;
+    assetId?: string;
+    caption?: string;
     parentSceneId: string;
     offsetInParentFrames: number;
     durationInFrames: number;
@@ -76,7 +95,7 @@ export interface CaptionScene {
     durationInFrames: number;
 }
 
-export type Scene = PresenterScene | TitleScene | EmphasisScene | ImageScene | CaptionScene;
+export type Scene = PresenterScene | TitleScene | MomentScene | ImageScene | CaptionScene;
 
 export interface ScenePlan {
     version: number;

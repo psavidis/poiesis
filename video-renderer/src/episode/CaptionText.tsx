@@ -2,9 +2,10 @@ import { AbsoluteFill, interpolate, useCurrentFrame, useVideoConfig } from "remo
 
 import { brand } from "./brand";
 
-// Utilitarian and constant, unlike EmphasisText's animated callout — captions
-// appear on nearly every frame of the episode, so a spring/scale entrance
-// on each one would be exhausting rather than intentional.
+// Utilitarian and constant, unlike BottomCallout's animated entrance
+// (MomentTreatments.tsx) — captions appear on nearly every frame of the
+// episode, so a spring/scale entrance on each one would be exhausting
+// rather than intentional.
 export const CaptionText = ({ text }: { text: string }) => {
     const frame = useCurrentFrame();
     const { durationInFrames } = useVideoConfig();

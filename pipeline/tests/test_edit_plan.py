@@ -37,10 +37,11 @@ def _title(scene_id, text, timeline_start, duration=60):
     }
 
 
-def _emphasis(scene_id, parent_id, offset, duration, text):
+def _moment(scene_id, parent_id, offset, duration, text):
     return {
         "id": scene_id,
-        "type": "emphasis",
+        "type": "moment",
+        "treatment": "bottom-callout",
         "text": text,
         "parentSceneId": parent_id,
         "offsetInParentFrames": offset,
@@ -110,13 +111,13 @@ def test_validate_operations_rejects_update_with_disallowed_field():
 
 def test_validate_operations_rejects_id_and_type_and_linking_fields():
     scene_plan = {
-        "scenes": [_emphasis("scene-emphasis-0", "scene-001", 10, 60, "hello there")]
+        "scenes": [_moment("scene-moment-0", "scene-001", 10, 60, "hello there")]
     }
 
     ops = [
         {
             "op": "update",
-            "sceneId": "scene-emphasis-0",
+            "sceneId": "scene-moment-0",
             "fields": {"parentSceneId": "scene-002"},
             "reason": "trying to reparent",
         }
@@ -201,13 +202,13 @@ def test_reflow_timeline_leaves_overlay_scenes_untouched():
     scene_plan = {
         "scenes": [
             _presenter("scene-001", 0, 300, 0),
-            _emphasis("scene-emphasis-0", "scene-001", 50, 90, "hello there"),
+            _moment("scene-moment-0", "scene-001", 50, 90, "hello there"),
         ]
     }
 
     result = reflow_timeline(scene_plan)
 
-    overlay = [s for s in result["scenes"] if s["type"] == "emphasis"][0]
+    overlay = [s for s in result["scenes"] if s["type"] == "moment"][0]
     assert overlay["offsetInParentFrames"] == 50
     assert overlay["durationInFrames"] == 90
     assert "timelineStartFrame" not in overlay

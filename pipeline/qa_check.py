@@ -81,16 +81,20 @@ def check_scene_plan_asset_ids(scene_plan, assets):
 
     for scene in scene_plan["scenes"]:
 
-        if scene["type"] != "image":
+        if scene["type"] == "image":
+            asset_id = scene["assetId"]
+        elif scene["type"] == "moment" and scene["treatment"] == "side-image":
+            asset_id = scene["assetId"]
+        else:
             continue
 
-        if scene["assetId"] not in known_ids:
+        if asset_id not in known_ids:
             issues.append(
                 {
                     "check": "unknown_asset_id",
                     "severity": "high",
                     "sceneId": scene["id"],
-                    "detail": f"Scene references unknown assetId: {scene['assetId']}",
+                    "detail": f"Scene references unknown assetId: {asset_id}",
                 }
             )
 
@@ -99,7 +103,12 @@ def check_scene_plan_asset_ids(scene_plan, assets):
 
 def is_overlay_scene(scene):
 
-    if scene["type"] == "emphasis":
+    # "emphasis" is the pre-moments overlay type (see the now-removed
+    # generate_visual_scenes.py) — still recognized here so qa_check.py
+    # doesn't break on an older episode's scene-plan.json that was never
+    # re-run through generate_moments.py. No migration is required for
+    # existing episodes; this is the compatibility path for them.
+    if scene["type"] in ("moment", "emphasis"):
         return True
 
     if scene["type"] == "caption":
@@ -109,6 +118,62 @@ def is_overlay_scene(scene):
         return scene.get("display") == "inset"
 
     return False
+
+
+# Which parent presenter layout each moment treatment requires — mirrors
+# generate_moments.py's TREATMENT_REQUIRED_LAYOUT, checked independently
+# here so a hand-edited scene-plan.json (or a bug in the merge step) that
+# leaves a moment and its parent's layout disagreeing gets caught.
+MOMENT_REQUIRES_CENTER = {"bottom-callout"}
+MOMENT_REQUIRES_SIDE = {"side-text", "side-image"}
+
+
+def check_moment_layout_agreement(scene_plan):
+
+    issues = []
+
+    scenes_by_id = {scene["id"]: scene for scene in scene_plan["scenes"]}
+
+    for scene in scene_plan["scenes"]:
+
+        if scene["type"] != "moment":
+            continue
+
+        parent = scenes_by_id.get(scene.get("parentSceneId"))
+
+        if not parent or parent["type"] != "presenter":
+            continue
+
+        layout = parent.get("layout", "center")
+        treatment = scene["treatment"]
+
+        if treatment in MOMENT_REQUIRES_CENTER and layout != "center":
+            issues.append(
+                {
+                    "check": "moment_layout_mismatch",
+                    "severity": "medium",
+                    "sceneId": scene["id"],
+                    "detail": (
+                        f"Moment treatment '{treatment}' requires parent layout "
+                        f"'center', but parent {parent['id']} has layout '{layout}'"
+                    ),
+                }
+            )
+
+        elif treatment in MOMENT_REQUIRES_SIDE and layout not in ("left", "right"):
+            issues.append(
+                {
+                    "check": "moment_layout_mismatch",
+                    "severity": "medium",
+                    "sceneId": scene["id"],
+                    "detail": (
+                        f"Moment treatment '{treatment}' requires parent layout "
+                        f"'left' or 'right', but parent {parent['id']} has layout '{layout}'"
+                    ),
+                }
+            )
+
+    return issues
 
 
 def check_timeline_continuity(scene_plan):
@@ -288,6 +353,7 @@ def run_qa(episode: Path):
     issues += check_scene_plan_asset_ids(scene_plan, assets)
     issues += check_timeline_continuity(scene_plan)
     issues += check_overlay_scenes_within_bounds(scene_plan)
+    issues += check_moment_layout_agreement(scene_plan)
     issues += check_rendered_duration(episode, scene_plan)
 
     return {

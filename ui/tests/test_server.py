@@ -179,13 +179,15 @@ def test_update_title_scenes_can_remove_a_title_by_omitting_it(tmp_path):
     assert title_scenes == []
 
 
-def _emphasis_payload(**overrides):
+def _bottom_callout_payload(**overrides):
     payload = {
         "windowId": "w1",
         "sceneId": "scene-001",
         "videoId": "001",
         "offsetInParentFrames": 10,
         "maxDurationInParentFrames": 90,
+        "treatment": "bottom-callout",
+        "requiredLayout": "center",
         "text": "Hello",
         "reason": "topic shift",
     }
@@ -193,13 +195,15 @@ def _emphasis_payload(**overrides):
     return payload
 
 
-def _image_payload(**overrides):
+def _side_image_payload(**overrides):
     payload = {
         "windowId": "w2",
         "sceneId": "scene-001",
         "videoId": "001",
         "offsetInParentFrames": 20,
         "maxDurationInParentFrames": 120,
+        "treatment": "side-image",
+        "requiredLayout": "left",
         "assetId": "asset-1",
         "caption": "a diagram",
         "reason": "visual aid",
@@ -208,73 +212,90 @@ def _image_payload(**overrides):
     return payload
 
 
-def test_update_visual_scenes_returns_404_without_scene_plan(tmp_path):
+def test_update_moments_returns_404_without_scene_plan(tmp_path):
     episode = _make_episode(tmp_path)
 
     response = client.put(
-        "/api/episode/visual-scenes",
+        "/api/episode/moments",
         params={"path": str(episode)},
-        json={"emphases": [_emphasis_payload()], "images": []},
+        json={"moments": [_bottom_callout_payload()]},
     )
 
     assert response.status_code == 404
 
 
-def test_update_visual_scenes_writes_file_and_merges_scene_plan(tmp_path):
+def test_update_moments_writes_file_and_merges_scene_plan(tmp_path):
     episode = _make_episode(tmp_path)
     _make_scene_plan(episode)
 
     response = client.put(
-        "/api/episode/visual-scenes",
+        "/api/episode/moments",
         params={"path": str(episode)},
         json={
-            "emphases": [_emphasis_payload(text="Edited emphasis", offsetInParentFrames=15)],
-            "images": [_image_payload(assetId="asset-2")],
+            "moments": [_bottom_callout_payload(text="Edited emphasis", offsetInParentFrames=15)],
         },
     )
 
     assert response.status_code == 200
     body = response.json()
-    assert body["emphases"][0]["text"] == "Edited emphasis"
-    assert body["images"][0]["assetId"] == "asset-2"
+    assert body["moments"][0]["text"] == "Edited emphasis"
 
-    visual_scenes_on_disk = json.loads(
-        (episode / "processing" / "visual_scenes.json").read_text()
+    moments_on_disk = json.loads(
+        (episode / "processing" / "moments.json").read_text()
     )
-    assert visual_scenes_on_disk["emphases"][0]["offsetInParentFrames"] == 15
-    assert visual_scenes_on_disk["images"][0]["assetId"] == "asset-2"
+    assert moments_on_disk["moments"][0]["offsetInParentFrames"] == 15
 
     scene_plan_on_disk = json.loads((episode / "processing" / "scene-plan.json").read_text())
-    emphasis_scenes = [s for s in scene_plan_on_disk["scenes"] if s["type"] == "emphasis"]
-    image_scenes = [s for s in scene_plan_on_disk["scenes"] if s["type"] == "image"]
-    assert len(emphasis_scenes) == 1
-    assert emphasis_scenes[0]["text"] == "Edited emphasis"
-    assert emphasis_scenes[0]["offsetInParentFrames"] == 15
-    assert len(image_scenes) == 1
-    assert image_scenes[0]["assetId"] == "asset-2"
+    moment_scenes = [s for s in scene_plan_on_disk["scenes"] if s["type"] == "moment"]
+    assert len(moment_scenes) == 1
+    assert moment_scenes[0]["text"] == "Edited emphasis"
+    assert moment_scenes[0]["offsetInParentFrames"] == 15
 
 
-def test_update_visual_scenes_can_remove_scenes_by_omitting_them(tmp_path):
+def test_update_moments_sets_parent_layout_for_side_image(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    response = client.put(
+        "/api/episode/moments",
+        params={"path": str(episode)},
+        json={"moments": [_side_image_payload(assetId="asset-2")]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["moments"][0]["assetId"] == "asset-2"
+
+    scene_plan_on_disk = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    moment_scenes = [s for s in scene_plan_on_disk["scenes"] if s["type"] == "moment"]
+    assert len(moment_scenes) == 1
+    assert moment_scenes[0]["assetId"] == "asset-2"
+
+    parent = next(s for s in scene_plan_on_disk["scenes"] if s["id"] == "scene-001")
+    assert parent["layout"] == "left"
+
+
+def test_update_moments_can_remove_scenes_by_omitting_them(tmp_path):
     episode = _make_episode(tmp_path)
     _make_scene_plan(episode)
 
     client.put(
-        "/api/episode/visual-scenes",
+        "/api/episode/moments",
         params={"path": str(episode)},
-        json={"emphases": [_emphasis_payload()], "images": [_image_payload()]},
+        json={"moments": [_bottom_callout_payload(), _side_image_payload()]},
     )
 
     response = client.put(
-        "/api/episode/visual-scenes",
+        "/api/episode/moments",
         params={"path": str(episode)},
-        json={"emphases": [], "images": []},
+        json={"moments": []},
     )
 
     assert response.status_code == 200
 
     scene_plan_on_disk = json.loads((episode / "processing" / "scene-plan.json").read_text())
     overlay_scenes = [
-        s for s in scene_plan_on_disk["scenes"] if s["type"] in ("emphasis", "image")
+        s for s in scene_plan_on_disk["scenes"] if s["type"] == "moment"
     ]
     assert overlay_scenes == []
 

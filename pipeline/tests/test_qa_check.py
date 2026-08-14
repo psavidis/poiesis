@@ -2,6 +2,7 @@ from unittest.mock import patch
 
 from qa_check import (
     check_missing_media,
+    check_moment_layout_agreement,
     check_overlay_scenes_within_bounds,
     check_rendered_duration,
     check_scene_plan_asset_ids,
@@ -98,6 +99,102 @@ def test_check_scene_plan_asset_ids_ignores_non_image_scenes():
     assert check_scene_plan_asset_ids(scene_plan, []) == []
 
 
+def test_check_scene_plan_asset_ids_flags_unknown_id_for_side_image_moment():
+    scene_plan = {
+        "scenes": [
+            {"id": "scene-moment-0", "type": "moment", "treatment": "side-image", "assetId": "img-999"},
+        ]
+    }
+    assets = [{"id": "img-001"}]
+
+    issues = check_scene_plan_asset_ids(scene_plan, assets)
+
+    assert len(issues) == 1
+    assert issues[0]["check"] == "unknown_asset_id"
+
+
+def test_check_scene_plan_asset_ids_ignores_non_side_image_moments():
+    scene_plan = {
+        "scenes": [
+            {"id": "scene-moment-0", "type": "moment", "treatment": "bottom-callout", "text": "hi"},
+        ]
+    }
+
+    assert check_scene_plan_asset_ids(scene_plan, []) == []
+
+
+def test_check_moment_layout_agreement_passes_for_bottom_callout_on_center():
+    scene_plan = {
+        "scenes": [
+            {"id": "a", "type": "presenter", "layout": "center"},
+            {"id": "m", "type": "moment", "treatment": "bottom-callout", "parentSceneId": "a"},
+        ]
+    }
+
+    assert check_moment_layout_agreement(scene_plan) == []
+
+
+def test_check_moment_layout_agreement_passes_for_bottom_callout_on_default_layout():
+    scene_plan = {
+        "scenes": [
+            {"id": "a", "type": "presenter"},
+            {"id": "m", "type": "moment", "treatment": "bottom-callout", "parentSceneId": "a"},
+        ]
+    }
+
+    assert check_moment_layout_agreement(scene_plan) == []
+
+
+def test_check_moment_layout_agreement_flags_bottom_callout_on_side_layout():
+    scene_plan = {
+        "scenes": [
+            {"id": "a", "type": "presenter", "layout": "left"},
+            {"id": "m", "type": "moment", "treatment": "bottom-callout", "parentSceneId": "a"},
+        ]
+    }
+
+    issues = check_moment_layout_agreement(scene_plan)
+
+    assert len(issues) == 1
+    assert issues[0]["check"] == "moment_layout_mismatch"
+    assert issues[0]["sceneId"] == "m"
+
+
+def test_check_moment_layout_agreement_passes_for_side_text_on_left():
+    scene_plan = {
+        "scenes": [
+            {"id": "a", "type": "presenter", "layout": "left"},
+            {"id": "m", "type": "moment", "treatment": "side-text", "parentSceneId": "a"},
+        ]
+    }
+
+    assert check_moment_layout_agreement(scene_plan) == []
+
+
+def test_check_moment_layout_agreement_flags_side_text_on_center():
+    scene_plan = {
+        "scenes": [
+            {"id": "a", "type": "presenter", "layout": "center"},
+            {"id": "m", "type": "moment", "treatment": "side-text", "parentSceneId": "a"},
+        ]
+    }
+
+    issues = check_moment_layout_agreement(scene_plan)
+
+    assert len(issues) == 1
+    assert issues[0]["sceneId"] == "m"
+
+
+def test_check_moment_layout_agreement_ignores_missing_parent():
+    scene_plan = {
+        "scenes": [
+            {"id": "m", "type": "moment", "treatment": "side-text", "parentSceneId": "does-not-exist"},
+        ]
+    }
+
+    assert check_moment_layout_agreement(scene_plan) == []
+
+
 def test_check_timeline_continuity_passes_for_contiguous_scenes():
     scene_plan = {
         "scenes": [
@@ -139,6 +236,22 @@ def test_check_timeline_continuity_flags_overlap():
 
 
 def test_check_timeline_continuity_ignores_overlay_scenes():
+    scene_plan = {
+        "scenes": [
+            {"id": "a", "type": "presenter", "timelineStartFrame": 0, "durationInFrames": 100},
+            {"id": "b", "type": "presenter", "timelineStartFrame": 100, "durationInFrames": 50},
+            {"id": "e", "type": "moment", "timelineStartFrame": 40, "durationInFrames": 30},
+        ]
+    }
+
+    assert check_timeline_continuity(scene_plan) == []
+
+
+def test_check_timeline_continuity_ignores_legacy_emphasis_scenes():
+    # backward compatibility: an episode processed before the moments
+    # feature existed may still have "emphasis" scenes in its
+    # scene-plan.json (no migration is required) — qa_check.py must not
+    # treat them as track scenes.
     scene_plan = {
         "scenes": [
             {"id": "a", "type": "presenter", "timelineStartFrame": 0, "durationInFrames": 100},
@@ -193,7 +306,7 @@ def test_check_overlay_scenes_within_bounds_passes_when_contained():
             {"id": "a", "type": "presenter", "timelineStartFrame": 0, "durationInFrames": 100},
             {
                 "id": "e",
-                "type": "emphasis",
+                "type": "moment",
                 "parentSceneId": "a",
                 "offsetInParentFrames": 40,
                 "durationInFrames": 30,
@@ -210,7 +323,7 @@ def test_check_overlay_scenes_within_bounds_flags_scene_outside_any_base_scene()
             {"id": "a", "type": "presenter", "timelineStartFrame": 0, "durationInFrames": 100},
             {
                 "id": "e",
-                "type": "emphasis",
+                "type": "moment",
                 "parentSceneId": "a",
                 "offsetInParentFrames": 90,
                 "durationInFrames": 30,
@@ -230,7 +343,7 @@ def test_check_overlay_scenes_within_bounds_flags_missing_parent():
         "scenes": [
             {
                 "id": "e",
-                "type": "emphasis",
+                "type": "moment",
                 "parentSceneId": "does-not-exist",
                 "offsetInParentFrames": 0,
                 "durationInFrames": 30,
