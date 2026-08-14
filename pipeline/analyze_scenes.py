@@ -150,7 +150,13 @@ def create_scene_plan(episode, manifest):
 
             "effects": {
                 "captions": True,
-                "transition": "none"
+                # Applied uniformly to every cut, like the brand palette —
+                # not an AI decision per clip. See Episode.tsx's
+                # CROSSFADE_TRANSITION_FRAMES for the actual duration.
+                # A specific cut can still be set to "none" by hand-editing
+                # scene-plan.json or via a natural-language edit instruction
+                # if a particular hard cut is wanted.
+                "transition": "crossfade"
             }
         }
 

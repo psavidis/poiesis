@@ -158,6 +158,31 @@ def test_run_scene_analysis_regenerates_presenter_scenes(tmp_path):
     assert scene_plan["scenes"][0]["type"] == "presenter"
 
 
+def test_run_scene_analysis_defaults_every_presenter_scene_to_crossfade(tmp_path):
+    # Applied uniformly like the brand palette, not an AI decision per cut
+    # — see Episode.tsx's CROSSFADE_TRANSITION_FRAMES for the render side.
+    episode = tmp_path / "episode"
+    processing = episode / "processing"
+
+    _write_json(
+        processing / "manifest.json",
+        {
+            "episode": "episode",
+            "fps": 30,
+            "videos": [
+                {"id": "001", "duration": 10.0},
+                {"id": "002", "duration": 10.0},
+            ],
+        },
+    )
+
+    scene_plan = run_scene_analysis(episode)
+
+    presenter_scenes = [s for s in scene_plan["scenes"] if s["type"] == "presenter"]
+    assert len(presenter_scenes) == 2
+    assert all(s["effects"]["transition"] == "crossfade" for s in presenter_scenes)
+
+
 def test_run_scene_analysis_preserves_existing_title_scenes(tmp_path):
     episode = tmp_path / "episode"
     processing = episode / "processing"

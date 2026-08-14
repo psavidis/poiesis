@@ -166,7 +166,7 @@ export function App() {
         setSaveStatus("Saving…");
         try {
             await saveMoments(episodePath, moments.moments);
-            setSaveStatus('Saved. Re-run "Generate Remotion codegen" to apply to a render.');
+            setSaveStatus("Saved — the next render will pick this up.");
         } catch (e) {
             setSaveStatus(`Save failed: ${e}`);
         }

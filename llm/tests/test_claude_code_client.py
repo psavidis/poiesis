@@ -94,6 +94,72 @@ def test_raises_when_response_is_error():
             assert "something went wrong" in str(e)
 
 
+def test_complete_populates_last_usage():
+    with patch("llm.claude_code_client.subprocess.run") as mock_run:
+        mock_run.return_value = _mock_cli_result(
+            {
+                "is_error": False,
+                "result": "hello",
+                "total_cost_usd": 0.0123,
+                "duration_ms": 800,
+                "usage": {"input_tokens": 100, "output_tokens": 50},
+            }
+        )
+
+        from llm.claude_code_client import ClaudeCodeClient
+
+        client = ClaudeCodeClient("sonnet")
+        assert client.last_usage is None
+
+        client.complete("say hi")
+
+        assert client.last_usage.input_tokens == 100
+        assert client.last_usage.output_tokens == 50
+        assert client.last_usage.cost_usd == 0.0123
+        assert client.last_usage.duration_ms == 800
+
+
+def test_last_usage_is_none_field_when_missing_from_response():
+    with patch("llm.claude_code_client.subprocess.run") as mock_run:
+        mock_run.return_value = _mock_cli_result(
+            {"is_error": False, "result": "hello"}
+        )
+
+        from llm.claude_code_client import ClaudeCodeClient
+
+        client = ClaudeCodeClient("sonnet")
+        client.complete("say hi")
+
+        assert client.last_usage.input_tokens is None
+        assert client.last_usage.cost_usd is None
+
+
+def test_last_usage_is_populated_even_when_response_is_error():
+    # a call that fails with is_error=true still incurred real cost —
+    # that's worth surfacing, not silently discarded because an exception
+    # was about to be raised
+    with patch("llm.claude_code_client.subprocess.run") as mock_run:
+        mock_run.return_value = _mock_cli_result(
+            {
+                "is_error": True,
+                "result": "something went wrong",
+                "total_cost_usd": 0.005,
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+            }
+        )
+
+        from llm.claude_code_client import ClaudeCodeClient
+
+        client = ClaudeCodeClient("sonnet")
+
+        try:
+            client.complete("say hi")
+        except RuntimeError:
+            pass
+
+        assert client.last_usage.cost_usd == 0.005
+
+
 def test_llm_client_dispatches_to_claude_code_provider(tmp_path):
     config_path = tmp_path / "config.json"
     config_path.write_text(

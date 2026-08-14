@@ -1,11 +1,33 @@
 import json
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 
+import server
+from episode_locks import episode_lock
 from server import app
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_codegen_regeneration(request):
+    """Every scene-plan write endpoint calls regenerate_codegen(episode),
+    which would otherwise overwrite the real
+    video-renderer/generated/episode/scene-plan.ts with test fixture data
+    on every test run. Auto-applied to every test in this file so no
+    individual test needs to remember to mock it — except the
+    test_regenerate_codegen_* tests below, which are testing that function
+    itself and patch generate_scene_plan_ts (one layer deeper) instead, so
+    they opt out here to avoid double-patching the thing they're testing."""
+
+    if request.node.name.startswith("test_regenerate_codegen_"):
+        yield
+        return
+
+    with patch("server.regenerate_codegen"):
+        yield
 
 
 def _make_episode(tmp_path):
@@ -352,3 +374,182 @@ def test_edit_scene_plan_returns_502_when_llm_call_fails(tmp_path):
         )
 
     assert response.status_code == 502
+
+
+def test_update_title_scenes_regenerates_codegen(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    with patch("server.regenerate_codegen") as mock_regen:
+        response = client.put(
+            "/api/episode/title-scenes",
+            params={"path": str(episode)},
+            json={"titles": [{"videoId": "001", "text": "Hello"}]},
+        )
+
+    assert response.status_code == 200
+    mock_regen.assert_called_once_with(episode)
+
+
+def test_update_moments_regenerates_codegen(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    with patch("server.regenerate_codegen") as mock_regen:
+        response = client.put(
+            "/api/episode/moments",
+            params={"path": str(episode)},
+            json={"moments": [_bottom_callout_payload()]},
+        )
+
+    assert response.status_code == 200
+    mock_regen.assert_called_once_with(episode)
+
+
+def test_edit_scene_plan_regenerates_codegen(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    fake_result = (
+        {"scenes": [{"id": "scene-001", "type": "presenter", "videoId": "001", "text": "unused"}]},
+        [],
+        [],
+    )
+
+    with patch("server.edit_plan", return_value=fake_result), patch(
+        "server.regenerate_codegen"
+    ) as mock_regen:
+        response = client.post(
+            "/api/episode/edit-plan",
+            params={"path": str(episode)},
+            json={"instruction": "remove the second clip"},
+        )
+
+    assert response.status_code == 200
+    mock_regen.assert_called_once_with(episode)
+
+
+def test_edit_scene_plan_does_not_regenerate_codegen_when_llm_call_fails(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    with patch("server.edit_plan", side_effect=RuntimeError("claude CLI not found")), patch(
+        "server.regenerate_codegen"
+    ) as mock_regen:
+        response = client.post(
+            "/api/episode/edit-plan",
+            params={"path": str(episode)},
+            json={"instruction": "remove the title card"},
+        )
+
+    assert response.status_code == 502
+    mock_regen.assert_not_called()
+
+
+def test_regenerate_codegen_calls_generate_scene_plan_ts(tmp_path):
+    episode = tmp_path / "My Episode"
+
+    with patch("server.generate_scene_plan_ts") as mock_generate:
+        server.regenerate_codegen(episode)
+
+    mock_generate.assert_called_once_with(episode, server.RENDERER_DIR)
+
+
+def test_regenerate_codegen_swallows_errors(tmp_path):
+    episode = tmp_path / "My Episode"
+
+    with patch("server.generate_scene_plan_ts", side_effect=RuntimeError("scene plan missing")):
+        # must not raise — a codegen hiccup should never block the edit
+        # itself from being saved, which already succeeded by this point
+        server.regenerate_codegen(episode)
+
+
+def test_update_title_scenes_returns_409_when_episode_is_locked(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    # Simulate a pipeline/render already in flight for this episode by
+    # holding its lock for the duration of the request, same as
+    # _run_websocket does around a real subprocess run.
+    with episode_lock(episode):
+        response = client.put(
+            "/api/episode/title-scenes",
+            params={"path": str(episode)},
+            json={"titles": [{"videoId": "001", "text": "Hello"}]},
+        )
+
+    assert response.status_code == 409
+
+    # scene-plan.json must be untouched — the busy episode was never
+    # allowed to be written to
+    scene_plan_on_disk = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    title_scenes = [s for s in scene_plan_on_disk["scenes"] if s["type"] == "title"]
+    assert title_scenes == []
+
+
+def test_update_title_scenes_succeeds_once_lock_is_released(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    with episode_lock(episode):
+        blocked = client.put(
+            "/api/episode/title-scenes",
+            params={"path": str(episode)},
+            json={"titles": [{"videoId": "001", "text": "Hello"}]},
+        )
+    assert blocked.status_code == 409
+
+    # lock released after the `with` block — the same request now succeeds
+    response = client.put(
+        "/api/episode/title-scenes",
+        params={"path": str(episode)},
+        json={"titles": [{"videoId": "001", "text": "Hello"}]},
+    )
+    assert response.status_code == 200
+
+
+def test_update_moments_returns_409_when_episode_is_locked(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    with episode_lock(episode):
+        response = client.put(
+            "/api/episode/moments",
+            params={"path": str(episode)},
+            json={"moments": [_bottom_callout_payload()]},
+        )
+
+    assert response.status_code == 409
+
+
+def test_edit_scene_plan_returns_409_when_episode_is_locked(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    with episode_lock(episode):
+        response = client.post(
+            "/api/episode/edit-plan",
+            params={"path": str(episode)},
+            json={"instruction": "remove the title card"},
+        )
+
+    assert response.status_code == 409
+
+
+def test_different_episodes_do_not_block_each_other(tmp_path):
+    episode_a = _make_episode(tmp_path)
+    _make_scene_plan(episode_a)
+
+    episode_b = tmp_path / "Another Episode"
+    (episode_b / "processing").mkdir(parents=True)
+    (episode_b / "processing" / "manifest.json").write_text("{}")
+    _make_scene_plan(episode_b)
+
+    with episode_lock(episode_a):
+        response = client.put(
+            "/api/episode/title-scenes",
+            params={"path": str(episode_b)},
+            json={"titles": [{"videoId": "001", "text": "Hello"}]},
+        )
+
+    assert response.status_code == 200

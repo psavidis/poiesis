@@ -68,8 +68,8 @@ scratch rather than picking among real, already-validated options. Editable fiel
 Any scene type can be removed outright. `id`, `type`, and any scene-linking field (`videoId`,
 `parentSceneId`, `assetId`) are never editable this way — those change what a scene
 fundamentally *is* rather than how it behaves, a different (and much riskier) operation than
-what this is for. A moment's `treatment` (and its parent presenter's `layout`) is likewise
-excluded — switching treatments is `generate_moments.py`'s job, not a text edit.
+what this is for. A moment's `treatment` (and `presenterSide`) is likewise excluded — switching
+treatments is `generate_moments.py`'s job, not a text edit.
 
 Editing a presenter scene's trim points changes its duration, which shifts every later
 track scene's (`presenter`/`title`) position to keep the timeline contiguous — this happens
@@ -77,9 +77,11 @@ automatically after every edit. Overlay scenes (`moment`/`caption`/`image`) neve
 touching for this, since they're positioned relative to their own parent scene, not an
 absolute timeline frame.
 
-Like "Adjust timing", each instruction is applied straight to `processing/scene-plan.json` —
-re-run `generate_scene_plan_ts.py` (or the control panel's "Generate Remotion codegen") to
-pick up the change in a render.
+Like "Adjust timing", each instruction is applied straight to `processing/scene-plan.json`, and
+the control panel automatically regenerates `video-renderer/generated/episode/scene-plan.ts`
+right after — the next render already reflects the change, no separate manual codegen step.
+(Hand-editing `scene-plan.json` directly, outside the control panel, still needs a manual
+`generate_scene_plan_ts.py` run — see "Review" below.)
 
 # Python Library Dependencies
 
@@ -236,7 +238,12 @@ python3 pipeline/qa_check.py /path/to/episode
 ```
 
 `qa_check.py` catches gaps/overlaps in the timeline, missing media, and rendered-duration
-mismatches — run it after any manual edit and again after rendering.
+mismatches on the scene plan — run it after any manual edit. Once a render exists, it also
+decodes the actual rendered file: sustained black frames (tuned against this channel's dark
+brand background so title cards don't false-positive), an audio track that's silent or missing
+entirely, and audio/video streams whose lengths have drifted apart (not frame-accurate
+lip-sync, but enough to catch a truncated or dropped audio track). Run it again after
+rendering to catch render-time failures the scene-plan checks can't see.
 
 ## Background removal (optional, not part of the default pipeline)
 

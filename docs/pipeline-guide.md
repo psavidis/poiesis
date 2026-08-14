@@ -109,9 +109,22 @@ python3 pipeline/qa_check.py /path/to/episode
 1920x1080). Override per-render without touching config: `./render_episode.sh <episode> 3840x2160`.
 
 **Which LLM does the AI stages** — `config.json`'s `llm.provider`. Currently `claude-code`,
-which shells out to your Claude Code CLI login — no API key, no per-token billing, uses your
-existing subscription. (`ollama` and `anthropic`-API-key providers also exist in the code if
-you ever want to switch.)
+which shells out to your Claude Code CLI login — no API key required, uses your existing
+subscription. (`ollama` and `anthropic`-API-key providers also exist in the code if you ever
+want to switch.)
+
+**Cost/token visibility** — every LLM call (`llm/client.py`) prints a usage line right after it
+completes: tokens in/out, the CLI's own reported cost estimate, and wall-clock duration, plus a
+running total for everything called through that same `LLMClient` instance (typically the
+lifetime of one pipeline stage script's process — `generate_moments.py`, `generate_title_scenes.py`,
+etc. each print their own stage-scoped total, not a whole-pipeline grand total, since each stage
+runs as its own subprocess). Not every provider can report everything: the `claude-code`
+provider reports cost + tokens + duration (`llm/claude_code_client.py`, parsed from the CLI's
+own `--output-format json` response, previously discarded); `anthropic` reports tokens but not
+a dollar figure (the Messages API doesn't return one); `ollama` reports neither (`ollama run`'s
+plain stdout has no usage metadata, and a local model has no dollar cost anyway). A field that a
+provider can't report stays `None` and is simply omitted from the printed line rather than
+shown as a misleading 0.
 
 **The edit plan itself** — `processing/scene-plan.json` is plain JSON, meant to be
 hand-edited:
@@ -220,6 +233,34 @@ uses bespoke character artwork, which is out of scope for what this can generate
 want to move closer to a different visual reference, point me at it and I'll re-derive the
 palette/motion from it, same process as this round.
 
+## Clip-to-clip transitions
+
+`analyze_scenes.py` sets every presenter scene's `effects.transition` to `"crossfade"` by
+default — applied uniformly like the brand palette, not an AI decision per cut. When two
+presenter scenes are *directly* adjacent (no title card or anything else between them) and the
+later one has `transition: "crossfade"`, `Episode.tsx` cross-dissolves a short (9 frames,
+~0.3s at 30fps) overlap at the cut instead of a hard cut. It borrows real footage immediately
+before the incoming clip's own `sourceStartFrame` — the silence-trimmed dead air, not invented
+content — to fade in from, and only the video dissolves; audio still cuts cleanly at the true
+boundary so overlapping speech never happens. A title card sitting between two presenter
+scenes disables the crossfade for the one after it, since there's no adjacent presenter footage
+to dissolve from. Set a specific scene's `effects.transition` to `"none"` (by hand-editing
+`scene-plan.json` or a natural-language edit instruction) to force a hard cut at one particular
+boundary.
+
+## Concurrent tabs/runs against the same episode
+
+The control panel (`ui/server.py`) holds a per-episode, in-process lock (`ui/episode_locks.py`)
+around anything that touches an episode's files: the three quick edit endpoints (title/moment
+edits, natural-language edit-plan) and the long-running pipeline/stage/render websocket runs.
+Two tabs (or a forgotten stale tab) triggering a second operation against the *same* episode
+while one is already in flight get an immediate, clear rejection — a 409 for the edit
+endpoints, a `{"type": "error"}` message for the websocket runs — rather than silently racing
+the first one's writes or queueing behind a run that could take minutes with no explanation.
+Different episodes never contend with each other. This is a same-process, in-memory lock, not
+a filesystem lock — it coordinates the control panel server itself, not a separate
+`python3 pipeline/*.py` invocation run directly from a terminal outside the UI.
+
 ## What's deliberately NOT built (and why)
 
 - **Code snippet scenes** — Episode 9's `code/` folder turned out to contain screen
@@ -237,14 +278,41 @@ palette/motion from it, same process as this round.
   Resolve's own timeline format. The real fix for "editing feels slow" was faster iteration
   tooling (Remotion Studio, fast preview renders), not a second editable representation.
 
+## QA is metadata AND rendered-file checks, not a visual review
+
+`qa_check.py` runs two kinds of checks. Against `scene-plan.json` alone (no render needed):
+timeline gaps/overlaps, missing media, unknown video/asset ids, overlay scenes positioned
+outside their parent's bounds, and moment/layout consistency. Against a rendered file, if one
+exists: rendered-duration vs. expected, sustained black frames (ffmpeg `blackdetect`, tuned so
+this channel's dark brand background and title cards don't false-positive), a silent or
+missing audio track (`volumedetect`), and audio/video streams whose lengths have drifted apart.
+None of this replaces watching the video — there's still no check for a jarring transition,
+misplaced text, or a moment whose content just doesn't fit the footage. It catches the class of
+bug where the render is structurally broken (dropped audio, a corrupted segment, a truncated
+stream) before you notice by watching twelve minutes of silence.
+
 ## Everything is tested
 
-180 automated tests currently cover: transcript normalization, silence trimming (including two
-real bugs found and fixed — Whisper hallucinating trailing garbage text, and unclamped frame
-math exceeding clip duration), scene-plan merging (including idempotency — re-running a stage
-twice no longer duplicates scenes), QA checks, the natural-language edit-plan endpoint, and the
-LLM client providers. Run them with:
+229 automated Python tests currently cover: transcript normalization, silence trimming
+(including two real bugs found and fixed — Whisper hallucinating trailing garbage text, and
+unclamped frame math exceeding clip duration), scene-plan merging (including idempotency —
+re-running a stage twice no longer duplicates scenes), QA checks (including the rendered-file
+checks above, tested by mocking ffmpeg's output rather than shelling out in the test suite),
+the natural-language edit-plan endpoint, the per-episode concurrency lock (including that two
+different episodes never block each other), and the LLM client providers (including per-provider
+usage/cost reporting). Run them with:
 
 ```bash
 .venv/bin/pytest
+```
+
+`video-renderer/` also has its own `vitest` suite (`src/episode/Episode.test.ts`) covering the
+renderer's pure layout/timing math — `layoutWindowsForScene` (the moment-driven presenter shift
+windows) and `crossfadeInFramesForScene` (the clip-to-clip crossfade clamping) — the two places
+where real visual bugs were found and fixed by watching renders earlier in this project's life.
+This doesn't cover component rendering or React behavior, only the frame-math functions that
+were previously only checkable by rendering a real frame and looking at it. Run with:
+
+```bash
+cd video-renderer && npm test
 ```

@@ -1,6 +1,8 @@
 from unittest.mock import patch
 
 from qa_check import (
+    check_audio_video_duration_parity,
+    check_black_frames,
     check_missing_media,
     check_moment_presenter_side_agreement,
     check_moment_windows_do_not_overlap,
@@ -8,6 +10,7 @@ from qa_check import (
     check_rendered_duration,
     check_scene_plan_asset_ids,
     check_scene_plan_video_ids,
+    check_silent_audio,
     check_timeline_continuity,
 )
 
@@ -447,5 +450,151 @@ def test_check_rendered_duration_passes_within_tolerance(tmp_path):
 
     with patch("qa_check.get_video_duration_seconds", return_value=10.2):
         issues = check_rendered_duration(episode, scene_plan)
+
+    assert issues == []
+
+
+def test_check_audio_video_duration_parity_skips_when_no_render_exists(tmp_path):
+    assert check_audio_video_duration_parity(tmp_path) == []
+
+
+def _make_rendered_file(tmp_path, name="My Episode"):
+    episode = tmp_path / name
+    rendered_dir = episode / "rendered"
+    rendered_dir.mkdir(parents=True)
+    (rendered_dir / f"{name}.mp4").write_bytes(b"fake")
+    return episode
+
+
+def test_check_audio_video_duration_parity_passes_when_streams_agree(tmp_path):
+    episode = _make_rendered_file(tmp_path)
+
+    with patch(
+        "qa_check.get_stream_durations_seconds",
+        return_value={"video": 100.0, "audio": 100.2},
+    ):
+        issues = check_audio_video_duration_parity(episode)
+
+    assert issues == []
+
+
+def test_check_audio_video_duration_parity_flags_drift(tmp_path):
+    episode = _make_rendered_file(tmp_path)
+
+    with patch(
+        "qa_check.get_stream_durations_seconds",
+        return_value={"video": 100.0, "audio": 40.0},
+    ):
+        issues = check_audio_video_duration_parity(episode)
+
+    assert len(issues) == 1
+    assert issues[0]["check"] == "audio_video_duration_mismatch"
+
+
+def test_check_audio_video_duration_parity_flags_missing_audio_stream(tmp_path):
+    episode = _make_rendered_file(tmp_path)
+
+    with patch(
+        "qa_check.get_stream_durations_seconds",
+        return_value={"video": 100.0},
+    ):
+        issues = check_audio_video_duration_parity(episode)
+
+    assert len(issues) == 1
+    assert issues[0]["check"] == "missing_audio_stream"
+
+
+def test_check_audio_video_duration_parity_skips_when_video_stream_unreadable(tmp_path):
+    episode = _make_rendered_file(tmp_path)
+
+    with patch("qa_check.get_stream_durations_seconds", return_value={}):
+        issues = check_audio_video_duration_parity(episode)
+
+    assert issues == []
+
+
+def test_check_black_frames_skips_when_no_render_exists(tmp_path):
+    assert check_black_frames(tmp_path) == []
+
+
+def test_check_black_frames_flags_detected_segment(tmp_path):
+    episode = _make_rendered_file(tmp_path)
+
+    fake_result = type(
+        "FakeResult",
+        (),
+        {"stderr": "black_start:10.5 black_end:13.2 black_duration:2.7"},
+    )()
+
+    with patch("qa_check.subprocess.run", return_value=fake_result):
+        issues = check_black_frames(episode)
+
+    assert len(issues) == 1
+    assert issues[0]["check"] == "black_frames"
+    assert "10.50s" in issues[0]["detail"]
+
+
+def test_check_black_frames_passes_when_none_detected(tmp_path):
+    episode = _make_rendered_file(tmp_path)
+
+    fake_result = type("FakeResult", (), {"stderr": ""})()
+
+    with patch("qa_check.subprocess.run", return_value=fake_result):
+        issues = check_black_frames(episode)
+
+    assert issues == []
+
+
+def test_check_black_frames_flags_multiple_segments(tmp_path):
+    episode = _make_rendered_file(tmp_path)
+
+    fake_result = type(
+        "FakeResult",
+        (),
+        {
+            "stderr": (
+                "black_start:1.0 black_end:2.0 black_duration:1.0\n"
+                "black_start:50.0 black_end:52.0 black_duration:2.0"
+            )
+        },
+    )()
+
+    with patch("qa_check.subprocess.run", return_value=fake_result):
+        issues = check_black_frames(episode)
+
+    assert len(issues) == 2
+
+
+def test_check_silent_audio_skips_when_no_render_exists(tmp_path):
+    assert check_silent_audio(tmp_path) == []
+
+
+def test_check_silent_audio_flags_effectively_silent_track(tmp_path):
+    episode = _make_rendered_file(tmp_path)
+
+    fake_result = type(
+        "FakeResult",
+        (),
+        {"stderr": "[Parsed_volumedetect_0] mean_volume: -91.0 dB"},
+    )()
+
+    with patch("qa_check.subprocess.run", return_value=fake_result):
+        issues = check_silent_audio(episode)
+
+    assert len(issues) == 1
+    assert issues[0]["check"] == "silent_audio"
+
+
+def test_check_silent_audio_passes_for_normal_speech_levels(tmp_path):
+    episode = _make_rendered_file(tmp_path)
+
+    fake_result = type(
+        "FakeResult",
+        (),
+        {"stderr": "[Parsed_volumedetect_0] mean_volume: -35.0 dB"},
+    )()
+
+    with patch("qa_check.subprocess.run", return_value=fake_result):
+        issues = check_silent_audio(episode)
 
     assert issues == []

@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -333,6 +334,39 @@ def get_video_duration_seconds(path: Path):
     return float(data["format"]["duration"])
 
 
+def get_stream_durations_seconds(path: Path):
+    """Per-stream duration (video, audio), in seconds. A stream missing
+    from the file (e.g. no audio track at all) is omitted from the result
+    rather than raising, so callers can distinguish "stream absent" from
+    "stream present but wrong length"."""
+
+    result = subprocess.run(
+        [
+            "ffprobe",
+            "-v", "quiet",
+            "-print_format", "json",
+            "-show_streams",
+        ] + [str(path)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    data = json.loads(result.stdout)
+
+    durations = {}
+
+    for stream in data["streams"]:
+
+        codec_type = stream.get("codec_type")
+        duration = stream.get("duration")
+
+        if codec_type in ("video", "audio") and duration is not None:
+            durations[codec_type] = float(duration)
+
+    return durations
+
+
 def check_rendered_duration(episode, scene_plan):
 
     issues = []
@@ -373,6 +407,177 @@ def check_rendered_duration(episode, scene_plan):
     return issues
 
 
+def check_audio_video_duration_parity(episode):
+    """Catches a truncated/dropped audio track or a video stream that
+    outran its audio (e.g. an editing bug that trims one but not the
+    other) — not frame-accurate lip-sync, which isn't something ffmpeg
+    alone can verify. This is a coarse but genuinely useful proxy: if the
+    two streams don't even agree on total length, something is wrong."""
+
+    issues = []
+
+    rendered = episode / "rendered" / f"{episode.name}.mp4"
+
+    if not rendered.exists():
+        return issues
+
+    durations = get_stream_durations_seconds(rendered)
+
+    if "video" not in durations:
+        return issues
+
+    if "audio" not in durations:
+        issues.append(
+            {
+                "check": "missing_audio_stream",
+                "severity": "high",
+                "detail": "Rendered file has a video stream but no audio stream",
+            }
+        )
+        return issues
+
+    tolerance_seconds = 0.5
+    drift = abs(durations["video"] - durations["audio"])
+
+    if drift > tolerance_seconds:
+
+        issues.append(
+            {
+                "check": "audio_video_duration_mismatch",
+                "severity": "high",
+                "detail": (
+                    f"Video stream is {durations['video']:.2f}s, audio stream is "
+                    f"{durations['audio']:.2f}s (drift {drift:.2f}s) — likely a "
+                    f"truncated or misaligned audio track, not necessarily "
+                    f"frame-accurate lip-sync"
+                ),
+            }
+        )
+
+    return issues
+
+
+# blackdetect thresholds tuned against this channel's actual dark-navy
+# brand background (title cards, empty space around image overlays) —
+# defaults (pic_th=0.98) false-positive on those, since a mostly-dark frame
+# with a bright title/caption on top still has ~98%+ near-black pixel area.
+# pix_th=0.05 means a pixel counts as "black" only below ~13/255 (true
+# black, not "dark navy"); pic_th=0.999 means virtually the entire frame
+# must be that dark, not just the background behind a bright overlay.
+# min_duration_seconds=1.0 requires a full second sustained, so a single
+# dark frame at a hard cut can't trigger it.
+BLACK_FRAME_PIC_TH = 0.999
+BLACK_FRAME_PIX_TH = 0.05
+BLACK_FRAME_MIN_DURATION_SECONDS = 1.0
+
+
+def check_black_frames(episode):
+
+    issues = []
+
+    rendered = episode / "rendered" / f"{episode.name}.mp4"
+
+    if not rendered.exists():
+        return issues
+
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-i", str(rendered),
+            "-vf", (
+                f"blackdetect=d={BLACK_FRAME_MIN_DURATION_SECONDS}:"
+                f"pic_th={BLACK_FRAME_PIC_TH}:pix_th={BLACK_FRAME_PIX_TH}"
+            ),
+            "-an",
+            "-f", "null",
+            "-",
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    for match in re.finditer(
+        r"black_start:([\d.]+) black_end:([\d.]+) black_duration:([\d.]+)",
+        result.stderr,
+    ):
+
+        start, end, duration = (float(g) for g in match.groups())
+
+        issues.append(
+            {
+                "check": "black_frames",
+                "severity": "high",
+                "detail": (
+                    f"Sustained near-black video from {start:.2f}s to {end:.2f}s "
+                    f"({duration:.2f}s) — likely missing/corrupt footage or a "
+                    f"failed render segment, not the channel's dark brand "
+                    f"background (that's excluded by threshold tuning)"
+                ),
+            }
+        )
+
+    return issues
+
+
+# volumedetect's mean_volume in dB. Anything at or below this across the
+# WHOLE rendered file is silence/noise-floor, not quiet speech — normal
+# talking-head narration for this channel runs roughly -50dB to -20dB (see
+# the mean/max volume observed on a known-good render). This intentionally
+# only checks the file as a whole, not per-segment, since ffmpeg's
+# volumedetect doesn't report windowed levels — it flags "the whole render
+# has no audible speech" (e.g. a dropped/muted audio pipeline), not "this
+# one clip is quiet."
+SILENT_AUDIO_MEAN_VOLUME_DB_THRESHOLD = -70.0
+
+
+def check_silent_audio(episode):
+
+    issues = []
+
+    rendered = episode / "rendered" / f"{episode.name}.mp4"
+
+    if not rendered.exists():
+        return issues
+
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-i", str(rendered),
+            "-af", "volumedetect",
+            "-vn",
+            "-f", "null",
+            "-",
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    match = re.search(r"mean_volume:\s*(-?[\d.]+)\s*dB", result.stderr)
+
+    if not match:
+        return issues
+
+    mean_volume_db = float(match.group(1))
+
+    if mean_volume_db <= SILENT_AUDIO_MEAN_VOLUME_DB_THRESHOLD:
+
+        issues.append(
+            {
+                "check": "silent_audio",
+                "severity": "high",
+                "detail": (
+                    f"Rendered file's audio track is effectively silent "
+                    f"(mean volume {mean_volume_db:.1f}dB, at or below the "
+                    f"{SILENT_AUDIO_MEAN_VOLUME_DB_THRESHOLD:.0f}dB noise-floor "
+                    f"threshold) — the audio pipeline likely failed even though "
+                    f"an audio stream exists"
+                ),
+            }
+        )
+
+    return issues
+
+
 def run_qa(episode: Path):
 
     processing = episode / "processing"
@@ -402,6 +607,9 @@ def run_qa(episode: Path):
     issues += check_moment_presenter_side_agreement(scene_plan)
     issues += check_moment_windows_do_not_overlap(scene_plan)
     issues += check_rendered_duration(episode, scene_plan)
+    issues += check_audio_video_duration_parity(episode)
+    issues += check_black_frames(episode)
+    issues += check_silent_audio(episode)
 
     return {
         "status": "warning" if issues else "ok",

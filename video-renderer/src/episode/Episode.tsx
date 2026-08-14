@@ -10,7 +10,7 @@ import {
     useVideoConfig,
 } from "remotion";
 
-import type { EpisodeAsset, EpisodeProps, EpisodeVideo, MomentScene, PresenterLayout, PresenterScene, Scene } from "./types";
+import type { EpisodeAsset, EpisodeProps, EpisodeVideo, MomentScene, PresenterLayout, PresenterScene, Scene, TitleScene } from "./types";
 import { AnimatedTitle } from "./AnimatedTitle";
 import { CaptionText } from "./CaptionText";
 import { EpisodeImage } from "./EpisodeImage";
@@ -28,13 +28,22 @@ import { BottomCallout, SideImage, SideText } from "./MomentTreatments";
 // background at the box edge, not the presenter's own motion range for
 // ordinary talking-head gesturing. MomentTreatments.tsx's SideText/SideImage
 // use the matching 28% remaining width.
-const LAYOUT_GEOMETRY: Record<PresenterLayout, { widthPct: number; leftPct: number }> = {
+export const LAYOUT_GEOMETRY: Record<PresenterLayout, { widthPct: number; leftPct: number }> = {
     center: { widthPct: 100, leftPct: 0 },
     left: { widthPct: 72, leftPct: 0 },
     right: { widthPct: 72, leftPct: 28 },
 };
 
-const TRANSITION_FRAMES = 24;
+export const TRANSITION_FRAMES = 24;
+
+// A crossfade "borrows" a few extra source frames immediately before a
+// clip's own silence-trimmed sourceStartFrame (real footage that exists,
+// just trimmed as dead air) so the incoming clip has something to fade in
+// from other than black — the same technique an editor uses when trimming
+// leaves no natural pre-roll. Kept short specifically so it stays
+// unnoticeable: CLAUDE.md's "animations should feel intentional rather
+// than distracting" applies here as much as to moments.
+export const CROSSFADE_TRANSITION_FRAMES = 9; // 0.3s at 30fps
 
 // A window (in frames local to a presenter scene) during which the
 // presenter should be off-center, derived from a single moment's own
@@ -43,7 +52,7 @@ const TRANSITION_FRAMES = 24;
 // even though the side content it was making room for was only visible for
 // a few seconds: the presenter now only leaves center immediately before
 // the moment appears and returns immediately after it ends.
-interface LayoutWindow {
+export interface LayoutWindow {
     // Frame (local to the scene) the slide-out begins — moment's own start
     // minus TRANSITION_FRAMES, clamped to the scene's own bounds.
     start: number;
@@ -53,7 +62,7 @@ interface LayoutWindow {
     side: "left" | "right";
 }
 
-const layoutWindowsForScene = (scene: PresenterScene, moments: MomentScene[]): LayoutWindow[] => {
+export const layoutWindowsForScene = (scene: PresenterScene, moments: MomentScene[]): LayoutWindow[] => {
     const windows = moments
         .filter((m) => m.parentSceneId === scene.id && m.presenterSide)
         .map((m) => ({
@@ -66,10 +75,30 @@ const layoutWindowsForScene = (scene: PresenterScene, moments: MomentScene[]): L
     return windows;
 };
 
+// How many frames this scene should crossfade in from its predecessor —
+// 0 means a hard cut (today's only behavior when absent). Borrows real,
+// already-existing footage immediately before this scene's own
+// sourceStartFrame (the silence-trim dead air) rather than inventing
+// content, and is clamped so it never borrows more than either neighbor
+// actually has available:
+//   - this scene's own sourceStartFrame (can't play frames before 0)
+//   - the previous scene's durationInFrames (can't overlap past its own start)
+export const crossfadeInFramesForScene = (scene: PresenterScene, previousScene: PresenterScene | undefined): number => {
+    if (scene.effects.transition !== "crossfade" || !previousScene) {
+        return 0;
+    }
+
+    return Math.max(
+        0,
+        Math.min(CROSSFADE_TRANSITION_FRAMES, scene.sourceStartFrame, previousScene.durationInFrames)
+    );
+};
+
 const PresenterSequence = ({
                                 scene,
                                 video,
                                 layoutWindows,
+                                crossfadeInFrames,
                             }: {
     scene: PresenterScene;
     video: EpisodeVideo;
@@ -77,16 +106,20 @@ const PresenterSequence = ({
     // — everything the animation needs to know is local to this scene, no
     // adjacency with neighboring presenter scenes required anymore.
     layoutWindows: LayoutWindow[];
+    // See crossfadeInFramesForScene — already resolved/clamped by the
+    // caller, so this component only needs the final frame count.
+    crossfadeInFrames: number;
 }) => {
     return (
         <Sequence
-            from={scene.timelineStartFrame}
-            durationInFrames={scene.durationInFrames}
+            from={scene.timelineStartFrame - crossfadeInFrames}
+            durationInFrames={scene.durationInFrames + crossfadeInFrames}
         >
             <AnimatedPresenterFrame
                 video={video}
                 scene={scene}
                 layoutWindows={layoutWindows}
+                crossfadeInFrames={crossfadeInFrames}
             />
         </Sequence>
     );
@@ -96,12 +129,21 @@ const AnimatedPresenterFrame = ({
                                      video,
                                      scene,
                                      layoutWindows,
+                                     crossfadeInFrames,
                                  }: {
     video: EpisodeVideo;
     scene: PresenterScene;
     layoutWindows: LayoutWindow[];
+    crossfadeInFrames: number;
 }) => {
-    const frame = useCurrentFrame();
+    // Raw frame local to this Sequence, whose clock now starts
+    // crossfadeInFrames before the scene's true timelineStartFrame (see
+    // PresenterSequence). sceneFrame re-aligns back to "0 at the scene's
+    // real start" — the same meaning layoutWindows/trim math already
+    // assumed before crossfades existed — so only the crossfade-specific
+    // code below needs to know about the borrowed lead-in at all.
+    const rawFrame = useCurrentFrame();
+    const sceneFrame = rawFrame - crossfadeInFrames;
 
     const centerGeo = LAYOUT_GEOMETRY.center;
 
@@ -110,7 +152,7 @@ const AnimatedPresenterFrame = ({
     // at the side for the moment's own span, side -> center across the
     // trailing pad. Frames outside every window stay at dead center — most
     // of a long scene is unaffected, which is the whole point of the fix.
-    const activeWindow = layoutWindows.find((w) => frame >= w.start && frame < w.end);
+    const activeWindow = layoutWindows.find((w) => sceneFrame >= w.start && sceneFrame < w.end);
 
     let widthPct = centerGeo.widthPct;
     let leftPct = centerGeo.leftPct;
@@ -121,14 +163,14 @@ const AnimatedPresenterFrame = ({
         const exitStart = Math.max(activeWindow.end - TRANSITION_FRAMES, enterEnd);
 
         widthPct = interpolate(
-            frame,
+            sceneFrame,
             [activeWindow.start, enterEnd, exitStart, activeWindow.end],
             [centerGeo.widthPct, sideGeo.widthPct, sideGeo.widthPct, centerGeo.widthPct],
             { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
         );
 
         leftPct = interpolate(
-            frame,
+            sceneFrame,
             [activeWindow.start, enterEnd, exitStart, activeWindow.end],
             [centerGeo.leftPct, sideGeo.leftPct, sideGeo.leftPct, centerGeo.leftPct],
             { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
@@ -161,8 +203,23 @@ const AnimatedPresenterFrame = ({
     const videoDivWidthPct = outerWidthPct === 0 ? 100 : (100 / outerWidthPct) * 100;
     const videoShiftPct = 50 - (videoDivWidthPct / 2);
 
+    // Fades in from 0 across the borrowed lead-in (rawFrame 0..crossfadeInFrames)
+    // — during that window the outgoing scene's own tail is still rendering
+    // underneath (it ends exactly at this scene's true timelineStartFrame,
+    // unaffected by this scene's borrowed lead-in), so this dissolves over
+    // it rather than cutting. crossfadeInFrames is 0 for every scene that
+    // isn't set to "crossfade" or has no previous scene to fade from, so
+    // this is a no-op (opacity pinned to 1) for the common case.
+    const opacity =
+        crossfadeInFrames === 0
+            ? 1
+            : interpolate(rawFrame, [0, crossfadeInFrames], [0, 1], {
+                  extrapolateLeft: "clamp",
+                  extrapolateRight: "clamp",
+              });
+
     return (
-        <AbsoluteFill>
+        <AbsoluteFill style={{ opacity }}>
             <div
                 style={{
                     position: "absolute",
@@ -184,7 +241,7 @@ const AnimatedPresenterFrame = ({
                 >
                     <OffthreadVideo
                         src={staticFile(video.keyedPath ?? video.path)}
-                        trimBefore={scene.sourceStartFrame}
+                        trimBefore={scene.sourceStartFrame - crossfadeInFrames}
                         trimAfter={scene.sourceEndFrame}
                         transparent={Boolean(video.keyedPath)}
                         muted
@@ -196,11 +253,19 @@ const AnimatedPresenterFrame = ({
                     />
                 </div>
             </div>
-            <Audio
-                src={staticFile(video.path)}
-                trimBefore={scene.sourceStartFrame}
-                trimAfter={scene.sourceEndFrame}
-            />
+            {/* Nested in its own Sequence, offset past the borrowed video
+                lead-in, so audio still cuts cleanly at this scene's true
+                start rather than starting crossfadeInFrames early and
+                overlapping the outgoing scene's own tail narration — only
+                the video dissolves, matching how a hard-cut edit with a
+                video crossfade (but no audio crossfade) normally sounds. */}
+            <Sequence from={crossfadeInFrames} durationInFrames={scene.durationInFrames}>
+                <Audio
+                    src={staticFile(video.path)}
+                    trimBefore={scene.sourceStartFrame}
+                    trimAfter={scene.sourceEndFrame}
+                />
+            </Sequence>
         </AbsoluteFill>
     );
 };
@@ -286,6 +351,34 @@ export const Episode = ({
         (scene): scene is MomentScene => scene.type === "moment"
     );
 
+    // A presenter scene should only crossfade from its immediate track
+    // predecessor if that predecessor is ALSO a presenter scene with no
+    // gap — a title card (or anything else) sitting between two presenter
+    // scenes means there's no adjacent presenter footage to dissolve from,
+    // just the title's own display window. Built from every track scene
+    // (presenter + title), not presenterSceneMap alone, so a title in
+    // between is actually visible to this adjacency check instead of being
+    // silently skipped over.
+    const orderedTrackScenes = typedScenePlan.scenes
+        .filter((scene): scene is PresenterScene | TitleScene => "timelineStartFrame" in scene)
+        .sort((a, b) => a.timelineStartFrame - b.timelineStartFrame);
+
+    const previousPresenterSceneById = new Map<string, PresenterScene | undefined>();
+
+    orderedTrackScenes.forEach((scene, index) => {
+        if (scene.type !== "presenter") {
+            return;
+        }
+
+        const previous = orderedTrackScenes[index - 1];
+
+        const isDirectlyAdjacentPresenter =
+            previous?.type === "presenter" &&
+            previous.timelineStartFrame + previous.durationInFrames === scene.timelineStartFrame;
+
+        previousPresenterSceneById.set(scene.id, isDirectlyAdjacentPresenter ? previous : undefined);
+    });
+
     const renderScene = (scene: Scene) => {
         switch (scene.type) {
             case "presenter": {
@@ -301,6 +394,7 @@ export const Episode = ({
                         scene={scene}
                         video={video}
                         layoutWindows={layoutWindowsForScene(scene, momentScenes)}
+                        crossfadeInFrames={crossfadeInFramesForScene(scene, previousPresenterSceneById.get(scene.id))}
                     />
                 );
             }

@@ -371,8 +371,8 @@ function renderTitleScenes(data) {
   return `
     <p class="hint">Titles Claude proposed for topic-change moments. Edit the text or remove
     a title below, then save — this rewrites title_scenes.json and re-merges scene-plan.json
-    deterministically (no AI call). Re-run "Generate Remotion codegen" afterward to pick up
-    the change in a render.</p>
+    deterministically (no AI call), regenerating the Remotion codegen automatically so the next
+    render picks up the change.</p>
     <div class="scene-list" id="title-scene-editor">
       ${
         titles.length
@@ -446,7 +446,7 @@ function wireTitleSceneEditor(initialTitles) {
         return;
       }
 
-      statusLabel.textContent = "Saved. Re-run \"Generate Remotion codegen\" to apply.";
+      statusLabel.textContent = "Saved — the next render will pick this up.";
     } catch (e) {
       statusLabel.textContent = `Save failed: ${e}`;
       statusLabel.classList.add("error");
@@ -466,14 +466,14 @@ function renderMoments(data) {
   return `
     <p class="hint">Moments Claude proposed for stretches that went too long without a visual
     change — a bottom callout, or a side text/image treatment that also slides the presenter to
-    the opposite side of the frame. Each one is grounded in something actually said, with the
-    AI's stated reason. Edit text/asset or remove one, then save — this rewrites moments.json
-    and re-merges scene-plan.json deterministically (no AI call), including updating the
-    parent presenter scene's layout to match. Use "Adjust timing" to scrub/drag when a moment
-    appears and how long it shows against the real footage (opens in a new tab —
-    video-renderer/preview-app must be running via <code>npm run dev</code> in that folder;
-    saves there apply immediately, no separate save step here). Re-run "Generate Remotion
-    codegen" afterward to pick up any change in a render.</p>
+    the opposite side of the frame for that moment's own window. Each one is grounded in
+    something actually said, with the AI's stated reason. Edit text/asset or remove one, then
+    save — this rewrites moments.json and re-merges scene-plan.json deterministically (no AI
+    call), regenerating the Remotion codegen automatically so the next render picks up the
+    change. Use "Adjust timing" to scrub/drag when a moment appears and how long it shows
+    against the real footage (opens in a new tab — video-renderer/preview-app must be running
+    via <code>npm run dev</code> in that folder; saves there apply immediately, no separate save
+    step here).</p>
     <div class="scene-list" id="moment-scene-list"></div>
     <div class="editor-actions">
       <button id="save-moments-btn">Save changes</button>
@@ -651,7 +651,7 @@ async function wireMomentEditor(initialMoments) {
         return;
       }
 
-      statusLabel.textContent = "Saved. Re-run \"Generate Remotion codegen\" to apply.";
+      statusLabel.textContent = "Saved — the next render will pick this up.";
     } catch (e) {
       statusLabel.textContent = `Save failed: ${e}`;
       statusLabel.classList.add("error");

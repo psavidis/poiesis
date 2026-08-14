@@ -89,8 +89,7 @@ export function EditPlanChat({ episodePath, onApplied }: Props) {
 
                     {result.applied.length > 0 && (
                         <div style={styles.hint}>
-                            Applied to scene-plan.json. Re-run "Generate Remotion codegen" to pick
-                            up the change in a render.
+                            Applied to scene-plan.json — the next render will pick this up.
                         </div>
                     )}
                 </div>
