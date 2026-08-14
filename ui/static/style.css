@@ -151,6 +151,22 @@ button.small {
   font-size: 12px;
 }
 
+a.secondary.small {
+  display: inline-block;
+  padding: 4px 10px;
+  font-size: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  text-decoration: none;
+  flex-shrink: 0;
+}
+
+a.secondary.small:hover {
+  border-color: var(--accent);
+}
+
 .stage-status {
   width: 14px;
   height: 14px;
@@ -251,10 +267,24 @@ button.small {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
-.ai-decision.editable-scene .title-text-input {
+.ai-decision.editable-scene .title-text-input,
+.ai-decision.editable-scene .emphasis-text-input {
   flex: 1;
+  min-width: 160px;
+  padding: 6px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.ai-decision.editable-scene select.image-asset-input {
+  flex: 1;
+  min-width: 160px;
   padding: 6px 10px;
   background: var(--bg);
   border: 1px solid var(--border);
@@ -266,6 +296,7 @@ button.small {
 .ai-decision.editable-scene .reason {
   margin-top: 0;
   flex-shrink: 0;
+  flex-basis: 100%;
 }
 
 .editor-actions {
@@ -275,11 +306,13 @@ button.small {
   margin-top: 12px;
 }
 
-#save-titles-status {
+#save-titles-status,
+#save-visual-scenes-status {
   margin: 0;
 }
 
-#save-titles-status.error {
+#save-titles-status.error,
+#save-visual-scenes-status.error {
   color: #ff8f8f;
 }
 

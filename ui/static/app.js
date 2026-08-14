@@ -337,6 +337,10 @@ async function showArtifact(stageId) {
     if (stageId === "generate_title_scenes") {
       wireTitleSceneEditor(data.titles || []);
     }
+
+    if (stageId === "generate_visual_scenes") {
+      await wireVisualSceneEditor(data.emphases || [], data.images || []);
+    }
   } catch (e) {
     reviewBody.innerHTML = `<p class="error">Failed to load artifact: ${escapeHtml(String(e))}</p>`;
   }
@@ -443,30 +447,202 @@ function renderVisualScenes(data) {
 
   return `
     <p class="hint">Overlays Claude proposed for moments that went too long without a visual
-    change. Each one is grounded in something actually said, with the AI's stated reason.</p>
-    <div class="scene-list">
-      ${emphases
-        .map(
-          (e) => `
-        <div class="ai-decision">
-          <div><span class="scene-type">EMPHASIS</span> <strong>${escapeHtml(e.text || "")}</strong></div>
-          ${e.reason ? `<div class="reason">${escapeHtml(e.reason)}</div>` : ""}
-        </div>
-      `
-        )
-        .join("")}
-      ${images
-        .map(
-          (i) => `
-        <div class="ai-decision">
-          <div><span class="scene-type">IMAGE</span> <strong>${escapeHtml(i.assetId || "")}</strong> — ${escapeHtml(i.caption || "")}</div>
-          ${i.reason ? `<div class="reason">${escapeHtml(i.reason)}</div>` : ""}
-        </div>
-      `
-        )
-        .join("")}
+    change. Each one is grounded in something actually said, with the AI's stated reason.
+    Edit text or (for images) which asset is shown, then save — this rewrites
+    visual_scenes.json and re-merges scene-plan.json deterministically (no AI call). Use
+    "Adjust timing" to scrub/drag when an overlay appears and how long it shows against the
+    real footage (opens in a new tab — video-renderer/preview-app must be running via
+    <code>npm run dev</code> in that folder; saves there apply immediately, no separate save
+    step here). Re-run "Generate Remotion codegen" afterward to pick up any change in a
+    render.</p>
+    <div class="scene-list" id="visual-scene-editor">
+      <div id="emphasis-scene-list"></div>
+      <div id="image-scene-list"></div>
+    </div>
+    <div class="editor-actions">
+      <button id="save-visual-scenes-btn">Save changes</button>
+      <span id="save-visual-scenes-status" class="hint"></span>
     </div>
   `;
+}
+
+// Preview app dev server (video-renderer/preview-app, `npm run dev` there) —
+// where "Adjust timing" opens a scrubbable, drag-to-adjust view of an
+// overlay's timing against the real presenter footage. Timing edits save
+// straight to the backend from that tab; this panel only re-fetches
+// visual_scenes.json when you come back to it (see wireVisualSceneEditor's
+// focus listener) rather than trying to keep two live edit buffers in sync.
+const PREVIEW_APP_BASE = "http://127.0.0.1:5173";
+
+function previewAppUrl(episodePath, sceneId) {
+  return `${PREVIEW_APP_BASE}/?path=${encodeURIComponent(episodePath)}&sceneId=${encodeURIComponent(sceneId)}`;
+}
+
+function renderEmphasisRow(e, i) {
+  return `
+    <div class="ai-decision editable-scene" data-index="${i}">
+      <span class="scene-type">EMPHASIS</span>
+      <input type="text" class="emphasis-text-input" value="${escapeHtml(e.text || "")}" />
+      <a class="secondary small adjust-timing-link" href="${previewAppUrl(state.episodePath, e.sceneId)}" target="_blank" rel="noopener">Adjust timing</a>
+      <span class="reason">clip ${escapeHtml(e.videoId || "?")} — offset ${e.offsetInParentFrames}f, up to ${e.maxDurationInParentFrames}f${e.reason ? ` — ${escapeHtml(e.reason)}` : ""}</span>
+      <button class="secondary small remove-emphasis-btn" data-index="${i}">Remove</button>
+    </div>
+  `;
+}
+
+function renderImageRow(img, i, assetOptions) {
+  return `
+    <div class="ai-decision editable-scene" data-index="${i}">
+      <span class="scene-type">IMAGE</span>
+      <select class="image-asset-input">
+        ${assetOptions
+          .map(
+            (a) =>
+              `<option value="${escapeHtml(a.id)}" ${a.id === img.assetId ? "selected" : ""}>${escapeHtml(a.id)} — ${escapeHtml(a.caption || "")}</option>`
+          )
+          .join("")}
+      </select>
+      <a class="secondary small adjust-timing-link" href="${previewAppUrl(state.episodePath, img.sceneId)}" target="_blank" rel="noopener">Adjust timing</a>
+      <span class="reason">clip ${escapeHtml(img.videoId || "?")} — offset ${img.offsetInParentFrames}f, up to ${img.maxDurationInParentFrames}f${img.reason ? ` — ${escapeHtml(img.reason)}` : ""}</span>
+      <button class="secondary small remove-image-btn" data-index="${i}">Remove</button>
+    </div>
+  `;
+}
+
+async function getVisualScenesArtifact() {
+  const res = await fetch(
+    `/api/episode/artifact?path=${encodeURIComponent(state.episodePath)}&name=visual_scenes.json`
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to reload visual_scenes.json: ${res.status}`);
+  }
+  return res.json();
+}
+
+// Tracks the currently-active visibilitychange listener so switching stages
+// (or re-opening this one) doesn't stack up duplicate listeners — each call
+// to wireVisualSceneEditor owns exactly one.
+let activeVisualSceneFocusListener = null;
+
+async function wireVisualSceneEditor(initialEmphases, initialImages) {
+  if (activeVisualSceneFocusListener) {
+    document.removeEventListener("visibilitychange", activeVisualSceneFocusListener);
+    activeVisualSceneFocusListener = null;
+  }
+
+  let emphases = initialEmphases.map((e) => ({ ...e }));
+  let images = initialImages.map((i) => ({ ...i }));
+
+  let assetOptions = [];
+  try {
+    const res = await fetch(
+      `/api/episode/artifact?path=${encodeURIComponent(state.episodePath)}&name=assets.json`
+    );
+    if (res.ok) {
+      const data = await res.json();
+      assetOptions = data.assets || [];
+    }
+  } catch (e) {
+    // assets.json may not exist yet — image rows just won't offer a dropdown
+  }
+
+  const emphasisList = document.getElementById("emphasis-scene-list");
+  const imageList = document.getElementById("image-scene-list");
+  const statusLabel = document.getElementById("save-visual-scenes-status");
+  const saveBtn = document.getElementById("save-visual-scenes-btn");
+
+  if (!emphasisList || !imageList || !saveBtn) return;
+
+  function renderLists() {
+    emphasisList.innerHTML = emphases.length
+      ? emphases.map(renderEmphasisRow).join("")
+      : `<p class="hint">No emphasis scenes proposed.</p>`;
+    imageList.innerHTML = images.length
+      ? images.map((img, i) => renderImageRow(img, i, assetOptions)).join("")
+      : `<p class="hint">No image scenes proposed.</p>`;
+    wireRows();
+  }
+
+  function wireRows() {
+    emphasisList.querySelectorAll(".editable-scene").forEach((row) => {
+      const index = Number(row.dataset.index);
+      row.querySelector(".emphasis-text-input").addEventListener("input", (e) => {
+        emphases[index] = { ...emphases[index], text: e.target.value };
+      });
+      row.querySelector(".remove-emphasis-btn").addEventListener("click", () => {
+        emphases.splice(index, 1);
+        renderLists();
+      });
+    });
+
+    imageList.querySelectorAll(".editable-scene").forEach((row) => {
+      const index = Number(row.dataset.index);
+      const assetSelect = row.querySelector(".image-asset-input");
+      assetSelect.addEventListener("change", (e) => {
+        const asset = assetOptions.find((a) => a.id === e.target.value);
+        images[index] = {
+          ...images[index],
+          assetId: e.target.value,
+          caption: asset ? asset.caption : images[index].caption,
+        };
+      });
+      row.querySelector(".remove-image-btn").addEventListener("click", () => {
+        images.splice(index, 1);
+        renderLists();
+      });
+    });
+  }
+
+  // Timing edits happen in the preview app (new tab, "Adjust timing") and
+  // save straight to visual_scenes.json there. Re-fetch and re-render
+  // whenever this tab regains focus so a timing change made in the preview
+  // tab shows up here too, instead of being silently overwritten by this
+  // panel's own (stale) local buffer on its next "Save changes".
+  activeVisualSceneFocusListener = async () => {
+    if (document.visibilityState !== "visible") return;
+    try {
+      const fresh = await getVisualScenesArtifact();
+      emphases = (fresh.emphases || []).map((e) => ({ ...e }));
+      images = (fresh.images || []).map((i) => ({ ...i }));
+      renderLists();
+    } catch (e) {
+      // control panel's own fetch failed — leave the current buffer as-is
+    }
+  };
+  document.addEventListener("visibilitychange", activeVisualSceneFocusListener);
+
+  renderLists();
+
+  saveBtn.addEventListener("click", async () => {
+    saveBtn.disabled = true;
+    statusLabel.textContent = "Saving…";
+    statusLabel.classList.remove("error");
+
+    try {
+      const res = await fetch(
+        `/api/episode/visual-scenes?path=${encodeURIComponent(state.episodePath)}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ emphases, images }),
+        }
+      );
+
+      if (!res.ok) {
+        const err = await res.json();
+        statusLabel.textContent = err.detail || "Save failed.";
+        statusLabel.classList.add("error");
+        return;
+      }
+
+      statusLabel.textContent = "Saved. Re-run \"Generate Remotion codegen\" to apply.";
+    } catch (e) {
+      statusLabel.textContent = `Save failed: ${e}`;
+      statusLabel.classList.add("error");
+    } finally {
+      saveBtn.disabled = false;
+    }
+  });
 }
 
 function renderEpisodeAnalysis(data) {

@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -17,6 +18,7 @@ from process_runner import stream_process
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
 
 from generate_title_scenes import merge_title_scenes, write_json_atomic  # noqa: E402
+from generate_visual_scenes import merge_emphasis_scenes, merge_image_scenes  # noqa: E402
 
 RESOLUTION_PATTERN = re.compile(r"^\d+x\d+$")
 
@@ -26,6 +28,21 @@ PROJECT_ROOT = UI_DIR.parent
 DEFAULT_BROWSE_PATH = "/Users/petros/Youtube/Philosoftware/Videos"
 
 app = FastAPI(title="Poiesis Control Panel")
+
+# The embedded preview app (video-renderer/preview-app, Vite dev server on
+# :5173) is a separate origin from this control panel and needs to read
+# artifacts (scene-plan.json, manifest.json, assets.json) and write back
+# visual-scene edits. Both are local-only dev servers, so scoping to
+# localhost/127.0.0.1 rather than a wildcard is enough.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
+    allow_methods=["GET", "PUT"],
+    allow_headers=["*"],
+)
 
 
 def resolve_episode(path: str) -> Path:
@@ -149,6 +166,68 @@ def update_title_scenes(path: str, body: TitleScenesUpdate):
     write_json_atomic(scene_plan_path, scene_plan)
 
     return {"titles": titles}
+
+
+class EmphasisProposal(BaseModel):
+    windowId: str
+    sceneId: str
+    videoId: str
+    offsetInParentFrames: int
+    maxDurationInParentFrames: int
+    text: str
+    reason: str = ""
+
+
+class ImageProposal(BaseModel):
+    windowId: str
+    sceneId: str
+    videoId: str
+    offsetInParentFrames: int
+    maxDurationInParentFrames: int
+    assetId: str
+    caption: str
+    reason: str = ""
+
+
+class VisualScenesUpdate(BaseModel):
+    emphases: list[EmphasisProposal]
+    images: list[ImageProposal]
+
+
+@app.put("/api/episode/visual-scenes")
+def update_visual_scenes(path: str, body: VisualScenesUpdate):
+    """Human edits to AI-proposed emphasis/image overlay text, timing
+    (offsetInParentFrames), duration (maxDurationInParentFrames, capped by
+    merge_*_scenes at EMPHASIS_DURATION_FRAMES/IMAGE_DURATION_FRAMES), and
+    (for images) assetId/caption. Writes the edited proposals back to
+    visual_scenes.json, then deterministically re-merges them into
+    scene-plan.json the same way generate_visual_scenes.py does after the
+    LLM call — no LLM involved here. Both merges rebuild all emphasis/image
+    scenes from scratch each call, so this is safe to call repeatedly even
+    if scenes were already merged before."""
+
+    episode = resolve_episode(path)
+    processing = episode / "processing"
+
+    scene_plan_path = processing / "scene-plan.json"
+    visual_scenes_path = processing / "visual_scenes.json"
+
+    if not scene_plan_path.exists():
+        raise HTTPException(status_code=404, detail="scene-plan.json not found — run the pipeline first")
+
+    emphases = [e.model_dump() for e in body.emphases]
+    images = [i.model_dump() for i in body.images]
+
+    with scene_plan_path.open("r", encoding="utf-8") as f:
+        scene_plan = json.load(f)
+
+    scene_plan = merge_emphasis_scenes(scene_plan, emphases)
+    scene_plan = merge_image_scenes(scene_plan, images)
+
+    write_json_atomic(visual_scenes_path, {"emphases": emphases, "images": images})
+    write_json_atomic(scene_plan_path, scene_plan)
+
+    return {"emphases": emphases, "images": images}
 
 
 async def _run_websocket(websocket: WebSocket, build_command):

@@ -337,9 +337,9 @@ def generate_episode_props_ts(
     )
 
     lines = [
-        "import type { EpisodeProps } from '../../src/episode/types';",
+        "import type { EpisodeBaseProps } from '../../src/episode/types';",
         "",
-        "export const episodeProps: EpisodeProps = {",
+        "export const episodeProps: EpisodeBaseProps = {",
         f"  width: {manifest['width']},",
         f"  height: {manifest['height']},",
         f"  fps: {manifest['fps']},",

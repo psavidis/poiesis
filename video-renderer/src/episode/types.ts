@@ -76,11 +76,20 @@ export interface ScenePlan {
     scenes: Scene[];
 }
 
-export interface EpisodeProps {
+// What pipeline/prepare_footage.py's generate_episode_props_ts writes to
+// generated/episode/episode-props.ts. scenePlan isn't included there — it's
+// a separate generated artifact (generated/episode/scene-plan.ts, written
+// later in the pipeline by generate_scene_plan_ts.py) composed together with
+// this at the Composition.tsx level.
+export type EpisodeBaseProps = {
     width: number;
     height: number;
     fps: number;
     videos: EpisodeVideo[];
     assets: EpisodeAsset[];
     backgroundVideo?: BackgroundVideo;
-}
+};
+
+export type EpisodeProps = EpisodeBaseProps & {
+    scenePlan: ScenePlan;
+};

@@ -8,13 +8,10 @@ import {
     useVideoConfig,
 } from "remotion";
 
-import type { EpisodeProps, EpisodeVideo, PresenterScene, Scene, ScenePlan } from "./types";
-import { scenePlan } from "../../generated/episode/scene-plan";
+import type { EpisodeProps, EpisodeVideo, PresenterScene, Scene } from "./types";
 import { AnimatedTitle } from "./AnimatedTitle";
 import { EmphasisText } from "./EmphasisText";
 import { EpisodeImage } from "./EpisodeImage";
-
-const typedScenePlan = scenePlan as ScenePlan;
 
 const PresenterSequence = ({
                                 scene,
@@ -71,6 +68,7 @@ export const Episode = ({
                             videos,
                             assets,
                             backgroundVideo,
+                            scenePlan: typedScenePlan,
                         }: EpisodeProps) => {
 
     const videoMap = new Map(

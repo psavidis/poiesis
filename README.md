@@ -29,6 +29,21 @@ episode folder to get started. Pass a different port with `./start_ui.sh 8080` i
 taken. (For development with auto-reload on code changes, run
 `cd ui && ../.venv/bin/uvicorn server:app --reload` instead.)
 
+## Adjusting emphasis/image overlay timing
+
+The control panel's "Propose emphasis/image scenes (AI)" review lets you edit overlay text
+and (for images) which asset is shown directly. Timing — when an overlay appears and how
+long it shows — is adjusted in a separate scrubbable preview instead of typing frame numbers:
+click "Adjust timing" on any emphasis/image row. That link only works if the preview app's
+own dev server is also running (it's a separate process from the control panel):
+
+```bash
+./start_preview.sh
+```
+
+This starts it at http://127.0.0.1:5173. Keep it running alongside `./start_ui.sh` — the
+first time, install its dependencies: `cd video-renderer/preview-app && npm install`.
+
 # Python Library Dependencies
 
 - pip install json-repair

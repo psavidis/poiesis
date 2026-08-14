@@ -1,0 +1,24 @@
+{
+  "name": "poiesis-preview-app",
+  "version": "1.0.0",
+  "description": "Embedded scrubbable preview for reviewing/adjusting AI-proposed emphasis and image overlay timing before render",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@remotion/player": "4.0.490",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "remotion": "4.0.490"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.4",
+    "@vitejs/plugin-react": "6.0.5",
+    "typescript": "5.9.3",
+    "vite": "8.2.1"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  }
+}

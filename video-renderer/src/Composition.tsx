@@ -1,16 +1,19 @@
 import { Composition } from "remotion";
 import { Episode } from "./episode/Episode";
-import { episodeProps } from "../generated/episode/episode-props";
-import { scenePlan } from "../generated/episode/scene-plan";
-import type { ScenePlan } from "./episode/types";
+import { episodeProps as generatedEpisodeProps } from "../generated/episode/episode-props";
+import { scenePlan as generatedScenePlan } from "../generated/episode/scene-plan";
+import type { EpisodeProps, ScenePlan } from "./episode/types";
 
-const typedScenePlan = scenePlan as ScenePlan;
+const defaultEpisodeProps: EpisodeProps = {
+    ...generatedEpisodeProps,
+    scenePlan: generatedScenePlan as ScenePlan,
+};
 
-export const MyComposition = () => {
-    // Overlay scenes (emphasis, inset image) are anchored to a parent scene
-    // and never extend past it, so only track scenes (those with an
-    // absolute timelineStartFrame) determine the episode's total duration.
-    const durationInFrames = typedScenePlan.scenes.reduce(
+// Overlay scenes (emphasis, inset image) are anchored to a parent scene and
+// never extend past it, so only track scenes (those with an absolute
+// timelineStartFrame) determine the episode's total duration.
+const durationForScenePlan = (scenePlan: ScenePlan) =>
+    scenePlan.scenes.reduce(
         (total, scene) =>
             "timelineStartFrame" in scene
                 ? Math.max(total, scene.timelineStartFrame + scene.durationInFrames)
@@ -18,15 +21,22 @@ export const MyComposition = () => {
         0
     );
 
+export const MyComposition = () => {
     return (
         <Composition
             id="Episode"
-            component={Episode as any}
-            width={episodeProps.width}
-            height={episodeProps.height}
-            fps={episodeProps.fps}
-            durationInFrames={durationInFrames}
-            defaultProps={episodeProps}
+            component={Episode}
+            width={defaultEpisodeProps.width}
+            height={defaultEpisodeProps.height}
+            fps={defaultEpisodeProps.fps}
+            durationInFrames={durationForScenePlan(defaultEpisodeProps.scenePlan)}
+            defaultProps={defaultEpisodeProps}
+            calculateMetadata={async ({ props }) => ({
+                durationInFrames: durationForScenePlan(props.scenePlan),
+                width: props.width,
+                height: props.height,
+                fps: props.fps,
+            })}
         />
     );
 };
