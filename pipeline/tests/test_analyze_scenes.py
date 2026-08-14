@@ -193,15 +193,22 @@ def test_run_scene_analysis_preserves_existing_title_scenes(tmp_path):
             "episode": "episode",
             "fps": 30,
             "videos": [
-                {"id": "001", "duration": 10.0},
-                {"id": "002", "duration": 10.0},
+                {"id": "001", "filename": "001.mp4", "duration": 10.0},
+                {"id": "002", "filename": "002.mp4", "duration": 10.0},
             ],
         },
     )
 
+    # merge_title_scenes now resolves a title's segmentId via the
+    # whole-episode transcript — s0 is the (only) segment for clip 002.
+    _write_json(
+        processing / "episode_transcript.json",
+        {"segments": [{"source": "002.mp4", "start": 0.0, "end": 1.0, "text": "second topic starts"}]},
+    )
+
     _write_json(
         processing / "title_scenes.json",
-        {"titles": [{"videoId": "002", "text": "Second Topic"}]},
+        {"titles": [{"segmentId": "s0", "text": "Second Topic"}]},
     )
 
     scene_plan = run_scene_analysis(episode)

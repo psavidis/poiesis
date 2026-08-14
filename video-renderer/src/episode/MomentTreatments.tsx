@@ -9,6 +9,20 @@ import {
 } from "remotion";
 
 import { brand } from "./brand";
+import { TRANSITION_FRAMES } from "./timing";
+
+// SideText/SideImage's own fade timing is derived from the same
+// TRANSITION_FRAMES constant Episode.tsx uses for the presenter's
+// slide-aside/slide-back animation. Previously these were independent
+// hardcoded literals (12 in, 10 out) that only stayed synchronized with
+// the presenter's 24-frame slide by coincidence — tuning either value
+// later could silently desync content visibility from the presenter's
+// on-screen position. Deriving both from one constant means that can't
+// happen: fade-in/out is always exactly as long as the presenter's own
+// slide, so content is never still fading while the presenter is already
+// mid-motion (or vice versa).
+const FADE_IN_FRAMES = TRANSITION_FRAMES;
+const FADE_OUT_FRAMES = TRANSITION_FRAMES;
 
 // The bottom-center callout — ported as-is from the pre-moments EmphasisText
 // component. Requires the parent presenter scene's layout to be "center"
@@ -80,7 +94,7 @@ export const BottomCallout = ({ text }: { text: string }) => {
 // opposite side, matching Episode.tsx's LAYOUT_GEOMETRY split (presenter
 // stays at full on-screen scale in a 72%-wide window, content in the
 // remaining 28%).
-const sideContentStyle = (presenterOnLeft: boolean): React.CSSProperties => ({
+export const sideContentStyle = (presenterOnLeft: boolean): React.CSSProperties => ({
     position: "absolute",
     top: 0,
     bottom: 0,
@@ -103,14 +117,14 @@ export const SideText = ({ text, presenterOnLeft }: { text: string; presenterOnL
     // overlay.
     const translateX = interpolate(
         frame,
-        [0, 16],
+        [0, TRANSITION_FRAMES],
         [presenterOnLeft ? -40 : 40, 0],
         { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
     );
 
     const opacity = interpolate(
         frame,
-        [0, 12, durationInFrames - 10, durationInFrames],
+        [0, FADE_IN_FRAMES, durationInFrames - FADE_OUT_FRAMES, durationInFrames],
         [0, 1, 1, 0],
         { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
     );
@@ -151,14 +165,14 @@ export const SideImage = ({
 
     const translateX = interpolate(
         frame,
-        [0, 16],
+        [0, TRANSITION_FRAMES],
         [presenterOnLeft ? -40 : 40, 0],
         { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
     );
 
     const opacity = interpolate(
         frame,
-        [0, 12, durationInFrames - 10, durationInFrames],
+        [0, FADE_IN_FRAMES, durationInFrames - FADE_OUT_FRAMES, durationInFrames],
         [0, 1, 1, 0],
         { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
     );

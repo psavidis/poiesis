@@ -211,9 +211,16 @@ def run_scene_analysis(episode):
         ) as f:
             titles = json.load(f)["titles"]
 
+        episode_transcript_path = episode / "processing" / "episode_transcript.json"
+
+        with episode_transcript_path.open("r", encoding="utf-8") as f:
+            episode_transcript = json.load(f)
+
         scene_plan = merge_title_scenes(
             scene_plan,
-            titles
+            titles,
+            episode_transcript,
+            manifest
         )
 
         print(

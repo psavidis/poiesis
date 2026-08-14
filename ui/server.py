@@ -133,6 +133,7 @@ def episode_artifact(path: str, name: str):
         "moments.json",
         "captions.json",
         "assets.json",
+        "code_assets.json",
         "scene-plan.json",
         "qa-report.json",
         "episode_analysis.json",
@@ -152,7 +153,7 @@ def episode_artifact(path: str, name: str):
 
 
 class TitleScene(BaseModel):
-    videoId: str
+    segmentId: str
     text: str
 
 
@@ -175,9 +176,14 @@ def update_title_scenes(path: str, body: TitleScenesUpdate):
 
     scene_plan_path = processing / "scene-plan.json"
     title_scenes_path = processing / "title_scenes.json"
+    episode_transcript_path = processing / "episode_transcript.json"
+    manifest_path = processing / "manifest.json"
 
     if not scene_plan_path.exists():
         raise HTTPException(status_code=404, detail="scene-plan.json not found — run the pipeline first")
+
+    if not episode_transcript_path.exists() or not manifest_path.exists():
+        raise HTTPException(status_code=404, detail="episode_transcript.json/manifest.json not found — run the pipeline first")
 
     titles = [title.model_dump() for title in body.titles]
 
@@ -186,7 +192,13 @@ def update_title_scenes(path: str, body: TitleScenesUpdate):
             with scene_plan_path.open("r", encoding="utf-8") as f:
                 scene_plan = json.load(f)
 
-            scene_plan = merge_title_scenes(scene_plan, titles)
+            with episode_transcript_path.open("r", encoding="utf-8") as f:
+                episode_transcript = json.load(f)
+
+            with manifest_path.open("r", encoding="utf-8") as f:
+                manifest = json.load(f)
+
+            scene_plan = merge_title_scenes(scene_plan, titles, episode_transcript, manifest)
 
             write_json_atomic(title_scenes_path, {"titles": titles})
             write_json_atomic(scene_plan_path, scene_plan)
@@ -207,6 +219,8 @@ class MomentProposal(BaseModel):
     presenterSide: str | None = None
     text: str | None = None
     assetId: str | None = None
+    codeAssetId: str | None = None
+    diagram: dict | None = None
     caption: str | None = None
     reason: str = ""
 

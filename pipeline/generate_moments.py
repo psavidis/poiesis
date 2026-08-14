@@ -21,6 +21,15 @@ PROMPT_FILE = PIPELINE_DIR / "prompts" / "moments.txt"
 BOTTOM_CALLOUT_DURATION_FRAMES = 90
 SIDE_TEXT_DURATION_FRAMES = 150
 SIDE_IMAGE_DURATION_FRAMES = 150
+# Longer than side-text/side-image — code needs to be read, not glanced
+# at. Tune after watching real output.
+SIDE_CODE_DURATION_FRAMES = 240
+# A diagram is glanced at and explained verbally, not read line-by-line
+# like code — similar duration to side-text.
+SIDE_DIAGRAM_DURATION_FRAMES = 180
+
+MAX_DIAGRAM_NODES = 6
+MAX_DIAGRAM_EDGES = 8
 
 MAX_MOMENTS_PER_1000_FRAMES = 1
 
@@ -139,6 +148,19 @@ def format_assets_for_prompt(assets):
     return "\n".join(lines)
 
 
+def format_code_assets_for_prompt(code_assets):
+
+    if not code_assets:
+        return "(none available)"
+
+    lines = []
+
+    for code_asset in code_assets:
+        lines.append(f"[{code_asset['id']}] {code_asset['language']} — {code_asset['description']}")
+
+    return "\n".join(lines)
+
+
 def normalize_for_grounding(text):
     return re.sub(r"[^a-z0-9 ]", "", text.lower())
 
@@ -173,15 +195,69 @@ def is_grounded(text, source_text):
     return matches / len(proposed_words) >= 0.7
 
 
+def is_diagram_grounded(diagram, source_text):
+    """Loosened grounding check for a proposed diagram: catches wholesale
+    hallucination (e.g. a diagram about "Kubernetes" for a window that
+    never mentions it) without strict-quoting each label the way
+    is_grounded does for prose — diagram labels are often short single
+    words/phrases ("Client", "Cache miss") where stem-matching against
+    transcript text is noisier than for a full quoted sentence. A node's
+    label passes if ANY of its words appear (or share a stem) in the
+    source text, not is_grounded's stricter 70%-of-words threshold."""
+
+    nodes = diagram.get("nodes", [])
+
+    if not nodes or len(nodes) > MAX_DIAGRAM_NODES:
+        return False
+
+    edges = diagram.get("edges", [])
+
+    if len(edges) > MAX_DIAGRAM_EDGES:
+        return False
+
+    node_ids = {node.get("id") for node in nodes}
+
+    for edge in edges:
+        if edge.get("from") not in node_ids or edge.get("to") not in node_ids:
+            return False
+
+    source_words = set(normalize_for_grounding(source_text).split())
+    source_stems = {_stem(word) for word in source_words}
+
+    for node in nodes:
+        label = node.get("label")
+
+        if not label:
+            return False
+
+        label_words = normalize_for_grounding(label).split()
+
+        if not label_words:
+            return False
+
+        if not any(
+            word in source_words or _stem(word) in source_stems
+            for word in label_words
+        ):
+            return False
+
+    return True
+
+
 def duration_for_treatment(treatment):
     return {
         "bottom-callout": BOTTOM_CALLOUT_DURATION_FRAMES,
         "side-text": SIDE_TEXT_DURATION_FRAMES,
         "side-image": SIDE_IMAGE_DURATION_FRAMES,
+        "side-code": SIDE_CODE_DURATION_FRAMES,
+        "side-diagram": SIDE_DIAGRAM_DURATION_FRAMES,
     }[treatment]
 
 
-def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, prompt_template: str):
+def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, prompt_template: str, code_assets=None):
+
+    if code_assets is None:
+        code_assets = []
 
     candidates = build_candidate_windows(scene_plan, transcript, manifest)
 
@@ -194,12 +270,16 @@ def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, pr
     ).replace(
         "{assets}",
         format_assets_for_prompt(assets)
+    ).replace(
+        "{code_assets}",
+        format_code_assets_for_prompt(code_assets)
     )
 
     response = llm.complete_json(prompt, thinking=False)
 
     candidates_by_id = {c["windowId"]: c for c in candidates}
     assets_by_id = {a["id"]: a for a in assets}
+    code_assets_by_id = {a["id"]: a for a in code_assets}
 
     claimed_windows = set()
     proposals = []
@@ -290,6 +370,62 @@ def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, pr
                 }
             )
 
+        elif treatment == "side-code":
+
+            code_asset_id = moment.get("codeAssetId")
+            presenter_side = moment.get("presenterSide")
+            code_asset = code_assets_by_id.get(code_asset_id)
+
+            if not code_asset or presenter_side not in ("left", "right"):
+                continue
+
+            claimed_windows.add(window_id)
+
+            proposals.append(
+                {
+                    "windowId": window_id,
+                    "sceneId": candidate["sceneId"],
+                    "videoId": candidate["videoId"],
+                    "offsetInParentFrames": candidate["offsetInParentFrames"],
+                    "maxDurationInParentFrames": candidate["maxDurationInParentFrames"],
+                    "treatment": "side-code",
+                    "codeAssetId": code_asset_id,
+                    "caption": code_asset["description"],
+                    "presenterSide": presenter_side,
+                    "reason": moment.get("reason", ""),
+                }
+            )
+
+        elif treatment == "side-diagram":
+
+            diagram = moment.get("diagram")
+            presenter_side = moment.get("presenterSide")
+
+            if not isinstance(diagram, dict) or presenter_side not in ("left", "right"):
+                continue
+
+            if diagram.get("layout") not in ("horizontal", "vertical"):
+                continue
+
+            if not is_diagram_grounded(diagram, candidate["text"]):
+                continue
+
+            claimed_windows.add(window_id)
+
+            proposals.append(
+                {
+                    "windowId": window_id,
+                    "sceneId": candidate["sceneId"],
+                    "videoId": candidate["videoId"],
+                    "offsetInParentFrames": candidate["offsetInParentFrames"],
+                    "maxDurationInParentFrames": candidate["maxDurationInParentFrames"],
+                    "treatment": "side-diagram",
+                    "diagram": diagram,
+                    "presenterSide": presenter_side,
+                    "reason": moment.get("reason", ""),
+                }
+            )
+
         # else: unrecognized/omitted treatment — skip, don't guess.
 
     total_frames = max(
@@ -323,11 +459,36 @@ def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, pr
     # Clamping once here means maxDurationInParentFrames means exactly what
     # it will render as everywhere downstream, and a human edit to it always
     # sticks.
+    scenes_by_id = {scene["id"]: scene for scene in scene_plan["scenes"]}
+
     for proposal in proposals:
         proposal["maxDurationInParentFrames"] = min(
             duration_for_treatment(proposal["treatment"]),
             proposal["maxDurationInParentFrames"]
         )
+
+        # Also reserve room for the presenter's own TRANSITION_FRAMES exit
+        # pad (Episode.tsx's layoutWindowsForScene clamps its slide-back
+        # window to the parent scene's own durationInFrames) — without
+        # this, a moment placed close enough to the end of its parent scene
+        # could have a duration that individually fits the parent, but
+        # whose padded window (offset + duration + TRANSITION_FRAMES)
+        # doesn't, leaving content on screen after the presenter has
+        # already started sliding back to center.
+        parent = scenes_by_id.get(proposal["sceneId"])
+
+        if parent:
+            room_for_content = (
+                parent["durationInFrames"]
+                - proposal["offsetInParentFrames"]
+                - TRANSITION_FRAMES
+            )
+            proposal["maxDurationInParentFrames"] = max(
+                0,
+                min(proposal["maxDurationInParentFrames"], room_for_content)
+            )
+
+    proposals = [p for p in proposals if p["maxDurationInParentFrames"] > 0]
 
     return proposals
 
@@ -420,15 +581,33 @@ def merge_moment_scenes(scene_plan, proposals):
             "durationInFrames": duration,
         }
 
+        # Truthiness checks, not dict-membership ("key" in proposal) —
+        # proposals reaching this function come from two different shapes:
+        # propose_moments builds a plain dict with only the keys that
+        # genuinely apply to that treatment (membership would work there),
+        # but ui/server.py's update_moments passes proposal.model_dump()'d
+        # pydantic objects, which always include every optional field with
+        # a None default regardless of treatment. A membership check would
+        # incorrectly fire for every field on every treatment (e.g.
+        # attaching assetId=None to a bottom-callout moment saved through
+        # the UI) — checking truthiness instead makes both call shapes
+        # behave the same way.
         if proposal.get("presenterSide"):
             moment_scene["presenterSide"] = proposal["presenterSide"]
 
-        if "text" in proposal:
+        if proposal.get("text"):
             moment_scene["text"] = proposal["text"]
 
-        if "assetId" in proposal:
+        if proposal.get("assetId"):
             moment_scene["assetId"] = proposal["assetId"]
-            moment_scene["caption"] = proposal["caption"]
+            moment_scene["caption"] = proposal.get("caption")
+
+        if proposal.get("codeAssetId"):
+            moment_scene["codeAssetId"] = proposal["codeAssetId"]
+            moment_scene["caption"] = proposal.get("caption")
+
+        if proposal.get("diagram"):
+            moment_scene["diagram"] = proposal["diagram"]
 
         insert_overlay_scene(
             merged_scenes,
@@ -468,6 +647,7 @@ def main():
     manifest_file = processing / "manifest.json"
     scene_plan_file = processing / "scene-plan.json"
     assets_file = processing / "assets.json"
+    code_assets_file = processing / "code_assets.json"
     output_file = processing / "moments.json"
 
     if not transcript_file.exists():
@@ -495,6 +675,7 @@ def main():
     scene_plan = load_json(scene_plan_file)
 
     assets = load_json(assets_file)["assets"] if assets_file.exists() else []
+    code_assets = load_json(code_assets_file)["codeAssets"] if code_assets_file.exists() else []
 
     print("Proposing moments...")
     print()
@@ -506,7 +687,8 @@ def main():
             manifest,
             assets,
             llm,
-            prompt_template
+            prompt_template,
+            code_assets=code_assets
         )
 
         write_json_atomic(output_file, {"moments": proposals})

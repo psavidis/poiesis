@@ -14,8 +14,18 @@ class ClaudeCodeClient:
         # until the first call completes.
         self.last_usage: Usage | None = None
 
-    def _run(self, prompt: str) -> str:
+    def _run(self, prompt: str, thinking: bool = True) -> str:
 
+        # The CLI has no boolean --thinking flag — it takes --effort
+        # (low/medium/high/xhigh/max). thinking was previously accepted by
+        # this class's public methods but never actually passed to the CLI
+        # at all, so every call ran at the CLI's own default effort
+        # regardless of what a caller asked for. "high" is a reasonable,
+        # deliberate choice for thinking=True (not the max/most expensive
+        # tier) — callers that pass thinking=False get the CLI's default
+        # (no --effort flag) rather than an artificially throttled "low",
+        # since this project's few thinking=False call sites are simple
+        # mechanical decisions, not ones that need to be actively degraded.
         command = [
             "claude",
             "--print",
@@ -23,6 +33,9 @@ class ClaudeCodeClient:
             "--model", self.model,
             "--tools", "",
         ]
+
+        if thinking:
+            command.extend(["--effort", "high"])
 
         result = subprocess.run(
             command,
@@ -55,7 +68,7 @@ class ClaudeCodeClient:
         return response["result"]
 
     def complete(self, prompt: str, thinking: bool = True) -> str:
-        return self._run(prompt)
+        return self._run(prompt, thinking)
 
     def complete_json(self, prompt: str, thinking: bool = True) -> str:
 
@@ -65,7 +78,7 @@ class ClaudeCodeClient:
             "explanation, or markdown code fences."
         )
 
-        text = self._run(json_prompt)
+        text = self._run(json_prompt, thinking)
 
         text = text.strip()
 

@@ -17,6 +17,12 @@ PROMPT_FILE = PIPELINE_DIR / "prompts" / "title_scenes.txt"
 
 TITLE_DURATION_FRAMES = 60
 
+# Two proposed titles closer together than this are treated as the same
+# topic shift proposed twice — keep the first (chronologically earliest)
+# and drop the later one, rather than inserting two title cards a couple
+# seconds apart.
+MIN_TITLE_SPACING_SECONDS = 20
+
 
 def load_json(path: Path):
     with path.open("r", encoding="utf-8") as f:
@@ -46,79 +52,179 @@ def write_json_atomic(path: Path, data):
             temp.unlink()
 
 
-def group_transcript_by_clip(transcript, manifest):
+def indexed_segments(transcript, manifest):
+    """Every transcript segment tagged with a stable segmentId (s0, s1, ...
+    in transcript order) and its resolved videoId — the shared building
+    block for both the whole-episode prompt (format_transcript_for_prompt)
+    and resolving a proposed title's segmentId back to a real position
+    (merge_title_scenes). Segments whose source clip isn't in the
+    manifest are skipped but still consume an index, so a segmentId always
+    means "the Nth segment in the transcript," stable regardless of which
+    clips happen to be recognized."""
 
     filename_to_id = {
         video["filename"]: video["id"]
         for video in manifest["videos"]
     }
 
-    clips = {}
+    indexed = []
 
-    for segment in transcript["segments"]:
+    for i, segment in enumerate(transcript["segments"]):
 
         video_id = filename_to_id.get(segment["source"])
 
         if video_id is None:
             continue
 
-        clips.setdefault(video_id, []).append(segment["text"])
+        indexed.append(
+            {
+                "segmentId": f"s{i}",
+                "videoId": video_id,
+                "start": segment["start"],
+                "end": segment["end"],
+                "text": segment["text"],
+            }
+        )
 
-    return clips
+    return indexed
 
 
-def format_clips_for_prompt(clips):
+def format_transcript_for_prompt(transcript, manifest):
+    """Whole-episode view, in transcript order — NOT grouped/collapsed per
+    clip. Topic shifts are a property of the narrative, not of clip
+    boundaries, so every segment boundary (a possible title-insertion
+    point) needs to survive into the prompt, tagged with a stable id the
+    LLM can point back at."""
 
     lines = []
 
-    for video_id in sorted(clips):
-        lines.append(f"[{video_id}]")
-        lines.append(" ".join(clips[video_id]))
-        lines.append("")
+    for segment in indexed_segments(transcript, manifest):
+        lines.append(f"[{segment['segmentId']}] {segment['text']}")
 
     return "\n".join(lines)
 
 
 def propose_title_scenes(transcript, manifest, llm: LLMClient, prompt_template: str):
 
-    clips = group_transcript_by_clip(transcript, manifest)
+    segments = indexed_segments(transcript, manifest)
+
+    if not segments:
+        return []
 
     prompt = prompt_template.replace(
-        "{clips}",
-        format_clips_for_prompt(clips)
+        "{segments}",
+        format_transcript_for_prompt(transcript, manifest)
     )
 
-    response = llm.complete_json(prompt, thinking=False)
+    # Unlike the old per-clip design (one small decision per clip),
+    # this now requires reasoning about the whole episode's narrative
+    # structure in a single call to find every genuine topic boundary —
+    # thinking=False under-triggered badly in testing (found 2 of 9 real
+    # chapters on Episode 9), so this needs the model's full reasoning.
+    response = llm.complete_json(prompt, thinking=True)
 
-    valid_ids = set(clips.keys())
+    segments_by_id = {s["segmentId"]: s for s in segments}
 
     titles = [
         title
         for title in response.get("titles", [])
-        if title.get("videoId") in valid_ids and title.get("text")
+        if title.get("segmentId") in segments_by_id and title.get("text")
     ]
 
-    return titles
+    # Keep chronological order (segment index order — segmentIds are
+    # assigned in transcript order, which spans clips in sequence) so the
+    # min-spacing filter below compares each title only against the
+    # nearest earlier one, not an arbitrary LLM response order.
+    titles.sort(key=lambda t: int(t["segmentId"][1:]))
+
+    kept = []
+    last_kept_segment = None
+
+    for title in titles:
+
+        segment = segments_by_id[title["segmentId"]]
+
+        # segment["start"] is clip-relative (resets to 0 at the start of
+        # each source clip — see indexed_segments), so it's only
+        # comparable to another segment's start within the SAME clip.
+        # Two titles in different clips are never "too close" by this
+        # check — the clip boundary itself is already a natural break, and
+        # there's no shared timeline value here to compare against without
+        # first resolving both to absolute frames (which needs the scene
+        # plan, not available at proposal time).
+        too_close = (
+            last_kept_segment is not None
+            and segment["videoId"] == last_kept_segment["videoId"]
+            and segment["start"] - last_kept_segment["start"] < MIN_TITLE_SPACING_SECONDS
+        )
+
+        if too_close:
+            continue
+
+        kept.append(title)
+        last_kept_segment = segment
+
+    return kept
 
 
-def merge_title_scenes(scene_plan, titles):
+def _reconstituted_track_scenes(scene_plan):
+    """Undoes any splitting a previous merge_title_scenes call already
+    performed, grouping presenter scenes back by videoId and re-joining
+    them into their original single scene per clip (by source frame
+    range) — the same "rebuild from scratch every call" discipline the
+    rest of this pipeline already uses for moment/caption scenes, applied
+    here to presenter-scene splits specifically so re-running against an
+    already-split plan with a different (or the same) set of titles never
+    compounds a previous run's split."""
 
-    titles_by_video_id = {
-        title["videoId"]: title["text"]
-        for title in titles
-    }
-
-    # Track scenes (presenter) define the contiguous timeline; overlay scenes
-    # (emphasis, inset images) don't consume track space. Rebuilding track
-    # positions from scratch — rather than incrementally shifting whatever
-    # positions happen to already be on the scenes — makes this merge safe
-    # to re-run on an already-merged plan (idempotent), since it never
-    # compounds a previous run's title offset.
-    track_scenes = [
+    presenter_scenes = [
         scene
         for scene in scene_plan["scenes"]
         if scene["type"] == "presenter"
     ]
+
+    by_video_id = {}
+
+    for scene in presenter_scenes:
+        by_video_id.setdefault(scene["videoId"], []).append(scene)
+
+    reconstituted = []
+
+    for video_id, scenes in by_video_id.items():
+
+        scenes = sorted(scenes, key=lambda s: s["sourceStartFrame"])
+
+        reconstituted.append(
+            {
+                "id": f"scene-{video_id}",
+                "type": "presenter",
+                "videoId": video_id,
+                "sourceStartFrame": scenes[0]["sourceStartFrame"],
+                "sourceEndFrame": scenes[-1]["sourceEndFrame"],
+                "durationInFrames": scenes[-1]["sourceEndFrame"] - scenes[0]["sourceStartFrame"],
+                "effects": scenes[0]["effects"],
+            }
+        )
+
+    return reconstituted
+
+
+def merge_title_scenes(scene_plan, titles, transcript, manifest):
+    """Resolves each title's segmentId to a real source-frame position
+    (via the transcript/manifest) and splits the presenter scene it falls
+    within there, inserting the title card between the two resulting
+    pieces. transcript/manifest are required — a title's segmentId is its
+    only source of position, there is no positionless title anymore
+    (unlike the old videoId-anchored design, where a title always sat at
+    its clip's own start with nothing further to resolve)."""
+
+    fps = scene_plan.get("fps", 30)
+
+    segments_by_id = {s["segmentId"]: s for s in indexed_segments(transcript, manifest)}
+
+    # Undo any previous split first — see _reconstituted_track_scenes.
+    track_scenes = _reconstituted_track_scenes(scene_plan)
+    track_scenes_by_video_id = {s["videoId"]: s for s in track_scenes}
 
     overlay_scenes = [
         scene
@@ -126,33 +232,94 @@ def merge_title_scenes(scene_plan, titles):
         if scene["type"] not in ("presenter", "title")
     ]
 
+    # Group valid titles by which presenter scene (videoId) they split,
+    # each with the resolved source frame to split at. A title whose
+    # segmentId doesn't resolve to a known segment, or whose resolved clip
+    # isn't in this scene plan, is skipped rather than guessed.
+    splits_by_video_id = {}
+
+    for title in titles:
+
+        segment = segments_by_id.get(title.get("segmentId"))
+
+        if not segment or segment["videoId"] not in track_scenes_by_video_id:
+            continue
+
+        splits_by_video_id.setdefault(segment["videoId"], []).append(
+            {
+                "text": title["text"],
+                "sourceFrame": round(segment["start"] * fps),
+            }
+        )
+
     merged_scenes = []
     timeline_frame = 0
 
     for scene in track_scenes:
 
-        title_text = titles_by_video_id.get(scene.get("videoId"))
+        splits = sorted(
+            splits_by_video_id.get(scene["videoId"], []),
+            key=lambda s: s["sourceFrame"]
+        )
 
-        if title_text:
+        # Snap each split point into the scene's own bounds. A split that
+        # lands exactly at the scene's own start still gets its title
+        # inserted (right before the whole scene, same as the old
+        # clip-boundary-only behavior) — it just produces no preceding
+        # presenter piece, since there's nothing before it to carve off.
+        segment_start = scene["sourceStartFrame"]
+        segment_end = scene["sourceEndFrame"]
+
+        clamped_splits = [
+            {
+                "text": split["text"],
+                "sourceFrame": max(segment_start, min(split["sourceFrame"], segment_end)),
+            }
+            for split in splits
+        ]
+
+        piece_count = 0
+        cursor = segment_start
+
+        for i, split in enumerate(clamped_splits):
+
+            piece_end = split["sourceFrame"]
+
+            if piece_end > cursor:
+
+                piece = dict(scene)
+                piece["id"] = scene["id"] if piece_count == 0 else f"{scene['id']}-{piece_count}"
+                piece["sourceStartFrame"] = cursor
+                piece["sourceEndFrame"] = piece_end
+                piece["durationInFrames"] = piece_end - cursor
+                piece["timelineStartFrame"] = timeline_frame
+
+                merged_scenes.append(piece)
+                timeline_frame += piece["durationInFrames"]
+                piece_count += 1
 
             merged_scenes.append(
                 {
-                    "id": f"scene-title-{scene['videoId']}",
+                    "id": f"scene-title-{scene['videoId']}-{i}" if len(clamped_splits) > 1 else f"scene-title-{scene['videoId']}",
                     "type": "title",
-                    "text": title_text,
+                    "text": split["text"],
                     "timelineStartFrame": timeline_frame,
                     "durationInFrames": TITLE_DURATION_FRAMES,
                 }
             )
-
             timeline_frame += TITLE_DURATION_FRAMES
 
-        scene = dict(scene)
-        scene["timelineStartFrame"] = timeline_frame
+            cursor = piece_end
 
-        merged_scenes.append(scene)
+        final_piece = dict(scene)
+        final_piece["id"] = scene["id"] if piece_count == 0 else f"{scene['id']}-{piece_count}"
+        final_piece["sourceStartFrame"] = cursor
+        final_piece["sourceEndFrame"] = segment_end
+        final_piece["durationInFrames"] = segment_end - cursor
+        final_piece["timelineStartFrame"] = timeline_frame
 
-        timeline_frame += scene["durationInFrames"]
+        merged_scenes.append(final_piece)
+        timeline_frame += final_piece["durationInFrames"]
 
     merged_scenes.extend(overlay_scenes)
 
@@ -165,7 +332,7 @@ def merge_title_scenes(scene_plan, titles):
 def main():
 
     parser = argparse.ArgumentParser(
-        description="Propose title scenes from the episode transcript using an LLM"
+        description="Propose title scenes from the whole episode transcript using an LLM"
     )
 
     parser.add_argument("episode_folder")
@@ -224,7 +391,7 @@ def main():
 
         write_json_atomic(output_file, {"titles": titles})
 
-        scene_plan = merge_title_scenes(scene_plan, titles)
+        scene_plan = merge_title_scenes(scene_plan, titles, transcript, manifest)
 
         write_json_atomic(scene_plan_file, scene_plan)
 

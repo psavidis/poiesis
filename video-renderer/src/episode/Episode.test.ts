@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { CROSSFADE_TRANSITION_FRAMES, TRANSITION_FRAMES, crossfadeInFramesForScene, layoutWindowsForScene } from "./Episode";
+import { CROSSFADE_TRANSITION_FRAMES, clampedMomentDuration, crossfadeInFramesForScene, layoutWindowsForScene } from "./Episode";
+import { TRANSITION_FRAMES } from "./timing";
 import type { MomentScene, PresenterScene } from "./types";
 
 const presenterScene = (overrides: Partial<PresenterScene> = {}): PresenterScene => ({
@@ -82,6 +83,51 @@ describe("layoutWindowsForScene", () => {
 
         expect(windows.map((w) => w.side)).toEqual(["left", "right"]);
         expect(windows[0].start).toBeLessThan(windows[1].start);
+    });
+});
+
+describe("clampedMomentDuration", () => {
+    it("returns the moment's own duration unchanged when it fits well within the parent", () => {
+        const scene = presenterScene({ durationInFrames: 900 });
+        const moment = sideMoment({ offsetInParentFrames: 300, durationInFrames: 150 });
+
+        expect(clampedMomentDuration(moment, scene)).toBe(150);
+    });
+
+    it("clamps content to stay in sync with layoutWindowsForScene's own clamped " +
+        "window end for the same near-end-of-scene moment — this is the fix for the " +
+        "bug where content could outlive the presenter's already-clamped slide-back " +
+        "animation", () => {
+        const scene = presenterScene({ durationInFrames: 100 });
+        // moment starts 5 frames in and claims a duration that would run
+        // past the scene's own end once TRANSITION_FRAMES is added
+        const moment = sideMoment({ offsetInParentFrames: 5, durationInFrames: 90, presenterSide: "right" });
+
+        const windows = layoutWindowsForScene(scene, [moment]);
+        const clampedDuration = clampedMomentDuration(moment, scene);
+
+        // The presenter's own window is clamped to the scene bounds (see
+        // the "clamps the padded window to the scene's own bounds" test
+        // above) — the moment's content must never extend past that same
+        // scene bound either.
+        expect(moment.offsetInParentFrames + clampedDuration).toBeLessThanOrEqual(scene.durationInFrames);
+        expect(windows[0].end).toBe(scene.durationInFrames);
+        expect(clampedDuration).toBe(90); // min(requested 90, 100 - 5 room) = 90, already fits
+    });
+
+    it("clamps content that individually WOULD overflow the parent's remaining room", () => {
+        const scene = presenterScene({ durationInFrames: 100 });
+        // requests more than the 20 frames actually remaining after offset
+        const moment = sideMoment({ offsetInParentFrames: 80, durationInFrames: 50, presenterSide: "right" });
+
+        expect(clampedMomentDuration(moment, scene)).toBe(20); // 100 - 80
+    });
+
+    it("never returns a negative duration even if the moment starts past the parent's own end", () => {
+        const scene = presenterScene({ durationInFrames: 100 });
+        const moment = sideMoment({ offsetInParentFrames: 150, durationInFrames: 50 });
+
+        expect(clampedMomentDuration(moment, scene)).toBe(0);
     });
 });
 

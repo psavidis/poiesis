@@ -66,20 +66,26 @@ Run all the stages above `key_footage.py` in one shot with `./create_episode.sh 
 | Type | Who creates it | What it looks like | Position |
 |---|---|---|---|
 | `presenter` | `analyze_scenes.py` (deterministic) | your talking-head footage, silence-trimmed | absolute `timelineStartFrame` |
-| `title` | `generate_title_scenes.py` (AI) | full-screen text card between clips | absolute `timelineStartFrame` |
-| `moment` | `generate_moments.py` (AI) | `bottom-callout` (short phrase over the full-frame presenter), `side-text` (longer phrase filling one side), or `side-image` (an asset filling one side) | relative to a parent `presenter` scene |
+| `title` | `generate_title_scenes.py` (AI) | full-screen text card, anchored to the transcript segment where a new topic actually begins — can split a clip mid-recording, not just sit at a clip boundary | absolute `timelineStartFrame` |
+| `moment` | `generate_moments.py` (AI) | `bottom-callout` (short phrase over the full-frame presenter), `side-text` (longer phrase filling one side), `side-image` (an indexed asset filling one side), `side-code` (a real source file from `code/`, syntax-highlighted), or `side-diagram` (a small LLM-authored node/edge diagram) | relative to a parent `presenter` scene |
 | `image` | hand-authored / edit-plan only | inset picture-in-picture overlay from `graphics/` | relative to a parent `presenter` scene |
 | `caption` | `generate_captions.py` (deterministic) | burned-in subtitle text, lower-third | relative to a parent `presenter` scene |
 
-The AI never places these randomly. Titles get proposed once per clip, only for genuine
-topic changes. Moment scenes only get *offered* to the AI for windows that have gone ≥18
-seconds without a visual change (computed in code, not left to the LLM's judgment) — and even
-then the AI is told to skip most of them and only act on the strongest candidates. Every
-proposal is validated: `bottom-callout`/`side-text` text must actually appear in what was
-said; `side-image` selections must reference a real, indexed asset. `side-text`/`side-image`
-also assign the parent presenter scene's `layout` (`"left"`/`"right"`) so the presenter
-animates to make room — two moments can't assign conflicting layouts to the same parent, and
-a `bottom-callout`'s parent must stay `"center"`. Nothing is trusted blindly.
+The AI never places these randomly. Titles are proposed from the whole episode transcript in
+one pass (not per clip), anchored to the transcript segment where a genuinely new topic
+begins — `merge_title_scenes` splits the presenter scene there if needed, so a title can land
+mid-recording rather than only at a clip's own start. Moment scenes only get *offered* to the
+AI for windows that have gone ≥18 seconds without a visual change (computed in code, not left
+to the LLM's judgment) — and even then the AI is told to skip most of them and only act on the
+strongest candidates. Every proposal is validated: `bottom-callout`/`side-text` text must
+actually appear in what was said; `side-image`/`side-code` selections must reference a real,
+indexed asset (never an invented id); `side-diagram` node labels are checked against the
+window's transcript text as a guard against wholesale fabrication (diagrams are the one
+treatment where the LLM constructs new structure rather than selecting from a list — see
+below). `side-text`/`side-image`/`side-code`/`side-diagram` also assign the parent presenter
+scene's `layout` (`"left"`/`"right"`) so the presenter animates to make room — two moments
+can't assign conflicting layouts to the same parent, and a `bottom-callout`'s parent must stay
+`"center"`. Nothing is trusted blindly.
 
 ## How to process a new episode end to end
 
@@ -261,17 +267,24 @@ Different episodes never contend with each other. This is a same-process, in-mem
 a filesystem lock — it coordinates the control panel server itself, not a separate
 `python3 pipeline/*.py` invocation run directly from a terminal outside the UI.
 
+## `side-code` and `side-diagram` (code snippet and diagram moments)
+
+Code snippets are grounded the same way images are: `index_code.py` indexes real source
+files from `<episode>/code/` (a genuine source-of-truth — the LLM only ever sees an id,
+language, and description, and can select an existing `codeAssetId`, never invent one, exactly
+like `side-image`). `CodeBlock.tsx` renders the real file content with Shiki syntax
+highlighting at render time, so editing the source file and re-rendering picks up the change
+without re-indexing.
+
+Diagrams are the one deliberate exception to "AI selects/fills structured fields, never
+invents free-form content": there's no pre-existing diagram asset to select from, so the LLM
+constructs a small node/edge graph directly (capped at 6 nodes / 8 edges, `DiagramBlock.tsx`
+computes layout deterministically from a `"horizontal"`/`"vertical"` flag — not an LLM
+decision). Each node label is checked against the window's own transcript text as a guard
+against wholesale fabrication before a diagram proposal is accepted.
+
 ## What's deliberately NOT built (and why)
 
-- **Code snippet scenes** — Episode 9's `code/` folder turned out to contain screen
-  recordings and screenshots, not actual source text. Auto-generating a code snippet from
-  the transcript would mean the AI fabricating code it never verified — exactly the kind of
-  ungrounded decision this project avoids. Revisit once there's a real source-of-truth for
-  code content.
-- **Diagram scenes** — plausible next step, but needs a design decision first (hand-authored
-  Mermaid templates the AI only fills in with labels, vs. fully generative diagrams — the
-  former is safer and matches how titles/moments/images already work: AI selects/fills
-  structured fields, never invents free-form content).
 - **A DaVinci Resolve export path** — considered and explicitly rejected. Exporting to an
   editable Resolve timeline would break the core architecture: `scene-plan.json` stops being
   the single source of truth the moment a human starts hand-editing a copy of it inside

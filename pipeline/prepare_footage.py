@@ -315,11 +315,15 @@ def write_manifest(
 def generate_episode_props_ts(
         manifest,
         renderer_folder: Path,
-        assets=None
+        assets=None,
+        code_assets=None
 ):
 
     if assets is None:
         assets = []
+
+    if code_assets is None:
+        code_assets = []
 
     output = (
             renderer_folder
@@ -395,6 +399,27 @@ def generate_episode_props_ts(
         )
 
     lines.append("  ],")
+
+    if code_assets:
+
+        lines.append("  codeAssets: [")
+
+        for code_asset in code_assets:
+
+            lines.extend(
+                [
+                    "    {",
+                    f'      id: {json.dumps(code_asset["id"])},',
+                    f'      filename: {json.dumps(code_asset["filename"])},',
+                    f'      path: {json.dumps(code_asset["renderPath"])},',
+                    f'      language: {json.dumps(code_asset["language"])},',
+                    f'      description: {json.dumps(code_asset["description"])},',
+                    f'      lineCount: {code_asset["lineCount"]},',
+                    "    },",
+                ]
+            )
+
+        lines.append("  ],")
 
     background_video = manifest.get("backgroundVideo")
 
@@ -538,10 +563,18 @@ def main():
         with assets_path.open("r", encoding="utf-8") as f:
             assets = json.load(f)["assets"]
 
+    code_assets_path = processing / "code_assets.json"
+    code_assets = []
+
+    if code_assets_path.exists():
+        with code_assets_path.open("r", encoding="utf-8") as f:
+            code_assets = json.load(f)["codeAssets"]
+
     generate_episode_props_ts(
         manifest,
         renderer_folder,
-        assets=assets
+        assets=assets,
+        code_assets=code_assets
     )
 
 

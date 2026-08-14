@@ -4,7 +4,7 @@ import type { EpisodeBaseProps } from "video-renderer-src/episode/types";
 // mapping (manifest.json's renderPath/keyedRenderPath -> EpisodeBaseProps'
 // path/keyedPath), so the preview reads the same manifest.json the pipeline
 // already produces instead of parsing the generated episode-props.ts.
-export function manifestToEpisodeBaseProps(manifest: any, assets: any[]): EpisodeBaseProps {
+export function manifestToEpisodeBaseProps(manifest: any, assets: any[], codeAssets: any[] = []): EpisodeBaseProps {
     return {
         width: manifest.width,
         height: manifest.height,
@@ -24,6 +24,14 @@ export function manifestToEpisodeBaseProps(manifest: any, assets: any[]): Episod
             filename: asset.filename,
             path: asset.renderPath,
             caption: asset.caption,
+        })),
+        codeAssets: codeAssets.map((codeAsset: any) => ({
+            id: codeAsset.id,
+            filename: codeAsset.filename,
+            path: codeAsset.renderPath,
+            language: codeAsset.language,
+            description: codeAsset.description,
+            lineCount: codeAsset.lineCount,
         })),
         backgroundVideo: manifest.backgroundVideo
             ? {

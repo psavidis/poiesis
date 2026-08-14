@@ -16,6 +16,15 @@ export interface EpisodeAsset {
     caption: string;
 }
 
+export interface EpisodeCodeAsset {
+    id: string;
+    filename: string;
+    path: string;
+    language: string;
+    description: string;
+    lineCount: number;
+}
+
 export interface BackgroundVideo {
     filename: string;
     path: string;
@@ -60,12 +69,37 @@ export interface TitleScene {
 
 // A moment's treatment implies whether/how the presenter moves:
 // "bottom-callout" leaves the presenter full-frame (presenterSide absent);
-// "side-text"/"side-image" require a presenterSide ("left" or "right") —
-// the presenter animates to that side only for this moment's own window
-// (plus a short transition pad either side), then animates back to center
-// once the moment ends, rather than for its whole parent scene's duration.
-// Validated in pipeline/generate_moments.py, not just assumed.
-export type MomentTreatment = "bottom-callout" | "side-text" | "side-image";
+// "side-text"/"side-image"/"side-code"/"side-diagram" require a
+// presenterSide ("left" or "right") — the presenter animates to that side
+// only for this moment's own window (plus a short transition pad either
+// side), then animates back to center once the moment ends, rather than
+// for its whole parent scene's duration. Validated in
+// pipeline/generate_moments.py, not just assumed.
+export type MomentTreatment = "bottom-callout" | "side-text" | "side-image" | "side-code" | "side-diagram";
+
+export interface DiagramNode {
+    id: string;
+    label: string;
+}
+
+export interface DiagramEdge {
+    from: string;
+    to: string;
+    label?: string;
+}
+
+// Deliberately minimal for a first version — no node coordinates (layout
+// is computed deterministically from `layout` + node array order, not an
+// LLM decision), no shapes/colors beyond one brand style, no nested/
+// grouped nodes. Unlike assetId/codeAssetId, this is inline data rather
+// than a reference into an indexed file — there is no pre-existing
+// "diagram asset" to select from, since a diagram's whole value is
+// visualizing a relationship the AI identifies in the explanation.
+export interface DiagramData {
+    nodes: DiagramNode[];
+    edges: DiagramEdge[];
+    layout: "horizontal" | "vertical";
+}
 
 export interface MomentScene {
     type: "moment";
@@ -73,6 +107,8 @@ export interface MomentScene {
     treatment: MomentTreatment;
     text?: string;
     assetId?: string;
+    codeAssetId?: string;
+    diagram?: DiagramData;
     caption?: string;
     presenterSide?: "left" | "right";
     parentSceneId: string;
@@ -120,6 +156,7 @@ export type EpisodeBaseProps = {
     fps: number;
     videos: EpisodeVideo[];
     assets: EpisodeAsset[];
+    codeAssets?: EpisodeCodeAsset[];
     backgroundVideo?: BackgroundVideo;
 };
 

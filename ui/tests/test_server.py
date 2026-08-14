@@ -136,12 +136,32 @@ def _make_scene_plan(episode, video_ids=("001", "002")):
             "sourceEndFrame": 100,
             "timelineStartFrame": i * 100,
             "durationInFrames": 100,
+            "effects": {"captions": True, "transition": "none"},
         }
         for i, vid in enumerate(video_ids)
     ]
-    scene_plan = {"scenes": scenes}
+    scene_plan = {"fps": 30, "scenes": scenes}
     (episode / "processing" / "scene-plan.json").write_text(json.dumps(scene_plan))
     return scene_plan
+
+
+def _make_title_scene_fixtures(episode, video_ids=("001", "002")):
+    """merge_title_scenes now resolves a title's segmentId via the whole-
+    episode transcript + manifest, so any test exercising the title-scenes
+    endpoint needs both on disk — mirrors how the real pipeline always has
+    both available by the time title editing is possible (merge_segments
+    runs before analyze_scenes, and generate_title_scenes itself requires
+    both to have already produced its first title_scenes.json)."""
+    manifest = {"videos": [{"id": vid, "filename": f"{vid}.mp4"} for vid in video_ids]}
+    (episode / "processing" / "manifest.json").write_text(json.dumps(manifest))
+
+    episode_transcript = {
+        "segments": [
+            {"source": f"{vid}.mp4", "start": 0.0, "end": 2.0, "text": f"segment for {vid}"}
+            for vid in video_ids
+        ]
+    }
+    (episode / "processing" / "episode_transcript.json").write_text(json.dumps(episode_transcript))
 
 
 def test_update_title_scenes_returns_404_without_scene_plan(tmp_path):
@@ -150,7 +170,7 @@ def test_update_title_scenes_returns_404_without_scene_plan(tmp_path):
     response = client.put(
         "/api/episode/title-scenes",
         params={"path": str(episode)},
-        json={"titles": [{"videoId": "001", "text": "Hello"}]},
+        json={"titles": [{"segmentId": "s0", "text": "Hello"}]},
     )
 
     assert response.status_code == 404
@@ -159,11 +179,12 @@ def test_update_title_scenes_returns_404_without_scene_plan(tmp_path):
 def test_update_title_scenes_writes_titles_file_and_merges_scene_plan(tmp_path):
     episode = _make_episode(tmp_path)
     _make_scene_plan(episode)
+    _make_title_scene_fixtures(episode)
 
     response = client.put(
         "/api/episode/title-scenes",
         params={"path": str(episode)},
-        json={"titles": [{"videoId": "001", "text": "Edited Title"}]},
+        json={"titles": [{"segmentId": "s0", "text": "Edited Title"}]},
     )
 
     assert response.status_code == 200
@@ -181,11 +202,12 @@ def test_update_title_scenes_writes_titles_file_and_merges_scene_plan(tmp_path):
 def test_update_title_scenes_can_remove_a_title_by_omitting_it(tmp_path):
     episode = _make_episode(tmp_path)
     _make_scene_plan(episode)
+    _make_title_scene_fixtures(episode)
 
     client.put(
         "/api/episode/title-scenes",
         params={"path": str(episode)},
-        json={"titles": [{"videoId": "001", "text": "Keep me"}]},
+        json={"titles": [{"segmentId": "s0", "text": "Keep me"}]},
     )
 
     response = client.put(
@@ -272,6 +294,32 @@ def test_update_moments_writes_file_and_merges_scene_plan(tmp_path):
     assert len(moment_scenes) == 1
     assert moment_scenes[0]["text"] == "Edited emphasis"
     assert moment_scenes[0]["offsetInParentFrames"] == 15
+
+
+def test_update_moments_does_not_attach_unrelated_fields_to_bottom_callout(tmp_path):
+    # Regression: MomentProposal.model_dump() always includes every
+    # optional field (assetId, codeAssetId, diagram) with a None default,
+    # regardless of the payload's actual treatment. merge_moment_scenes
+    # must not mistake "key present with value None" for "field genuinely
+    # set" — a bottom-callout saved through this endpoint should never end
+    # up with assetId/codeAssetId/diagram keys on its moment scene at all.
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    response = client.put(
+        "/api/episode/moments",
+        params={"path": str(episode)},
+        json={"moments": [_bottom_callout_payload()]},
+    )
+
+    assert response.status_code == 200
+
+    scene_plan_on_disk = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    moment_scene = next(s for s in scene_plan_on_disk["scenes"] if s["type"] == "moment")
+
+    assert "assetId" not in moment_scene
+    assert "codeAssetId" not in moment_scene
+    assert "diagram" not in moment_scene
 
 
 def test_update_moments_stores_presenter_side_for_side_image(tmp_path):
@@ -379,12 +427,13 @@ def test_edit_scene_plan_returns_502_when_llm_call_fails(tmp_path):
 def test_update_title_scenes_regenerates_codegen(tmp_path):
     episode = _make_episode(tmp_path)
     _make_scene_plan(episode)
+    _make_title_scene_fixtures(episode)
 
     with patch("server.regenerate_codegen") as mock_regen:
         response = client.put(
             "/api/episode/title-scenes",
             params={"path": str(episode)},
-            json={"titles": [{"videoId": "001", "text": "Hello"}]},
+            json={"titles": [{"segmentId": "s0", "text": "Hello"}]},
         )
 
     assert response.status_code == 200
@@ -467,6 +516,7 @@ def test_regenerate_codegen_swallows_errors(tmp_path):
 def test_update_title_scenes_returns_409_when_episode_is_locked(tmp_path):
     episode = _make_episode(tmp_path)
     _make_scene_plan(episode)
+    _make_title_scene_fixtures(episode)
 
     # Simulate a pipeline/render already in flight for this episode by
     # holding its lock for the duration of the request, same as
@@ -475,7 +525,7 @@ def test_update_title_scenes_returns_409_when_episode_is_locked(tmp_path):
         response = client.put(
             "/api/episode/title-scenes",
             params={"path": str(episode)},
-            json={"titles": [{"videoId": "001", "text": "Hello"}]},
+            json={"titles": [{"segmentId": "s0", "text": "Hello"}]},
         )
 
     assert response.status_code == 409
@@ -490,12 +540,13 @@ def test_update_title_scenes_returns_409_when_episode_is_locked(tmp_path):
 def test_update_title_scenes_succeeds_once_lock_is_released(tmp_path):
     episode = _make_episode(tmp_path)
     _make_scene_plan(episode)
+    _make_title_scene_fixtures(episode)
 
     with episode_lock(episode):
         blocked = client.put(
             "/api/episode/title-scenes",
             params={"path": str(episode)},
-            json={"titles": [{"videoId": "001", "text": "Hello"}]},
+            json={"titles": [{"segmentId": "s0", "text": "Hello"}]},
         )
     assert blocked.status_code == 409
 
@@ -503,7 +554,7 @@ def test_update_title_scenes_succeeds_once_lock_is_released(tmp_path):
     response = client.put(
         "/api/episode/title-scenes",
         params={"path": str(episode)},
-        json={"titles": [{"videoId": "001", "text": "Hello"}]},
+        json={"titles": [{"segmentId": "s0", "text": "Hello"}]},
     )
     assert response.status_code == 200
 
@@ -542,14 +593,14 @@ def test_different_episodes_do_not_block_each_other(tmp_path):
 
     episode_b = tmp_path / "Another Episode"
     (episode_b / "processing").mkdir(parents=True)
-    (episode_b / "processing" / "manifest.json").write_text("{}")
     _make_scene_plan(episode_b)
+    _make_title_scene_fixtures(episode_b)
 
     with episode_lock(episode_a):
         response = client.put(
             "/api/episode/title-scenes",
             params={"path": str(episode_b)},
-            json={"titles": [{"videoId": "001", "text": "Hello"}]},
+            json={"titles": [{"segmentId": "s0", "text": "Hello"}]},
         )
 
     assert response.status_code == 200

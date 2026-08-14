@@ -10,11 +10,14 @@ import {
     useVideoConfig,
 } from "remotion";
 
-import type { EpisodeAsset, EpisodeProps, EpisodeVideo, MomentScene, PresenterLayout, PresenterScene, Scene, TitleScene } from "./types";
+import type { EpisodeAsset, EpisodeCodeAsset, EpisodeProps, EpisodeVideo, MomentScene, PresenterLayout, PresenterScene, Scene, TitleScene } from "./types";
 import { AnimatedTitle } from "./AnimatedTitle";
 import { CaptionText } from "./CaptionText";
+import { CodeBlock } from "./CodeBlock";
+import { DiagramBlock } from "./DiagramBlock";
 import { EpisodeImage } from "./EpisodeImage";
 import { BottomCallout, SideImage, SideText } from "./MomentTreatments";
+import { TRANSITION_FRAMES } from "./timing";
 
 // Frame geometry for each layout, as a fraction of the full frame. "left"/
 // "right" leave the opposite side free for a moment's side-text/side-image
@@ -33,8 +36,6 @@ export const LAYOUT_GEOMETRY: Record<PresenterLayout, { widthPct: number; leftPc
     left: { widthPct: 72, leftPct: 0 },
     right: { widthPct: 72, leftPct: 28 },
 };
-
-export const TRANSITION_FRAMES = 24;
 
 // A crossfade "borrows" a few extra source frames immediately before a
 // clip's own silence-trimmed sourceStartFrame (real footage that exists,
@@ -73,6 +74,23 @@ export const layoutWindowsForScene = (scene: PresenterScene, moments: MomentScen
         .sort((a, b) => a.start - b.start);
 
     return windows;
+};
+
+// Defensive clamp for a moment's rendered duration: generate_moments.py's
+// propose_moments() reserves room for TRANSITION_FRAMES at proposal time
+// (so this is normally a no-op), but this is the last line of defense
+// against any producer that doesn't go through that clamp — a human
+// hand-editing moments.json/scene-plan.json directly, or a future
+// natural-language edit-plan instruction touching durationInFrames.
+// Without this, content could outlive the presenter's own
+// already-clamped slide-back-to-center window (layoutWindowsForScene's
+// `end`, above), desyncing the two. Exported as a pure function so it can
+// be tested directly against layoutWindowsForScene for the same scene.
+export const clampedMomentDuration = (scene: MomentScene, parent: PresenterScene): number => {
+    return Math.max(
+        0,
+        Math.min(scene.durationInFrames, parent.durationInFrames - scene.offsetInParentFrames)
+    );
 };
 
 // How many frames this scene should crossfade in from its predecessor —
@@ -293,9 +311,11 @@ const LoopingBackground = ({ path, duration }: { path: string; duration: number 
 const MomentSequence = ({
                              scene,
                              asset,
+                             codeAsset,
                          }: {
     scene: MomentScene;
     asset: EpisodeAsset | undefined;
+    codeAsset: EpisodeCodeAsset | undefined;
 }) => {
     switch (scene.treatment) {
         case "bottom-callout":
@@ -317,12 +337,31 @@ const MomentSequence = ({
                 />
             );
         }
+
+        case "side-code": {
+            if (!codeAsset) return null;
+            const presenterOnLeft = scene.presenterSide === "left";
+            return (
+                <CodeBlock
+                    path={codeAsset.path}
+                    language={codeAsset.language}
+                    presenterOnLeft={presenterOnLeft}
+                />
+            );
+        }
+
+        case "side-diagram": {
+            if (!scene.diagram) return null;
+            const presenterOnLeft = scene.presenterSide === "left";
+            return <DiagramBlock diagram={scene.diagram} presenterOnLeft={presenterOnLeft} />;
+        }
     }
 };
 
 export const Episode = ({
                             videos,
                             assets,
+                            codeAssets,
                             backgroundVideo,
                             scenePlan: typedScenePlan,
                         }: EpisodeProps) => {
@@ -338,6 +377,13 @@ export const Episode = ({
         assets.map((asset) => [
             asset.id,
             asset,
+        ])
+    );
+
+    const codeAssetMap = new Map(
+        (codeAssets ?? []).map((codeAsset) => [
+            codeAsset.id,
+            codeAsset,
         ])
     );
 
@@ -419,14 +465,21 @@ export const Episode = ({
                 }
 
                 const asset = scene.assetId ? assetMap.get(scene.assetId) : undefined;
+                const codeAsset = scene.codeAssetId ? codeAssetMap.get(scene.codeAssetId) : undefined;
+
+                const durationInFrames = clampedMomentDuration(scene, parent);
+
+                if (durationInFrames <= 0) {
+                    return null;
+                }
 
                 return (
                     <Sequence
                         key={scene.id}
                         from={parent.timelineStartFrame + scene.offsetInParentFrames}
-                        durationInFrames={scene.durationInFrames}
+                        durationInFrames={durationInFrames}
                     >
-                        <MomentSequence scene={scene} asset={asset} />
+                        <MomentSequence scene={scene} asset={asset} codeAsset={codeAsset} />
                     </Sequence>
                 );
             }

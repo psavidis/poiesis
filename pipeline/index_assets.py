@@ -146,7 +146,10 @@ def main():
 
         manifest = load_json(manifest_path)
 
-        generate_episode_props_ts(manifest, renderer_folder, assets=assets)
+        code_assets_path = episode / "processing" / "code_assets.json"
+        code_assets = load_json(code_assets_path)["codeAssets"] if code_assets_path.exists() else []
+
+        generate_episode_props_ts(manifest, renderer_folder, assets=assets, code_assets=code_assets)
 
 
 if __name__ == "__main__":

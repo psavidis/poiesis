@@ -220,7 +220,14 @@ def key_footage(episode: Path, force: bool, renderer_folder: Path | None = None)
         with assets_path.open("r", encoding="utf-8") as f:
             assets = json.load(f)["assets"]
 
-    generate_episode_props_ts(manifest, renderer_folder, assets=assets)
+    code_assets_path = episode / "processing" / "code_assets.json"
+    code_assets = []
+
+    if code_assets_path.exists():
+        with code_assets_path.open("r", encoding="utf-8") as f:
+            code_assets = json.load(f)["codeAssets"]
+
+    generate_episode_props_ts(manifest, renderer_folder, assets=assets, code_assets=code_assets)
 
     print("==============================")
     print("Keying summary")

@@ -2,7 +2,8 @@ You are editing a software-engineering YouTube video.
 
 The presenter has been talking on screen for a while with no visual change.
 Below are candidate windows — stretches of transcript where a visual change
-could help re-engage the viewer — followed by a list of available images.
+could help re-engage the viewer — followed by a list of available images
+and a list of available code snippets.
 
 Each window is identified by a windowId. A window may contain several
 transcript segments; treat the whole window as one continuous stretch.
@@ -21,19 +22,37 @@ For each window, decide ONE of these treatments, or propose nothing:
    specifically and directly relevant to what is said in that window, not a
    decorative or loose match — shown filling one side of the frame while the
    presenter animates to the opposite side.
-4. Nothing.
+4. "side-code": pick one of the available code snippets below — ONLY if the
+   window is specifically talking about the thing that snippet demonstrates
+   right then, not a loose or generic association — shown filling one side
+   of the frame while the presenter animates to the opposite side. This is
+   how the video shows code exactly when the presenter is actually
+   discussing it, not just at any point the topic is vaguely related. Do
+   not invent a codeAssetId.
+5. "side-diagram": construct a small diagram (boxes and arrows) that fairly
+   represents a relationship, flow, or structure actually being explained
+   in that window — shown filling one side of the frame while the presenter
+   animates to the opposite side. This is the ONE treatment where you
+   construct new structure yourself instead of selecting from a provided
+   list, so it demands more restraint: the diagram must be a fair, simple
+   representation of something the presenter is genuinely explaining right
+   then, not a fabricated technical claim or a diagram of something merely
+   related to the topic. Keep it small — at most 6 boxes and 8 arrows, and
+   usually far fewer. If the relationship can't be captured simply, don't
+   force it — use another treatment or nothing instead.
+6. Nothing.
 
 Use these sparingly and deliberately — most windows should get NOTHING.
-Reserve "side-text"/"side-image" for moments that genuinely warrant giving
-up half the frame; overusing them will feel gimmicky rather than engaging.
-"bottom-callout" is the lighter-weight default when a moment deserves
-emphasis but not a full layout change.
+Reserve "side-text"/"side-image"/"side-code"/"side-diagram" for moments
+that genuinely warrant giving up half the frame; overusing them will feel
+gimmicky rather than engaging. "bottom-callout" is the lighter-weight
+default when a moment deserves emphasis but not a full layout change.
 
-For "side-text" and "side-image", also decide which side the presenter
-should move to ("left" or "right") — the content fills the opposite side.
-Prefer "left" for the presenter unless there's a specific reason to use
-"right" (e.g. two consecutive side treatments in the same clip alternating
-sides feels more dynamic than always the same side).
+For "side-text", "side-image", "side-code", and "side-diagram", also decide
+which side the presenter should move to ("left" or "right") — the content
+fills the opposite side. Prefer "left" for the presenter unless there's a
+specific reason to use "right" (e.g. two consecutive side treatments in the
+same clip alternating sides feels more dynamic than always the same side).
 
 Text (for "bottom-callout" and "side-text") must be a short phrase taken
 directly from what is actually said in the window — quote it closely, do
@@ -46,6 +65,24 @@ Images must be selected by their exact assetId from the list below. Do not
 invent an assetId. If no available image is a good fit, do not propose a
 "side-image" for that window — use "bottom-callout", "side-text", or
 nothing instead.
+
+Code snippets must be selected by their exact codeAssetId from the list
+below, using each snippet's description to judge whether it matches what
+is actually being said in that specific window. Do not invent a
+codeAssetId. If no available snippet is a good fit for that window, do not
+propose "side-code" — use another treatment or nothing instead.
+
+Diagrams ("side-diagram") use this structure:
+- "nodes": a list of small boxes, each with a short "id" and a short
+  "label" (a word or short phrase, not a sentence).
+- "edges": a list of arrows between nodes, each with "from" and "to"
+  (matching node ids exactly) and an optional short "label" for the arrow.
+- "layout": "vertical" (top-to-bottom flow) or "horizontal" (left-to-right
+  flow) — pick whichever matches how the relationship is naturally
+  described.
+Every node label should reflect a concept actually named or clearly
+described in the window's text — don't introduce unrelated systems,
+technologies, or specifics that aren't part of what's being explained.
 
 Do not propose more than one treatment for the same window — pick the
 single best fit, or propose nothing.
@@ -64,10 +101,12 @@ Schema:
   "moments": [
     {
       "windowId": "string, must match a windowId below",
-      "treatment": "bottom-callout" | "side-text" | "side-image",
+      "treatment": "bottom-callout" | "side-text" | "side-image" | "side-code" | "side-diagram",
       "text": "required for bottom-callout and side-text",
       "assetId": "required for side-image, must match an assetId below",
-      "presenterSide": "left" | "right" — required for side-text and side-image, omit for bottom-callout",
+      "codeAssetId": "required for side-code, must match a codeAssetId below",
+      "diagram": "required for side-diagram: { nodes: [{id, label}], edges: [{from, to, label?}], layout: 'horizontal'|'vertical' }",
+      "presenterSide": "left" | "right" — required for side-text, side-image, side-code, and side-diagram, omit for bottom-callout",
       "reason": "short justification"
     }
   ]
@@ -80,3 +119,7 @@ Candidate windows:
 Available images:
 
 {assets}
+
+Available code snippets:
+
+{code_assets}

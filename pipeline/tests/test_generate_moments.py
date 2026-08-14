@@ -1,6 +1,7 @@
 from generate_moments import (
     build_candidate_windows,
     dedupe_overlapping_windows,
+    is_diagram_grounded,
     is_grounded,
     merge_moment_scenes,
     propose_moments,
@@ -23,6 +24,63 @@ def test_is_grounded_rejects_fabricated_text():
 
 def test_is_grounded_rejects_empty_text():
     assert not is_grounded("", "some source text")
+
+
+def test_is_diagram_grounded_accepts_labels_matching_source_words():
+    diagram = {
+        "nodes": [{"id": "n1", "label": "dependencies"}, {"id": "n2", "label": "modules"}],
+        "edges": [{"from": "n1", "to": "n2"}],
+        "layout": "horizontal",
+    }
+
+    assert is_diagram_grounded(diagram, "we can replace our dependencies of our modules easier")
+
+
+def test_is_diagram_grounded_rejects_fabricated_labels():
+    diagram = {
+        "nodes": [{"id": "n1", "label": "Kubernetes"}, {"id": "n2", "label": "Istio"}],
+        "edges": [{"from": "n1", "to": "n2"}],
+        "layout": "horizontal",
+    }
+
+    assert not is_diagram_grounded(diagram, "we can replace our dependencies of our modules easier")
+
+
+def test_is_diagram_grounded_rejects_empty_nodes():
+    diagram = {"nodes": [], "edges": [], "layout": "horizontal"}
+
+    assert not is_diagram_grounded(diagram, "some source text")
+
+
+def test_is_diagram_grounded_rejects_more_than_max_nodes():
+    diagram = {
+        "nodes": [{"id": f"n{i}", "label": "dependencies"} for i in range(7)],
+        "edges": [],
+        "layout": "horizontal",
+    }
+
+    assert not is_diagram_grounded(diagram, "dependencies dependencies dependencies")
+
+
+def test_is_diagram_grounded_rejects_more_than_max_edges():
+    nodes = [{"id": f"n{i}", "label": "dependencies"} for i in range(2)]
+    diagram = {
+        "nodes": nodes,
+        "edges": [{"from": "n0", "to": "n1"} for _ in range(9)],
+        "layout": "horizontal",
+    }
+
+    assert not is_diagram_grounded(diagram, "dependencies dependencies")
+
+
+def test_is_diagram_grounded_rejects_edge_referencing_unknown_node():
+    diagram = {
+        "nodes": [{"id": "n1", "label": "dependencies"}],
+        "edges": [{"from": "n1", "to": "n99"}],
+        "layout": "horizontal",
+    }
+
+    assert not is_diagram_grounded(diagram, "we can replace our dependencies")
 
 
 def test_build_candidate_windows_produces_text_from_matching_segments():
@@ -103,6 +161,10 @@ def _one_asset():
     return [{"id": "img-001", "filename": "a.png", "caption": "a relevant diagram"}]
 
 
+def _one_code_asset():
+    return [{"id": "code-001", "filename": "Repository.java", "language": "java", "description": "a constructor injection example"}]
+
+
 def test_propose_moments_accepts_grounded_bottom_callout():
     llm = _FakeLLMClient(
         {
@@ -170,7 +232,11 @@ def test_propose_moments_clamps_max_duration_to_the_real_rendered_duration():
 def test_propose_moments_max_duration_stays_below_a_narrow_window_ceiling():
     # when the eligible window's own ceiling is narrower than the
     # treatment's fixed length, the clamp must not WIDEN it back up —
-    # min() of the two, not just "always use the fixed length."
+    # min() of the two, not just "always use the fixed length." The scene
+    # leaves 44 frames of room past the 18s (540f) threshold: 20 for the
+    # narrow ceiling being tested, plus TRANSITION_FRAMES (24) reserved for
+    # the presenter's own exit pad — enough that the ceiling itself, not
+    # the transition-pad reservation, is what's under test here.
     scene_plan = {
         "fps": 30,
         "scenes": [
@@ -179,15 +245,15 @@ def test_propose_moments_max_duration_stays_below_a_narrow_window_ceiling():
                 "id": "scene-001",
                 "videoId": "001",
                 "timelineStartFrame": 0,
-                "durationInFrames": 560,  # only 20 frames of room past the 18s (540f) threshold
+                "durationInFrames": 584,
                 "sourceStartFrame": 0,
-                "sourceEndFrame": 560,
+                "sourceEndFrame": 584,
             }
         ],
     }
     transcript = {
         "segments": [
-            # falls within the eligible window ([540, 560) frames = [18.0s, 18.67s))
+            # falls within the eligible window ([540, 584) frames = [18.0s, 19.47s))
             {"source": "a.mp4", "start": 18.1, "end": 18.4, "text": "the important key idea"},
         ]
     }
@@ -216,6 +282,127 @@ def test_propose_moments_max_duration_stays_below_a_narrow_window_ceiling():
 
     assert len(proposals) == 1
     assert proposals[0]["maxDurationInParentFrames"] == 20
+
+
+def test_propose_moments_clamps_duration_to_leave_room_for_transition_pad():
+    # Regression test: a moment whose duration individually fits within
+    # the parent scene must still be clamped further if offset + duration
+    # + TRANSITION_FRAMES would overflow the parent — otherwise the
+    # presenter's own slide-back-to-center animation (clamped to the
+    # parent's durationInFrames in Episode.tsx's layoutWindowsForScene)
+    # ends before the moment's content does, leaving content on screen
+    # after the presenter has already returned to center.
+    #
+    # Scene is 570 frames. The eligible window starts at 540 (18s
+    # threshold) leaving exactly 30 frames of raw remaining-scene room —
+    # enough for the treatment's own fixed duration (90 for
+    # bottom-callout would be clamped to 30 by the existing ceiling logic
+    # regardless, so use a treatment whose fixed length is small enough
+    # to fit the raw 30-frame room but not the padded room). No treatment
+    # here is under 30 frames by default, so this exercises the case via
+    # the eligible window's own ceiling landing at exactly 30 (room
+    # without the pad) — the fix must reduce it further to leave 24
+    # frames (TRANSITION_FRAMES) for the exit pad, i.e. to 6.
+    scene_plan = {
+        "fps": 30,
+        "scenes": [
+            {
+                "type": "presenter",
+                "id": "scene-001",
+                "videoId": "001",
+                "timelineStartFrame": 0,
+                "durationInFrames": 570,
+                "sourceStartFrame": 0,
+                "sourceEndFrame": 570,
+            }
+        ],
+    }
+    transcript = {
+        "segments": [
+            # falls within the eligible window ([540, 570) frames = [18.0s, 19.0s))
+            {"source": "a.mp4", "start": 18.1, "end": 18.4, "text": "the important key idea"},
+        ]
+    }
+
+    llm = _FakeLLMClient(
+        {
+            "moments": [
+                {
+                    "windowId": "w0",
+                    "treatment": "bottom-callout",
+                    "text": "the important key idea",
+                    "reason": "central point",
+                }
+            ]
+        }
+    )
+
+    proposals = propose_moments(
+        scene_plan,
+        transcript,
+        _manifest_single_video(),
+        _no_assets(),
+        llm,
+        "{windows}{assets}",
+    )
+
+    assert len(proposals) == 1
+    proposal = proposals[0]
+    offset = proposal["offsetInParentFrames"]
+    duration = proposal["maxDurationInParentFrames"]
+
+    # The padded window (what the presenter's slide-back animation needs)
+    # must fit within the parent scene's own duration.
+    assert offset + duration + 24 <= scene_plan["scenes"][0]["durationInFrames"]
+
+
+def test_propose_moments_drops_proposal_with_no_room_for_transition_pad():
+    # If even the minimum possible content can't fit alongside the
+    # transition pad, the proposal must be dropped entirely rather than
+    # kept with a zero or negative duration.
+    scene_plan = {
+        "fps": 30,
+        "scenes": [
+            {
+                "type": "presenter",
+                "id": "scene-001",
+                "videoId": "001",
+                "timelineStartFrame": 0,
+                "durationInFrames": 560,  # only 20 frames of room past the 540f threshold
+                "sourceStartFrame": 0,
+                "sourceEndFrame": 560,
+            }
+        ],
+    }
+    transcript = {
+        "segments": [
+            {"source": "a.mp4", "start": 18.1, "end": 18.4, "text": "the important key idea"},
+        ]
+    }
+
+    llm = _FakeLLMClient(
+        {
+            "moments": [
+                {
+                    "windowId": "w0",
+                    "treatment": "bottom-callout",
+                    "text": "the important key idea",
+                    "reason": "central point",
+                }
+            ]
+        }
+    )
+
+    proposals = propose_moments(
+        scene_plan,
+        transcript,
+        _manifest_single_video(),
+        _no_assets(),
+        llm,
+        "{windows}{assets}",
+    )
+
+    assert proposals == []
 
 
 def test_propose_moments_rejects_ungrounded_bottom_callout():
@@ -404,6 +591,234 @@ def test_propose_moments_rejects_side_image_without_presenter_side():
         _one_asset(),
         llm,
         "{windows}{assets}",
+    )
+
+    assert proposals == []
+
+
+def test_propose_moments_accepts_valid_side_code():
+    llm = _FakeLLMClient(
+        {
+            "moments": [
+                {
+                    "windowId": "w0",
+                    "treatment": "side-code",
+                    "codeAssetId": "code-001",
+                    "presenterSide": "left",
+                    "reason": "shows the constructor injection being discussed",
+                }
+            ]
+        }
+    )
+
+    proposals = propose_moments(
+        _scene_plan_with_one_long_scene(),
+        _transcript_with_late_segment(),
+        _manifest_single_video(),
+        _no_assets(),
+        llm,
+        "{windows}{assets}{code_assets}",
+        code_assets=_one_code_asset(),
+    )
+
+    assert len(proposals) == 1
+    assert proposals[0]["treatment"] == "side-code"
+    assert proposals[0]["codeAssetId"] == "code-001"
+    assert proposals[0]["caption"] == "a constructor injection example"
+    assert proposals[0]["presenterSide"] == "left"
+
+
+def test_propose_moments_rejects_unknown_code_asset_id():
+    llm = _FakeLLMClient(
+        {
+            "moments": [
+                {
+                    "windowId": "w0",
+                    "treatment": "side-code",
+                    "codeAssetId": "code-999",
+                    "presenterSide": "left",
+                    "reason": "hallucinated",
+                }
+            ]
+        }
+    )
+
+    proposals = propose_moments(
+        _scene_plan_with_one_long_scene(),
+        _transcript_with_late_segment(),
+        _manifest_single_video(),
+        _no_assets(),
+        llm,
+        "{windows}{assets}{code_assets}",
+        code_assets=_one_code_asset(),
+    )
+
+    assert proposals == []
+
+
+def test_propose_moments_rejects_side_code_without_presenter_side():
+    llm = _FakeLLMClient(
+        {
+            "moments": [
+                {
+                    "windowId": "w0",
+                    "treatment": "side-code",
+                    "codeAssetId": "code-001",
+                    "reason": "shows the constructor injection being discussed",
+                }
+            ]
+        }
+    )
+
+    proposals = propose_moments(
+        _scene_plan_with_one_long_scene(),
+        _transcript_with_late_segment(),
+        _manifest_single_video(),
+        _no_assets(),
+        llm,
+        "{windows}{assets}{code_assets}",
+        code_assets=_one_code_asset(),
+    )
+
+    assert proposals == []
+
+
+def test_propose_moments_accepts_valid_side_diagram():
+    # _transcript_with_late_segment's text is "the important key idea" —
+    # labels below share words/stems with it ("important", "idea").
+    llm = _FakeLLMClient(
+        {
+            "moments": [
+                {
+                    "windowId": "w0",
+                    "treatment": "side-diagram",
+                    "diagram": {
+                        "nodes": [
+                            {"id": "n1", "label": "important idea"},
+                            {"id": "n2", "label": "key idea"},
+                        ],
+                        "edges": [{"from": "n1", "to": "n2", "label": "leads to"}],
+                        "layout": "vertical",
+                    },
+                    "presenterSide": "left",
+                    "reason": "shows how the idea builds",
+                }
+            ]
+        }
+    )
+
+    proposals = propose_moments(
+        _scene_plan_with_one_long_scene(),
+        _transcript_with_late_segment(),
+        _manifest_single_video(),
+        _no_assets(),
+        llm,
+        "{windows}{assets}{code_assets}",
+    )
+
+    assert len(proposals) == 1
+    assert proposals[0]["treatment"] == "side-diagram"
+    assert proposals[0]["diagram"]["nodes"] == [
+        {"id": "n1", "label": "important idea"},
+        {"id": "n2", "label": "key idea"},
+    ]
+    assert proposals[0]["presenterSide"] == "left"
+
+
+def test_propose_moments_rejects_side_diagram_with_dangling_edge():
+    llm = _FakeLLMClient(
+        {
+            "moments": [
+                {
+                    "windowId": "w0",
+                    "treatment": "side-diagram",
+                    "diagram": {
+                        "nodes": [{"id": "n1", "label": "important idea"}],
+                        # references a node id that doesn't exist
+                        "edges": [{"from": "n1", "to": "n2"}],
+                        "layout": "vertical",
+                    },
+                    "presenterSide": "left",
+                    "reason": "shows the idea",
+                }
+            ]
+        }
+    )
+
+    proposals = propose_moments(
+        _scene_plan_with_one_long_scene(),
+        _transcript_with_late_segment(),
+        _manifest_single_video(),
+        _no_assets(),
+        llm,
+        "{windows}{assets}{code_assets}",
+    )
+
+    assert proposals == []
+
+
+def test_propose_moments_rejects_side_diagram_exceeding_node_cap():
+    llm = _FakeLLMClient(
+        {
+            "moments": [
+                {
+                    "windowId": "w0",
+                    "treatment": "side-diagram",
+                    "diagram": {
+                        "nodes": [{"id": f"n{i}", "label": "important idea"} for i in range(7)],
+                        "edges": [],
+                        "layout": "vertical",
+                    },
+                    "presenterSide": "left",
+                    "reason": "too many boxes",
+                }
+            ]
+        }
+    )
+
+    proposals = propose_moments(
+        _scene_plan_with_one_long_scene(),
+        _transcript_with_late_segment(),
+        _manifest_single_video(),
+        _no_assets(),
+        llm,
+        "{windows}{assets}{code_assets}",
+    )
+
+    assert proposals == []
+
+
+def test_propose_moments_rejects_side_diagram_with_fabricated_labels():
+    llm = _FakeLLMClient(
+        {
+            "moments": [
+                {
+                    "windowId": "w0",
+                    "treatment": "side-diagram",
+                    "diagram": {
+                        # "Kubernetes"/"Istio" share no words or stems with
+                        # the transcript text "the important key idea"
+                        "nodes": [
+                            {"id": "n1", "label": "Kubernetes"},
+                            {"id": "n2", "label": "Istio"},
+                        ],
+                        "edges": [{"from": "n1", "to": "n2"}],
+                        "layout": "horizontal",
+                    },
+                    "presenterSide": "left",
+                    "reason": "hallucinated infrastructure diagram",
+                }
+            ]
+        }
+    )
+
+    proposals = propose_moments(
+        _scene_plan_with_one_long_scene(),
+        _transcript_with_late_segment(),
+        _manifest_single_video(),
+        _no_assets(),
+        llm,
+        "{windows}{assets}{code_assets}",
     )
 
     assert proposals == []
@@ -670,6 +1085,84 @@ def test_merge_moment_scenes_side_image_stores_asset_and_caption():
 
     assert moment_scene["assetId"] == "img-001"
     assert moment_scene["caption"] == "a relevant diagram"
+    assert moment_scene["presenterSide"] == "right"
+
+
+def test_merge_moment_scenes_side_code_stores_code_asset_and_caption():
+    scene_plan = {
+        "fps": 30,
+        "scenes": [
+            {
+                "id": "scene-001",
+                "type": "presenter",
+                "videoId": "001",
+                "timelineStartFrame": 0,
+                "durationInFrames": 900,
+            },
+        ],
+    }
+
+    proposals = [
+        {
+            "windowId": "w0",
+            "sceneId": "scene-001",
+            "videoId": "001",
+            "offsetInParentFrames": 500,
+            "maxDurationInParentFrames": 240,
+            "treatment": "side-code",
+            "codeAssetId": "code-001",
+            "caption": "a constructor injection example",
+            "presenterSide": "left",
+            "reason": "shows the constructor injection being discussed",
+        }
+    ]
+
+    result = merge_moment_scenes(scene_plan, proposals)
+    moment_scene = next(s for s in result["scenes"] if s["type"] == "moment")
+
+    assert moment_scene["codeAssetId"] == "code-001"
+    assert moment_scene["caption"] == "a constructor injection example"
+    assert moment_scene["presenterSide"] == "left"
+
+
+def test_merge_moment_scenes_side_diagram_stores_diagram_data():
+    scene_plan = {
+        "fps": 30,
+        "scenes": [
+            {
+                "id": "scene-001",
+                "type": "presenter",
+                "videoId": "001",
+                "timelineStartFrame": 0,
+                "durationInFrames": 900,
+            },
+        ],
+    }
+
+    diagram = {
+        "nodes": [{"id": "n1", "label": "Client"}, {"id": "n2", "label": "Server"}],
+        "edges": [{"from": "n1", "to": "n2", "label": "request"}],
+        "layout": "horizontal",
+    }
+
+    proposals = [
+        {
+            "windowId": "w0",
+            "sceneId": "scene-001",
+            "videoId": "001",
+            "offsetInParentFrames": 500,
+            "maxDurationInParentFrames": 180,
+            "treatment": "side-diagram",
+            "diagram": diagram,
+            "presenterSide": "right",
+            "reason": "shows client-server relationship",
+        }
+    ]
+
+    result = merge_moment_scenes(scene_plan, proposals)
+    moment_scene = next(s for s in result["scenes"] if s["type"] == "moment")
+
+    assert moment_scene["diagram"] == diagram
     assert moment_scene["presenterSide"] == "right"
 
 

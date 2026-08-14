@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Player, type PlayerRef } from "@remotion/player";
 import { Episode } from "video-renderer-src/episode/Episode";
 import type { EpisodeProps, PresenterScene, Scene, ScenePlan } from "video-renderer-src/episode/types";
-import { getAssets, getManifest, getMoments, getScenePlan, saveMoments } from "./api";
+import { getAssets, getCodeAssets, getManifest, getMoments, getScenePlan, saveMoments } from "./api";
 import { ActiveSceneBar } from "./ActiveSceneBar";
 import { ChapterStrip } from "./ChapterStrip";
 import { EditPlanChat } from "./EditPlanChat";
@@ -54,10 +54,11 @@ export function App() {
             getScenePlan(episodePath),
             getManifest(episodePath),
             getAssets(episodePath),
+            getCodeAssets(episodePath),
             getMoments(episodePath),
         ])
-            .then(([scenePlan, manifest, assets, momentsData]) => {
-                const baseProps = manifestToEpisodeBaseProps(manifest, assets);
+            .then(([scenePlan, manifest, assets, codeAssets, momentsData]) => {
+                const baseProps = manifestToEpisodeBaseProps(manifest, assets, codeAssets);
                 setEpisodeProps({ ...baseProps, scenePlan: scenePlan as ScenePlan });
                 // Defensive normalization for moments.json written by an
                 // older pipeline version — see momentDuration.ts. A no-op

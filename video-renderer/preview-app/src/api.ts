@@ -14,6 +14,10 @@ export const getScenePlan = (episodePath: string) => getArtifact(episodePath, "s
 export const getManifest = (episodePath: string) => getArtifact(episodePath, "manifest.json");
 export const getAssets = (episodePath: string) =>
     getArtifact(episodePath, "assets.json").then((data) => data.assets ?? []);
+export const getCodeAssets = (episodePath: string) =>
+    getArtifact(episodePath, "code_assets.json")
+        .then((data) => data.codeAssets ?? [])
+        .catch(() => []); // code_assets.json is optional — no code/ folder is a normal, common case
 export const getMoments = (episodePath: string) => getArtifact(episodePath, "moments.json");
 
 export async function saveMoments(episodePath: string, moments: unknown[]) {

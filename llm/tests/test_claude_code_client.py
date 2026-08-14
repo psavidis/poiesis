@@ -31,6 +31,50 @@ def test_complete_returns_result_text():
         assert kwargs["input"] == "say hi"
 
 
+def test_complete_passes_effort_high_when_thinking_is_true():
+    # Regression: thinking was previously accepted by complete()/
+    # complete_json() but never actually passed to the CLI at all — every
+    # call ran at the CLI's own default effort regardless of the flag.
+    with patch("llm.claude_code_client.subprocess.run") as mock_run:
+        mock_run.return_value = _mock_cli_result({"is_error": False, "result": "hello"})
+
+        from llm.claude_code_client import ClaudeCodeClient
+
+        client = ClaudeCodeClient("sonnet")
+        client.complete("say hi", thinking=True)
+
+        command = mock_run.call_args.args[0]
+        assert "--effort" in command
+        assert command[command.index("--effort") + 1] == "high"
+
+
+def test_complete_omits_effort_flag_when_thinking_is_false():
+    with patch("llm.claude_code_client.subprocess.run") as mock_run:
+        mock_run.return_value = _mock_cli_result({"is_error": False, "result": "hello"})
+
+        from llm.claude_code_client import ClaudeCodeClient
+
+        client = ClaudeCodeClient("sonnet")
+        client.complete("say hi", thinking=False)
+
+        command = mock_run.call_args.args[0]
+        assert "--effort" not in command
+
+
+def test_complete_json_passes_effort_high_when_thinking_is_true():
+    with patch("llm.claude_code_client.subprocess.run") as mock_run:
+        mock_run.return_value = _mock_cli_result({"is_error": False, "result": '{"status": "ok"}'})
+
+        from llm.claude_code_client import ClaudeCodeClient
+
+        client = ClaudeCodeClient("sonnet")
+        client.complete_json("analyze this", thinking=True)
+
+        command = mock_run.call_args.args[0]
+        assert "--effort" in command
+        assert command[command.index("--effort") + 1] == "high"
+
+
 def test_complete_json_parses_plain_json():
     with patch("llm.claude_code_client.subprocess.run") as mock_run:
         mock_run.return_value = _mock_cli_result(
