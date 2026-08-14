@@ -4,8 +4,10 @@ import { Episode } from "video-renderer-src/episode/Episode";
 import type { EpisodeProps, PresenterScene, Scene, ScenePlan } from "video-renderer-src/episode/types";
 import { getAssets, getManifest, getMoments, getScenePlan, saveMoments } from "./api";
 import { ActiveSceneBar } from "./ActiveSceneBar";
+import { ChapterStrip } from "./ChapterStrip";
 import { EditPlanChat } from "./EditPlanChat";
 import { manifestToEpisodeBaseProps } from "./episodeProps";
+import { normalizeMoment } from "./momentDuration";
 import { OverlayStrip, type EditableOverlay } from "./OverlayStrip";
 
 function useQueryParams() {
@@ -57,7 +59,12 @@ export function App() {
             .then(([scenePlan, manifest, assets, momentsData]) => {
                 const baseProps = manifestToEpisodeBaseProps(manifest, assets);
                 setEpisodeProps({ ...baseProps, scenePlan: scenePlan as ScenePlan });
-                setMoments(momentsData);
+                // Defensive normalization for moments.json written by an
+                // older pipeline version — see momentDuration.ts. A no-op
+                // for anything the current pipeline wrote.
+                setMoments({
+                    moments: (momentsData?.moments ?? []).map(normalizeMoment),
+                });
             })
             .catch((e) => {
                 // A raw network failure (browser's generic "Failed to
@@ -146,6 +153,9 @@ export function App() {
     const editableOverlays: EditableOverlay[] = useMemo(() => {
         if (!moments || !sceneId) return [];
 
+        // moments state is already normalized (see the fetch effect above)
+        // — maxDurationInParentFrames here is the real, currently-editable
+        // duration, not the raw window ceiling.
         return moments.moments
             .filter((m: any) => m.sceneId === sceneId)
             .map((m: any) => ({ kind: "moment" as const, data: m }));
@@ -200,6 +210,15 @@ export function App() {
     // OverlayStrip/save UI competing for space below it.
     const playerWrapStyle = sceneId ? styles.playerWrap : styles.playerWrapFullEpisode;
 
+    const totalFrames = Math.max(
+        1,
+        episodeProps.scenePlan.scenes.reduce(
+            (total, s) =>
+                "timelineStartFrame" in s ? Math.max(total, s.timelineStartFrame + s.durationInFrames) : total,
+            0
+        )
+    );
+
     return (
         <div style={styles.container}>
             <div style={styles.brandBanner}>
@@ -212,16 +231,7 @@ export function App() {
                     ref={playerRef}
                     component={Episode as any}
                     inputProps={playerProps}
-                    durationInFrames={Math.max(
-                        1,
-                        episodeProps.scenePlan.scenes.reduce(
-                            (total, s) =>
-                                "timelineStartFrame" in s
-                                    ? Math.max(total, s.timelineStartFrame + s.durationInFrames)
-                                    : total,
-                            0
-                        )
-                    )}
+                    durationInFrames={totalFrames}
                     compositionWidth={episodeProps.width}
                     compositionHeight={episodeProps.height}
                     fps={episodeProps.fps}
@@ -241,6 +251,18 @@ export function App() {
                     }
                 />
             </div>
+
+            {!parentScene && (
+                <div style={playerWrapStyle}>
+                    <ChapterStrip
+                        scenePlan={episodeProps.scenePlan}
+                        totalFrames={totalFrames}
+                        currentFrame={currentFrame}
+                        fps={episodeProps.fps}
+                        onSeek={seekToAbsoluteFrame}
+                    />
+                </div>
+            )}
 
             <div style={playerWrapStyle}>
                 <label style={styles.checkboxRow}>
@@ -267,6 +289,7 @@ export function App() {
                     overlays={editableOverlays}
                     onChange={updateOverlay}
                     onSeek={seekToAbsoluteFrame}
+                    currentFrame={currentFrame}
                 />
             )}
 

@@ -1,0 +1,26 @@
+// pipeline/generate_moments.py's propose_moments() now clamps
+// maxDurationInParentFrames down to the real rendered duration
+// (min(the treatment's fixed length, the eligible window's ceiling)) once,
+// right before writing moments.json — so for any moment written by the
+// current pipeline, maxDurationInParentFrames already IS the real,
+// human-editable duration, no client-side re-derivation needed.
+//
+// This file exists only as a defensive normalizer for moments.json files
+// written by an older version of the pipeline (before that clamp existed),
+// where maxDurationInParentFrames could still be the much larger raw
+// window ceiling. Applied once, right after fetch (see App.tsx) — a
+// moment that's already clamped is left untouched (min() is a no-op).
+const TREATMENT_DURATION_FRAMES: Record<string, number> = {
+    "bottom-callout": 90,
+    "side-text": 150,
+    "side-image": 150,
+};
+
+export function normalizeMoment<T extends { treatment: string; maxDurationInParentFrames: number }>(raw: T): T {
+    const fixed = TREATMENT_DURATION_FRAMES[raw.treatment] ?? raw.maxDurationInParentFrames;
+
+    return {
+        ...raw,
+        maxDurationInParentFrames: Math.min(fixed, raw.maxDurationInParentFrames),
+    };
+}

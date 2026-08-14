@@ -132,6 +132,92 @@ def test_propose_moments_accepts_grounded_bottom_callout():
     assert proposals[0]["presenterSide"] is None
 
 
+def test_propose_moments_clamps_max_duration_to_the_real_rendered_duration():
+    # regression: a proposal's maxDurationInParentFrames used to be left as
+    # the raw eligible-window ceiling (here, 900 - 540 = 360 frames — the
+    # scene's remaining room after the 18s monotony threshold), not the
+    # real ~90-frame bottom-callout duration that actually renders. Human
+    # edits via the preview app's drag-to-resize read/write this same
+    # field, so leaving it un-clamped meant the UI showed a wildly
+    # oversized block and any edit to it was silently discarded by
+    # merge_moment_scenes' own re-clamp on save.
+    llm = _FakeLLMClient(
+        {
+            "moments": [
+                {
+                    "windowId": "w0",
+                    "treatment": "bottom-callout",
+                    "text": "the important key idea",
+                    "reason": "central point",
+                }
+            ]
+        }
+    )
+
+    proposals = propose_moments(
+        _scene_plan_with_one_long_scene(),
+        _transcript_with_late_segment(),
+        _manifest_single_video(),
+        _no_assets(),
+        llm,
+        "{windows}{assets}",
+    )
+
+    assert len(proposals) == 1
+    assert proposals[0]["maxDurationInParentFrames"] == 90
+
+
+def test_propose_moments_max_duration_stays_below_a_narrow_window_ceiling():
+    # when the eligible window's own ceiling is narrower than the
+    # treatment's fixed length, the clamp must not WIDEN it back up —
+    # min() of the two, not just "always use the fixed length."
+    scene_plan = {
+        "fps": 30,
+        "scenes": [
+            {
+                "type": "presenter",
+                "id": "scene-001",
+                "videoId": "001",
+                "timelineStartFrame": 0,
+                "durationInFrames": 560,  # only 20 frames of room past the 18s (540f) threshold
+                "sourceStartFrame": 0,
+                "sourceEndFrame": 560,
+            }
+        ],
+    }
+    transcript = {
+        "segments": [
+            # falls within the eligible window ([540, 560) frames = [18.0s, 18.67s))
+            {"source": "a.mp4", "start": 18.1, "end": 18.4, "text": "the important key idea"},
+        ]
+    }
+
+    llm = _FakeLLMClient(
+        {
+            "moments": [
+                {
+                    "windowId": "w0",
+                    "treatment": "bottom-callout",
+                    "text": "the important key idea",
+                    "reason": "central point",
+                }
+            ]
+        }
+    )
+
+    proposals = propose_moments(
+        scene_plan,
+        transcript,
+        _manifest_single_video(),
+        _no_assets(),
+        llm,
+        "{windows}{assets}",
+    )
+
+    assert len(proposals) == 1
+    assert proposals[0]["maxDurationInParentFrames"] == 20
+
+
 def test_propose_moments_rejects_ungrounded_bottom_callout():
     llm = _FakeLLMClient(
         {
@@ -485,7 +571,12 @@ def test_merge_moment_scenes_inserts_overlay_with_presenter_side():
     assert moment_scene["presenterSide"] == "left"
     assert moment_scene["parentSceneId"] == "scene-001"
     assert moment_scene["offsetInParentFrames"] == 500
-    assert moment_scene["durationInFrames"] == 150
+    # merge_moment_scenes trusts maxDurationInParentFrames directly (it no
+    # longer re-derives via duration_for_treatment) — propose_moments is
+    # what clamps it to the treatment's real length, once, before this ever
+    # runs. This proposal's 400 is what a human-edited moments.json would
+    # look like after dragging a moment longer than its default.
+    assert moment_scene["durationInFrames"] == 400
 
 
 def test_merge_moment_scenes_clamps_duration_to_window_end():
@@ -508,7 +599,11 @@ def test_merge_moment_scenes_clamps_duration_to_window_end():
             "sceneId": "scene-001",
             "videoId": "001",
             "offsetInParentFrames": 850,
-            "maxDurationInParentFrames": 50,  # less than default 90 for bottom-callout
+            # merge_moment_scenes trusts this directly now (no re-derivation
+            # via duration_for_treatment) — this value stands in for what
+            # propose_moments would have already clamped a narrow window
+            # down to, below bottom-callout's own default of 90.
+            "maxDurationInParentFrames": 50,
             "treatment": "bottom-callout",
             "text": "key phrase",
             "presenterSide": None,

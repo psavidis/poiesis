@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { PresenterScene } from "video-renderer-src/episode/types";
 
 export type EditableOverlay =
@@ -16,57 +16,29 @@ interface Props {
     // player share one coordinate space so "drag to X" and "player shows X"
     // are the same number instead of two independently-scaled percentages.
     onSeek: (absoluteFrame: number) => void;
+    // The player's current frame (absolute), so the strip can draw a
+    // playhead line in sync with what's actually on screen — the whole
+    // point of showing this strip at all is to answer "where does this
+    // overlay sit relative to the video," and a playhead is what makes
+    // that legible at a glance instead of only while actively dragging.
+    currentFrame: number;
 }
 
-const MIN_ZOOM_FRAMES = 30; // ~1s at 30fps — narrowest window
-const MAX_ZOOM_FRAMES_FALLBACK = 900; // ~30s fallback ceiling when a scene is very long
-const DEFAULT_ZOOM_FRAMES = 150; // ~5s at 30fps
-
-// A single-row strip anchored to one presenter scene, showing a zoomed-in
-// frame window (not the whole clip at fixed scale) so drag precision doesn't
-// degrade on long clips and a short overlay doesn't collapse to a sliver.
-// Deliberately not a multi-track timeline (CLAUDE.md's non-goal): this only
-// ever shows one presenter scene at a time, and only overlay timing is
-// interactive — clip order/cuts aren't touched here.
-export function OverlayStrip({ parentScene, overlays, onChange, onSeek }: Props) {
+// The strip always shows the FULL parent scene at once — no zoom window.
+// An earlier version defaulted to a ~5s zoomed window with pan/scroll,
+// which made a block impossible to place accurately (small movements were
+// huge frame deltas once zoomed out) and gave no sense of where the
+// overlay sat in the scene unless you happened to be scrolled to it.
+// Showing the whole scene means the block is always sized proportionally
+// to the real clip, and a click/drag anywhere on the track scrubs the
+// player live, so the video is always visible feedback for wherever the
+// cursor currently is — not just a frame-number readout.
+export function OverlayStrip({ parentScene, overlays, onChange, onSeek, currentFrame }: Props) {
     const trackRef = useRef<HTMLDivElement>(null);
     const parentDuration = parentScene.durationInFrames;
     const parentStart = parentScene.timelineStartFrame;
 
-    const maxZoomFrames = Math.min(parentDuration, MAX_ZOOM_FRAMES_FALLBACK);
-
-    const [zoomFrames, setZoomFrames] = useState(
-        Math.min(DEFAULT_ZOOM_FRAMES, maxZoomFrames)
-    );
-
-    // Window is expressed as absolute composition frames, centered on the
-    // first overlay initially, then only moved by explicit user action
-    // (drag-near-edge auto-scroll, or the pan/zoom controls) — never
-    // silently recentered on every render, which would fight the user's
-    // own scrolling.
-    const initialCenter =
-        parentStart +
-        (overlays[0] ? overlays[0].data.offsetInParentFrames : Math.floor(parentDuration / 2));
-
-    const [windowStart, setWindowStart] = useState(
-        clamp(
-            initialCenter - Math.floor(zoomFrames / 2),
-            parentStart,
-            parentStart + Math.max(0, parentDuration - zoomFrames)
-        )
-    );
-
-    const clampWindowStart = (start: number, zoom: number) =>
-        clamp(start, parentStart, parentStart + Math.max(0, parentDuration - zoom));
-
-    const setZoom = (nextZoomFrames: number) => {
-        const clampedZoom = clamp(nextZoomFrames, MIN_ZOOM_FRAMES, maxZoomFrames);
-        // Keep the current window's center fixed while zooming, rather than
-        // jumping back to frame 0 of the scene.
-        const center = windowStart + zoomFrames / 2;
-        setZoomFrames(clampedZoom);
-        setWindowStart(clampWindowStart(Math.round(center - clampedZoom / 2), clampedZoom));
-    };
+    const framesPerPixel = (trackWidthPx: number) => parentDuration / trackWidthPx;
 
     const [dragging, setDragging] = useState<{
         overlay: EditableOverlay;
@@ -77,8 +49,6 @@ export function OverlayStrip({ parentScene, overlays, onChange, onSeek }: Props)
         liveOffset: number;
         liveDuration: number;
     } | null>(null);
-
-    const framesPerPixel = (trackWidthPx: number) => zoomFrames / trackWidthPx;
 
     const startDrag = (e: React.MouseEvent, overlay: EditableOverlay, mode: DragMode) => {
         e.preventDefault();
@@ -108,16 +78,6 @@ export function OverlayStrip({ parentScene, overlays, onChange, onSeek }: Props)
             const fpp = framesPerPixel(rect.width);
             const deltaFrames = Math.round((e.clientX - dragging.startX) * fpp);
 
-            // Auto-scroll the window when the cursor nears either edge of
-            // the track, so a drag isn't capped at whatever the current
-            // zoom window happens to show.
-            const edgeMargin = rect.width * 0.1;
-            if (e.clientX < rect.left + edgeMargin) {
-                setWindowStart((prev) => clampWindowStart(prev - Math.round(zoomFrames * 0.05), zoomFrames));
-            } else if (e.clientX > rect.right - edgeMargin) {
-                setWindowStart((prev) => clampWindowStart(prev + Math.round(zoomFrames * 0.05), zoomFrames));
-            }
-
             if (dragging.mode === "move") {
                 const maxOffset = Math.max(0, parentDuration - dragging.startDuration);
                 const newOffset = clamp(dragging.startOffset + deltaFrames, 0, maxOffset);
@@ -131,6 +91,14 @@ export function OverlayStrip({ parentScene, overlays, onChange, onSeek }: Props)
 
                 onSeek(parentStart + newOffset);
             } else {
+                // Capped by how much of the scene is left from this
+                // moment's own start — generate_moments.py's propose_moments
+                // now clamps maxDurationInParentFrames to the real rendered
+                // duration before it's ever written to moments.json (see
+                // momentDuration.ts), so this field is always the moment's
+                // actual editable duration, not a separate "window ceiling"
+                // needing its own tracking — a human can freely lengthen it
+                // up to the end of the parent scene.
                 const maxDuration = Math.max(1, parentDuration - dragging.startOffset);
                 const newDuration = clamp(dragging.startDuration + deltaFrames, 1, maxDuration);
 
@@ -140,6 +108,11 @@ export function OverlayStrip({ parentScene, overlays, onChange, onSeek }: Props)
                     ...dragging.overlay,
                     data: { ...dragging.overlay.data, maxDurationInParentFrames: newDuration },
                 } as EditableOverlay);
+
+                // Live-seek to the edge being dragged during a resize too —
+                // previously only "move" scrubbed the player, so resizing
+                // gave no visual feedback of where the new endpoint landed.
+                onSeek(parentStart + dragging.startOffset + newDuration);
             }
         };
 
@@ -153,52 +126,50 @@ export function OverlayStrip({ parentScene, overlays, onChange, onSeek }: Props)
             window.removeEventListener("mouseup", onMouseUp);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [dragging, zoomFrames]);
+    }, [dragging]);
+
+    // Clicking (not on a block/handle) anywhere on the track seeks the
+    // player there directly — the fastest way to answer "what's at this
+    // point in the clip" without needing an overlay to drag in the first
+    // place.
+    const onTrackClick = (e: React.MouseEvent) => {
+        if (dragging || !trackRef.current) return;
+
+        const rect = trackRef.current.getBoundingClientRect();
+        const frameInScene = clamp(
+            Math.round((e.clientX - rect.left) * framesPerPixel(rect.width)),
+            0,
+            parentDuration - 1
+        );
+
+        onSeek(parentStart + frameInScene);
+    };
 
     const fps = 30; // presenter scenes are authored at the episode fps; frames-to-seconds is display-only here
 
-    const ticks = useMemo(() => {
-        const tickCount = 6;
-        const step = zoomFrames / tickCount;
-        return Array.from({ length: tickCount + 1 }, (_, i) => Math.round(i * step));
-    }, [zoomFrames]);
+    const tickCount = 8;
+    const ticks = Array.from({ length: tickCount + 1 }, (_, i) => Math.round((parentDuration / tickCount) * i));
+
+    const playheadFrameInScene = clamp(currentFrame - parentStart, 0, parentDuration);
+    const playheadLeftPct = (playheadFrameInScene / parentDuration) * 100;
 
     return (
         <div style={styles.wrap}>
             <div style={styles.headerRow}>
                 <div style={styles.label}>
-                    {parentScene.id} — showing {formatFrames(zoomFrames, fps)} window of{" "}
-                    {formatFrames(parentDuration, fps)} total
-                </div>
-                <div style={styles.zoomControls}>
-                    <button
-                        style={styles.zoomBtn}
-                        onClick={() => setZoom(zoomFrames * 1.6)}
-                        disabled={zoomFrames >= maxZoomFrames}
-                        title="Zoom out"
-                    >
-                        −
-                    </button>
-                    <button
-                        style={styles.zoomBtn}
-                        onClick={() => setZoom(zoomFrames / 1.6)}
-                        disabled={zoomFrames <= MIN_ZOOM_FRAMES}
-                        title="Zoom in"
-                    >
-                        +
-                    </button>
+                    {parentScene.id} — full clip, {formatFrames(parentDuration, fps)}
                 </div>
             </div>
 
             <div style={styles.ruler}>
                 {ticks.map((t) => (
                     <span key={t} style={styles.tick}>
-                        {formatFrames(windowStart - parentStart + t, fps)}
+                        {formatFrames(t, fps)}
                     </span>
                 ))}
             </div>
 
-            <div ref={trackRef} style={styles.track}>
+            <div ref={trackRef} style={styles.track} onMouseDown={onTrackClick}>
                 {overlays.map((overlay) => {
                     const isDragging = dragging?.overlay.data.windowId === overlay.data.windowId;
                     const offset = isDragging ? dragging!.liveOffset : overlay.data.offsetInParentFrames;
@@ -206,13 +177,14 @@ export function OverlayStrip({ parentScene, overlays, onChange, onSeek }: Props)
                         ? dragging!.liveDuration
                         : overlay.data.maxDurationInParentFrames;
 
-                    const absoluteStart = parentStart + offset;
-                    const leftPct = ((absoluteStart - windowStart) / zoomFrames) * 100;
-                    const widthPct = (duration / zoomFrames) * 100;
-
-                    // Skip rendering blocks fully outside the current window
-                    // instead of drawing them off-canvas indefinitely.
-                    if (leftPct + widthPct < 0 || leftPct > 100) return null;
+                    const leftPct = (offset / parentDuration) * 100;
+                    // A block is given a visible minimum width so it's
+                    // always a real drag target even for a short overlay in
+                    // a long clip — previously (zoomed-window mode) this
+                    // wasn't needed since zooming in already enlarged short
+                    // overlays, but at full-scene width a 90-frame moment in
+                    // a 3000-frame scene would otherwise be a 3%-wide sliver.
+                    const widthPct = Math.max((duration / parentDuration) * 100, 6);
 
                     const isMomentImage =
                         overlay.kind === "moment" && overlay.data.treatment === "side-image";
@@ -256,13 +228,15 @@ export function OverlayStrip({ parentScene, overlays, onChange, onSeek }: Props)
                         </div>
                     );
                 })}
+
+                <div style={{ ...styles.playhead, left: `${playheadLeftPct}%` }} />
             </div>
 
             <div style={styles.hint}>
                 Drag a block to change when it appears, drag its right edge to change how long it
-                shows — the player above stays on the same frame you're pointing at. Use +/− to
-                zoom the window; drag near either edge to scroll further. Values are frames
-                relative to the start of {parentScene.id}.
+                shows, or click anywhere on the track to jump the player there — the vertical line
+                always shows where the player currently is in {parentScene.id}. Values are frames
+                relative to the start of the clip.
             </div>
         </div>
     );
@@ -292,23 +266,6 @@ const styles: Record<string, React.CSSProperties> = {
         fontSize: 12,
         color: "#9aa7b4",
     },
-    zoomControls: {
-        display: "flex",
-        gap: 4,
-    },
-    zoomBtn: {
-        width: 24,
-        height: 24,
-        padding: 0,
-        lineHeight: 1,
-        fontSize: 15,
-        fontWeight: 700,
-        background: "#1c242d",
-        border: "1px solid #2a333d",
-        borderRadius: 4,
-        color: "#e8edf2",
-        cursor: "pointer",
-    },
     ruler: {
         display: "flex",
         justifyContent: "space-between",
@@ -321,12 +278,13 @@ const styles: Record<string, React.CSSProperties> = {
     },
     track: {
         position: "relative",
-        height: 56,
+        height: 72,
         background: "#161d24",
         border: "1px solid #2a333d",
         borderRadius: 6,
         userSelect: "none",
         overflow: "hidden",
+        cursor: "pointer",
     },
     block: {
         position: "absolute",
@@ -341,6 +299,7 @@ const styles: Record<string, React.CSSProperties> = {
         fontSize: 12,
         overflow: "visible",
         whiteSpace: "nowrap",
+        boxShadow: "0 0 0 1px rgba(0,0,0,0.3)",
     },
     blockLabel: {
         overflow: "hidden",
@@ -351,9 +310,9 @@ const styles: Record<string, React.CSSProperties> = {
         right: 0,
         top: 0,
         bottom: 0,
-        width: 8,
+        width: 12,
         cursor: "ew-resize",
-        background: "rgba(255,255,255,0.25)",
+        background: "rgba(255,255,255,0.3)",
     },
     readout: {
         position: "absolute",
@@ -367,7 +326,17 @@ const styles: Record<string, React.CSSProperties> = {
         fontSize: 11,
         color: "#e8edf2",
         whiteSpace: "nowrap",
+        zIndex: 2,
+    },
+    playhead: {
+        position: "absolute",
+        top: 0,
+        bottom: 0,
+        width: 2,
+        background: "#ff5a3c",
+        pointerEvents: "none",
         zIndex: 1,
+        boxShadow: "0 0 4px rgba(255,90,60,0.8)",
     },
     hint: {
         fontSize: 12,

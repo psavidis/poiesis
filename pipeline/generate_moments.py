@@ -308,7 +308,28 @@ def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, pr
 
     proposals = proposals[:max_moments]
 
-    return dedupe_overlapping_windows(proposals)
+    proposals = dedupe_overlapping_windows(proposals)
+
+    # Clamp maxDurationInParentFrames down to the real rendered duration
+    # (what merge_moment_scenes will actually use) right here, once, before
+    # this ever reaches moments.json — not left for merge_moment_scenes to
+    # re-derive on every call. merge_moment_scenes is also called on a
+    # human-edited save (ui/server.py's update_moments) and on every
+    # analyze_scenes.py re-run, both of which re-merge whatever duration is
+    # already sitting in moments.json; if that field still held the raw
+    # eligible-window ceiling instead of the real duration, either of those
+    # re-merges would silently re-derive (and thus be unable to change) the
+    # duration a human explicitly set via the preview app's drag-to-resize.
+    # Clamping once here means maxDurationInParentFrames means exactly what
+    # it will render as everywhere downstream, and a human edit to it always
+    # sticks.
+    for proposal in proposals:
+        proposal["maxDurationInParentFrames"] = min(
+            duration_for_treatment(proposal["treatment"]),
+            proposal["maxDurationInParentFrames"]
+        )
+
+    return proposals
 
 
 def dedupe_overlapping_windows(proposals):
@@ -374,10 +395,18 @@ def merge_moment_scenes(scene_plan, proposals):
 
         offset = proposal["offsetInParentFrames"]
 
-        duration = min(
-            duration_for_treatment(proposal["treatment"]),
-            proposal["maxDurationInParentFrames"]
-        )
+        # maxDurationInParentFrames is already the real, final duration by
+        # the time it reaches this function — propose_moments() clamps it
+        # to min(the treatment's fixed length, the eligible window's
+        # ceiling) once, right after the AI proposes it, specifically so
+        # this merge step (and the human-edit save path in
+        # ui/server.py's update_moments, which calls merge_moment_scenes
+        # directly on whatever's in moments.json) never needs to re-derive
+        # it. Re-deriving here via duration_for_treatment(...) would
+        # silently discard a human's drag-to-lengthen edit on every save,
+        # since a human-lengthened duration is by definition ABOVE the
+        # treatment's own fixed default.
+        duration = proposal["maxDurationInParentFrames"]
 
         if duration <= 0:
             continue
