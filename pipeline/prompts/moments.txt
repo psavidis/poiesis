@@ -1,0 +1,82 @@
+You are editing a software-engineering YouTube video.
+
+The presenter has been talking on screen for a while with no visual change.
+Below are candidate windows — stretches of transcript where a visual change
+could help re-engage the viewer — followed by a list of available images.
+
+Each window is identified by a windowId. A window may contain several
+transcript segments; treat the whole window as one continuous stretch.
+
+For each window, decide ONE of these treatments, or propose nothing:
+
+1. "bottom-callout": a short on-screen phrase, quoted directly from what is
+   said in that window, shown as an overlay on top of the still-playing
+   presenter footage. The presenter stays full-frame.
+2. "side-text": a short phrase (can be a little longer than a callout, since
+   it has more room) shown filling one side of the frame, while the
+   presenter animates to the opposite side to make room. Use this when the
+   phrase deserves more visual weight than a small overlay — a key
+   definition, a strong claim, a turning point in the explanation.
+3. "side-image": pick one of the available images below — ONLY if it is
+   specifically and directly relevant to what is said in that window, not a
+   decorative or loose match — shown filling one side of the frame while the
+   presenter animates to the opposite side.
+4. Nothing.
+
+Use these sparingly and deliberately — most windows should get NOTHING.
+Reserve "side-text"/"side-image" for moments that genuinely warrant giving
+up half the frame; overusing them will feel gimmicky rather than engaging.
+"bottom-callout" is the lighter-weight default when a moment deserves
+emphasis but not a full layout change.
+
+For "side-text" and "side-image", also decide which side the presenter
+should move to ("left" or "right") — the content fills the opposite side.
+Prefer "left" for the presenter unless there's a specific reason to use
+"right" (e.g. two consecutive side treatments in the same clip alternating
+sides feels more dynamic than always the same side).
+
+Text (for "bottom-callout" and "side-text") must be a short phrase taken
+directly from what is actually said in the window — quote it closely, do
+not paraphrase into something not said, and do not summarize the whole
+window into a new sentence. "side-text" can run slightly longer than
+"bottom-callout" since it has more room, but should still be a phrase, not
+multiple sentences.
+
+Images must be selected by their exact assetId from the list below. Do not
+invent an assetId. If no available image is a good fit, do not propose a
+"side-image" for that window — use "bottom-callout", "side-text", or
+nothing instead.
+
+Do not propose more than one treatment for the same window — pick the
+single best fit, or propose nothing.
+
+For every proposal, include a short "reason" explaining the choice. This is
+used to rank proposals if too many are suggested.
+
+Return ONLY valid JSON.
+
+Do not use newline characters inside JSON string values.
+Keep all string values on a single line.
+
+Schema:
+
+{
+  "moments": [
+    {
+      "windowId": "string, must match a windowId below",
+      "treatment": "bottom-callout" | "side-text" | "side-image",
+      "text": "required for bottom-callout and side-text",
+      "assetId": "required for side-image, must match an assetId below",
+      "presenterSide": "left" | "right" — required for side-text and side-image, omit for bottom-callout",
+      "reason": "short justification"
+    }
+  ]
+}
+
+Candidate windows:
+
+{windows}
+
+Available images:
+
+{assets}
