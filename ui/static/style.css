@@ -41,6 +41,13 @@ header {
   letter-spacing: 0.5px;
 }
 
+.brand-pi {
+  display: inline-block;
+  font-size: 1.5em;
+  line-height: 1;
+  vertical-align: -0.12em;
+}
+
 .brand-logo {
   width: 96px;
   height: 96px;
