@@ -77,14 +77,15 @@ export const BottomCallout = ({ text }: { text: string }) => {
 
 // Shared positioning for the "content fills whichever side the presenter
 // isn't occupying" treatments. presenterOnLeft mirrors the content to the
-// opposite side, matching Episode.tsx's LAYOUT_GEOMETRY split (presenter at
-// ~55% width from one edge, content in the remaining ~45%).
+// opposite side, matching Episode.tsx's LAYOUT_GEOMETRY split (presenter
+// stays at full on-screen scale in a 72%-wide window, content in the
+// remaining 28%).
 const sideContentStyle = (presenterOnLeft: boolean): React.CSSProperties => ({
     position: "absolute",
     top: 0,
     bottom: 0,
     [presenterOnLeft ? "right" : "left"]: 0,
-    width: "45%",
+    width: "28%",
     display: "flex",
     flexDirection: "column",
     alignItems: "center",

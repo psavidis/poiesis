@@ -18,13 +18,20 @@ import { BottomCallout, SideImage, SideText } from "./MomentTreatments";
 
 // Frame geometry for each layout, as a fraction of the full frame. "left"/
 // "right" leave the opposite side free for a moment's side-text/side-image
-// treatment. Widened slightly past a literal half so the presenter doesn't
-// feel cramped — matches SideText/SideImage's own content width in
-// MomentTreatments.tsx, which assume this same split.
+// treatment. The presenter box stays wide (72%) rather than a literal half
+// — objectFit stays "cover" at the same scale as center (see
+// AnimatedPresenterFrame), so the presenter never shrinks when moving to a
+// side. A narrower box would force either shrinking the presenter to fit
+// (feels wrong — the whole point of the slide is to free up room, not
+// visually diminish the presenter) or cropping at the box edges tight
+// enough to regularly clip gesturing arms/hands. 72% only crops the far
+// background at the box edge, not the presenter's own motion range for
+// ordinary talking-head gesturing. MomentTreatments.tsx's SideText/SideImage
+// use the matching 28% remaining width.
 const LAYOUT_GEOMETRY: Record<PresenterLayout, { widthPct: number; leftPct: number }> = {
     center: { widthPct: 100, leftPct: 0 },
-    left: { widthPct: 55, leftPct: 0 },
-    right: { widthPct: 55, leftPct: 45 },
+    left: { widthPct: 72, leftPct: 0 },
+    right: { widthPct: 72, leftPct: 28 },
 };
 
 const TRANSITION_FRAMES = 24;
@@ -128,6 +135,32 @@ const AnimatedPresenterFrame = ({
         );
     }
 
+    // The video itself always renders at the composition's full 1920x1080
+    // size and crop (cover against 100%/100%) — the presenter's on-screen
+    // scale never changes between center and a side layout. Only the
+    // visible *window* onto that fixed-scale video narrows (via the outer
+    // div's overflow: hidden + width), and the video is shifted left/right
+    // inside that window so the presenter (who was framed centered in the
+    // original shot) stays centered in whatever window is currently
+    // visible, rather than shifting the video's own crop/zoom to fit a
+    // narrower box (which is what made the presenter appear to shrink).
+    //
+    // outerLeftPct/outerWidthPct: the visible clipping window, as a
+    // fraction of the full composition — same as leftPct/widthPct above.
+    //
+    // The inner video div is rendered at (100/outerWidthPct)*100% of the
+    // window's own width, so at 100% scale relative to the composition —
+    // i.e. video position 0%/100% (its own left/right edges) map to
+    // composition position 0%/100%, regardless of how narrow the window
+    // is. videoShiftPct positions that div (in window-relative %) so
+    // composition position 50% (where the presenter is framed) lands at
+    // the window's own horizontal center, keeping the presenter visually
+    // centered in whatever window is currently visible.
+    const outerLeftPct = leftPct;
+    const outerWidthPct = widthPct;
+    const videoDivWidthPct = outerWidthPct === 0 ? 100 : (100 / outerWidthPct) * 100;
+    const videoShiftPct = 50 - (videoDivWidthPct / 2);
+
     return (
         <AbsoluteFill>
             <div
@@ -135,22 +168,33 @@ const AnimatedPresenterFrame = ({
                     position: "absolute",
                     top: 0,
                     bottom: 0,
-                    left: `${leftPct}%`,
-                    width: `${widthPct}%`,
+                    left: `${outerLeftPct}%`,
+                    width: `${outerWidthPct}%`,
+                    overflow: "hidden",
                 }}
             >
-                <OffthreadVideo
-                    src={staticFile(video.keyedPath ?? video.path)}
-                    trimBefore={scene.sourceStartFrame}
-                    trimAfter={scene.sourceEndFrame}
-                    transparent={Boolean(video.keyedPath)}
-                    muted
+                <div
                     style={{
-                        width: "100%",
-                        height: "100%",
-                        objectFit: "cover",
+                        position: "absolute",
+                        top: 0,
+                        bottom: 0,
+                        left: `${videoShiftPct}%`,
+                        width: `${videoDivWidthPct}%`,
                     }}
-                />
+                >
+                    <OffthreadVideo
+                        src={staticFile(video.keyedPath ?? video.path)}
+                        trimBefore={scene.sourceStartFrame}
+                        trimAfter={scene.sourceEndFrame}
+                        transparent={Boolean(video.keyedPath)}
+                        muted
+                        style={{
+                            width: "100%",
+                            height: "100%",
+                            objectFit: "cover",
+                        }}
+                    />
+                </div>
             </div>
             <Audio
                 src={staticFile(video.path)}
