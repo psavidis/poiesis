@@ -14,14 +14,6 @@ from generate_title_scenes import write_json_atomic  # noqa: E402
 from generate_visual_scenes import _insert_overlay_scene  # noqa: E402
 
 
-# Whisper's segments are sentence/multi-sentence length (no word-level
-# timing exists anywhere in this pipeline), so a single segment can run well
-# past what's comfortably readable as one on-screen caption. Cap how long
-# any single caption block stays up rather than pretending word-level
-# splitting is possible without data that doesn't exist.
-MAX_CAPTION_DURATION_FRAMES = 180  # 6s at 30fps
-
-
 def load_json(path: Path):
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
@@ -64,7 +56,14 @@ def captions_for_presenter_scene(scene, transcript, fps):
         if clipped_end <= clipped_start:
             continue
 
-        duration = min(clipped_end - clipped_start, MAX_CAPTION_DURATION_FRAMES)
+        # No cap: the caption must stay on screen for the full segment it
+        # transcribes, however long that is. Capping this (an earlier
+        # version did, at 6s) while keeping the full segment text made the
+        # caption disappear mid-sentence — verified against real footage,
+        # where it hit 79% of captions in a real episode. A caption sitting
+        # still on a long sentence is a minor style issue; one that vanishes
+        # before the speaker finishes is a broken experience.
+        duration = clipped_end - clipped_start
 
         text = segment["text"].strip()
 

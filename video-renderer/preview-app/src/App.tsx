@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Player, type PlayerRef } from "@remotion/player";
 import { Episode } from "video-renderer-src/episode/Episode";
-import type { EpisodeProps, PresenterScene, ScenePlan } from "video-renderer-src/episode/types";
+import type { EpisodeProps, PresenterScene, Scene, ScenePlan } from "video-renderer-src/episode/types";
 import { getAssets, getManifest, getScenePlan, getVisualScenes, saveVisualScenes } from "./api";
+import { ActiveSceneBar } from "./ActiveSceneBar";
 import { EditPlanChat } from "./EditPlanChat";
 import { manifestToEpisodeBaseProps } from "./episodeProps";
 import { OverlayStrip, type EditableOverlay } from "./OverlayStrip";
@@ -24,6 +25,22 @@ export function App() {
     const [saveStatus, setSaveStatus] = useState("");
 
     const playerRef = useRef<PlayerRef>(null);
+    const [currentFrame, setCurrentFrame] = useState(0);
+
+    // Tracks the player's current frame so the UI can show which scene(s)
+    // are actually on screen right now — otherwise there's no way to know
+    // which scene id to reference in a natural-language edit instruction
+    // without opening scene-plan.json separately. frameupdate fires during
+    // both playback and scrubbing, so this stays live either way.
+    useEffect(() => {
+        const player = playerRef.current;
+        if (!player) return;
+
+        const onFrameUpdate = (e: { detail: { frame: number } }) => setCurrentFrame(e.detail.frame);
+
+        player.addEventListener("frameupdate", onFrameUpdate);
+        return () => player.removeEventListener("frameupdate", onFrameUpdate);
+    }, [episodeProps]);
 
     useEffect(() => {
         if (!episodePath) {
@@ -76,6 +93,35 @@ export function App() {
             (s): s is PresenterScene => s.type === "presenter" && s.id === sceneId
         );
     }, [episodeProps, sceneId]);
+
+    // What's actually on screen at currentFrame: exactly one track scene
+    // (presenter/title, absolute timelineStartFrame) plus zero or more
+    // overlay scenes (emphasis/caption/image) anchored to whichever
+    // presenter scene is active — so the id shown here is always something
+    // that can be typed straight into an edit-plan instruction ("shorten
+    // scene-caption-42") without having to open scene-plan.json to find it.
+    const activeScenes = useMemo(() => {
+        if (!episodeProps) return { track: undefined as Scene | undefined, overlays: [] as Scene[] };
+
+        const scenes = episodeProps.scenePlan.scenes;
+
+        const track = scenes.find(
+            (s): s is Scene & { timelineStartFrame: number; durationInFrames: number } =>
+                "timelineStartFrame" in s &&
+                currentFrame >= s.timelineStartFrame &&
+                currentFrame < s.timelineStartFrame + s.durationInFrames
+        );
+
+        if (!track) return { track: undefined, overlays: [] };
+
+        const overlays = scenes.filter((s): s is Scene & { parentSceneId: string; offsetInParentFrames: number; durationInFrames: number } => {
+            if (!("parentSceneId" in s) || s.parentSceneId !== track.id) return false;
+            const start = track.timelineStartFrame + s.offsetInParentFrames;
+            return currentFrame >= start && currentFrame < start + s.durationInFrames;
+        });
+
+        return { track, overlays };
+    }, [episodeProps, currentFrame]);
 
     const editableOverlays: EditableOverlay[] = useMemo(() => {
         if (!visualScenes || !sceneId) return [];
@@ -145,6 +191,11 @@ export function App() {
 
     return (
         <div style={styles.container}>
+            <div style={styles.brandBanner}>
+                <img src="/poiesis-logo.png" alt="" style={styles.brandLogo} />
+                <span style={styles.brandText}>Poiesis Preview</span>
+            </div>
+
             <div style={playerWrapStyle}>
                 <Player
                     ref={playerRef}
@@ -181,6 +232,10 @@ export function App() {
             </div>
 
             <div style={playerWrapStyle}>
+                <ActiveSceneBar track={activeScenes.track} overlays={activeScenes.overlays} />
+            </div>
+
+            <div style={playerWrapStyle}>
                 <EditPlanChat episodePath={episodePath} onApplied={reloadScenePlan} />
             </div>
 
@@ -211,6 +266,26 @@ const styles: Record<string, React.CSSProperties> = {
         display: "flex",
         flexDirection: "column",
         gap: 12,
+    },
+    brandBanner: {
+        display: "flex",
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 16,
+        padding: "20px 0",
+    },
+    brandLogo: {
+        width: 88,
+        height: 88,
+        borderRadius: 16,
+        objectFit: "cover",
+    },
+    brandText: {
+        fontSize: 26,
+        fontWeight: 700,
+        color: "#e8edf2",
+        letterSpacing: 0.3,
     },
     playerWrap: {
         width: "100%",

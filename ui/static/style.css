@@ -21,14 +21,31 @@ body {
 header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   padding: 16px 24px;
   border-bottom: 1px solid var(--border);
 }
 
-header h1 {
-  font-size: 20px;
+.brand-banner {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding: 32px 24px;
+}
+
+.brand-banner h1 {
+  font-size: 34px;
   margin: 0;
+  letter-spacing: 0.5px;
+}
+
+.brand-logo {
+  width: 96px;
+  height: 96px;
+  border-radius: 18px;
+  object-fit: cover;
 }
 
 .episode-picker {
@@ -53,6 +70,8 @@ button {
   border: none;
   border-radius: 6px;
   color: white;
+  font-family: inherit;
+  font-size: 14px;
   font-weight: 600;
   cursor: pointer;
 }
@@ -84,6 +103,8 @@ a.secondary {
   border: 1px solid var(--border);
   border-radius: 6px;
   color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
   font-weight: 600;
   text-decoration: none;
   cursor: pointer;

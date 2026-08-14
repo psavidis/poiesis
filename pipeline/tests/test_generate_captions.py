@@ -1,5 +1,4 @@
 from generate_captions import (
-    MAX_CAPTION_DURATION_FRAMES,
     captions_for_presenter_scene,
     merge_caption_scenes,
 )
@@ -70,7 +69,12 @@ def test_captions_for_presenter_scene_clips_segment_straddling_trim_boundary():
     assert captions[0]["durationInFrames"] == 60
 
 
-def test_captions_for_presenter_scene_caps_unusually_long_segments():
+def test_captions_for_presenter_scene_does_not_cap_long_segments():
+    # Regression guard: an earlier version capped durationInFrames at 6s
+    # while keeping the full segment text, so the caption vanished before
+    # the speaker finished — verified against real footage, where it hit
+    # 79% of captions in a real episode. The caption must stay up for the
+    # entire segment it transcribes, no matter how long.
     scene = _presenter_scene(source_start=0, source_end=10000)
 
     transcript = {
@@ -82,7 +86,8 @@ def test_captions_for_presenter_scene_caps_unusually_long_segments():
     captions = captions_for_presenter_scene(scene, transcript, fps=30)
 
     assert len(captions) == 1
-    assert captions[0]["durationInFrames"] == MAX_CAPTION_DURATION_FRAMES
+    assert captions[0]["durationInFrames"] == 900  # 30s at 30fps, uncapped
+    assert captions[0]["text"] == "a very long uninterrupted segment"
 
 
 def test_captions_for_presenter_scene_skips_blank_text():
