@@ -23,6 +23,17 @@ TITLE_DURATION_FRAMES = 60
 # seconds apart.
 MIN_TITLE_SPACING_SECONDS = 20
 
+# A split landing this close to a presenter scene's own start/end produces
+# a presenter "piece" too short to read as real footage — just a handful
+# of frames of the presenter mid-expression, visible for a fraction of a
+# second before or after a title card. Snap a split that close to the
+# scene boundary it's nearest to (see merge_title_scenes) so the cut reads
+# as a clean "presenter ends, title, next presenter begins" instead of
+# "presenter ends, a flash of the wrong frame, title, presenter begins
+# again." One second is short enough to never eat a genuine early/late
+# topic shift, long enough that no sliver piece is ever visible.
+MIN_PIECE_FRAMES_SECONDS = 1.0
+
 
 def load_json(path: Path):
     with path.open("r", encoding="utf-8") as f:
@@ -218,6 +229,24 @@ def _reconstituted_track_scenes(scene_plan):
     return reconstituted
 
 
+def _snapped_split_frame(source_frame, segment_start, segment_end, min_piece_frames):
+    """Pulls a split point away from a scene boundary it's too close to,
+    so neither the leading nor trailing presenter piece around the title
+    is a near-zero-length sliver — a few frames of the presenter mid-
+    expression flashing on screen for a fraction of a second isn't a
+    real cut, it's a glitch (confirmed by watching real rendered output:
+    a mid-clip split landing 5 frames after a clip's true start produced
+    exactly this — presenter, instant flash, title, presenter again)."""
+
+    if source_frame - segment_start < min_piece_frames:
+        return segment_start
+
+    if segment_end - source_frame < min_piece_frames:
+        return segment_end
+
+    return source_frame
+
+
 def merge_title_scenes(scene_plan, titles, transcript, manifest):
     """Resolves each title's segmentId to a real source-frame position
     (via the transcript/manifest) and splits the presenter scene it falls
@@ -279,10 +308,17 @@ def merge_title_scenes(scene_plan, titles, transcript, manifest):
         segment_start = scene["sourceStartFrame"]
         segment_end = scene["sourceEndFrame"]
 
+        min_piece_frames = round(MIN_PIECE_FRAMES_SECONDS * fps)
+
         clamped_splits = [
             {
                 "text": split["text"],
-                "sourceFrame": max(segment_start, min(split["sourceFrame"], segment_end)),
+                "sourceFrame": _snapped_split_frame(
+                    max(segment_start, min(split["sourceFrame"], segment_end)),
+                    segment_start,
+                    segment_end,
+                    min_piece_frames,
+                ),
             }
             for split in splits
         ]
@@ -320,15 +356,17 @@ def merge_title_scenes(scene_plan, titles, transcript, manifest):
 
             cursor = piece_end
 
-        final_piece = dict(scene)
-        final_piece["id"] = scene["id"] if piece_count == 0 else f"{scene['id']}-{piece_count}"
-        final_piece["sourceStartFrame"] = cursor
-        final_piece["sourceEndFrame"] = segment_end
-        final_piece["durationInFrames"] = segment_end - cursor
-        final_piece["timelineStartFrame"] = timeline_frame
+        if segment_end > cursor:
 
-        merged_scenes.append(final_piece)
-        timeline_frame += final_piece["durationInFrames"]
+            final_piece = dict(scene)
+            final_piece["id"] = scene["id"] if piece_count == 0 else f"{scene['id']}-{piece_count}"
+            final_piece["sourceStartFrame"] = cursor
+            final_piece["sourceEndFrame"] = segment_end
+            final_piece["durationInFrames"] = segment_end - cursor
+            final_piece["timelineStartFrame"] = timeline_frame
+
+            merged_scenes.append(final_piece)
+            timeline_frame += final_piece["durationInFrames"]
 
     merged_scenes.extend(overlay_scenes)
 

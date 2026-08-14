@@ -311,9 +311,104 @@ def test_merge_title_scenes_splits_presenter_scene_mid_clip():
     assert second["durationInFrames"] == 150
     assert second["timelineStartFrame"] == 150 + TITLE_DURATION_FRAMES
 
-    # both pieces still play the same source clip
-    assert first["videoId"] == "001"
-    assert second["videoId"] == "001"
+
+def test_merge_title_scenes_snaps_split_too_close_to_clip_start_to_no_leading_piece():
+    # Regression: a real bug observed in rendered output — a split landing
+    # a handful of frames (well under 1s) after a clip's true start
+    # produced a near-zero-length presenter "piece" before the title.
+    # Visually this looked like: presenter mid-expression flashes for a
+    # fraction of a second, title appears, then the presenter's real
+    # opening frame plays again — an inaccurate, jarring cut, not a clean
+    # "presenter ends, title, next presenter begins." The fix snaps a
+    # split that close to the boundary it's nearest to, so no sliver piece
+    # is ever created.
+    transcript = {
+        "segments": [
+            {"source": "a.mp4", "start": 0.0, "end": 0.5, "text": "barely anything"},
+            # starts at frame 5 (30fps) — 5 frames after the clip's own
+            # start, far under the 1s (30-frame) minimum piece length
+            {"source": "a.mp4", "start": 0.1667, "end": 3.0, "text": "new topic begins almost immediately"},
+        ]
+    }
+
+    manifest = {"videos": [{"id": "001", "filename": "a.mp4"}]}
+
+    scene_plan = {
+        "fps": 30,
+        "scenes": [
+            {
+                "id": "scene-001",
+                "type": "presenter",
+                "videoId": "001",
+                "sourceStartFrame": 0,
+                "sourceEndFrame": 300,
+                "durationInFrames": 300,
+                "effects": {"captions": True, "transition": "none"},
+            },
+        ],
+    }
+
+    titles = [{"segmentId": "s1", "text": "New Topic"}]
+
+    result = merge_title_scenes(scene_plan, titles, transcript, manifest)
+    scenes = result["scenes"]
+
+    presenter_scenes = [s for s in scenes if s["type"] == "presenter"]
+    title_scenes = [s for s in scenes if s["type"] == "title"]
+
+    # no sliver leading piece — the title sits right before the whole clip
+    assert len(presenter_scenes) == 1
+    assert len(title_scenes) == 1
+    assert scenes[0]["type"] == "title"
+    assert scenes[0]["timelineStartFrame"] == 0
+    assert presenter_scenes[0]["sourceStartFrame"] == 0
+    assert presenter_scenes[0]["sourceEndFrame"] == 300
+
+
+def test_merge_title_scenes_snaps_split_too_close_to_clip_end_to_no_trailing_piece():
+    # Symmetric case: a split landing a handful of frames before a clip's
+    # true end must not leave a sliver piece playing AFTER the title
+    # before the clip ends.
+    transcript = {
+        "segments": [
+            {"source": "a.mp4", "start": 0.0, "end": 9.0, "text": "most of the clip"},
+            # starts at frame 295 (30fps) — 5 frames before the clip's own
+            # end (frame 300), far under the 1s (30-frame) minimum
+            {"source": "a.mp4", "start": 9.8333, "end": 10.0, "text": "barely anything at the very end"},
+        ]
+    }
+
+    manifest = {"videos": [{"id": "001", "filename": "a.mp4"}]}
+
+    scene_plan = {
+        "fps": 30,
+        "scenes": [
+            {
+                "id": "scene-001",
+                "type": "presenter",
+                "videoId": "001",
+                "sourceStartFrame": 0,
+                "sourceEndFrame": 300,
+                "durationInFrames": 300,
+                "effects": {"captions": True, "transition": "none"},
+            },
+        ],
+    }
+
+    titles = [{"segmentId": "s1", "text": "New Topic"}]
+
+    result = merge_title_scenes(scene_plan, titles, transcript, manifest)
+    scenes = result["scenes"]
+
+    presenter_scenes = [s for s in scenes if s["type"] == "presenter"]
+    title_scenes = [s for s in scenes if s["type"] == "title"]
+
+    # no sliver trailing piece — the title sits right after the whole clip
+    assert len(presenter_scenes) == 1
+    assert len(title_scenes) == 1
+    assert scenes[-1]["type"] == "title"
+    assert presenter_scenes[0]["sourceStartFrame"] == 0
+    assert presenter_scenes[0]["sourceEndFrame"] == 300
 
 
 def test_merge_title_scenes_no_titles_leaves_plan_unchanged():
