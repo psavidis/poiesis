@@ -120,58 +120,104 @@ def is_overlay_scene(scene):
     return False
 
 
-# Which parent presenter layout each moment treatment requires — mirrors
-# generate_moments.py's TREATMENT_REQUIRED_LAYOUT, checked independently
-# here so a hand-edited scene-plan.json (or a bug in the merge step) that
-# leaves a moment and its parent's layout disagreeing gets caught.
-MOMENT_REQUIRES_CENTER = {"bottom-callout"}
+# Which treatments require a presenterSide — the presenter's on-screen
+# position is derived per-frame from the active moment's own window at
+# render time (Episode.tsx's layoutWindowsForScene), so this is a
+# moment-internal consistency check (treatment vs. its own presenterSide),
+# not a moment-vs-parent one — there's no parent "layout" field anymore.
+MOMENT_REQUIRES_NO_SIDE = {"bottom-callout"}
 MOMENT_REQUIRES_SIDE = {"side-text", "side-image"}
 
+# Mirrors Episode.tsx's TRANSITION_FRAMES / generate_moments.py's
+# TRANSITION_FRAMES — the presenter's actual on-screen shift window is a
+# moment's own span padded by this many frames on both sides, so two
+# moments on the same parent must not have overlapping padded windows or
+# their slide animations would collide.
+MOMENT_TRANSITION_FRAMES = 24
 
-def check_moment_layout_agreement(scene_plan):
+
+def check_moment_presenter_side_agreement(scene_plan):
 
     issues = []
-
-    scenes_by_id = {scene["id"]: scene for scene in scene_plan["scenes"]}
 
     for scene in scene_plan["scenes"]:
 
         if scene["type"] != "moment":
             continue
 
-        parent = scenes_by_id.get(scene.get("parentSceneId"))
+        treatment = scene["treatment"]
+        presenter_side = scene.get("presenterSide")
 
-        if not parent or parent["type"] != "presenter":
+        if treatment in MOMENT_REQUIRES_NO_SIDE and presenter_side is not None:
+            issues.append(
+                {
+                    "check": "moment_presenter_side_mismatch",
+                    "severity": "medium",
+                    "sceneId": scene["id"],
+                    "detail": (
+                        f"Moment treatment '{treatment}' should not set presenterSide, "
+                        f"but found '{presenter_side}'"
+                    ),
+                }
+            )
+
+        elif treatment in MOMENT_REQUIRES_SIDE and presenter_side not in ("left", "right"):
+            issues.append(
+                {
+                    "check": "moment_presenter_side_mismatch",
+                    "severity": "medium",
+                    "sceneId": scene["id"],
+                    "detail": (
+                        f"Moment treatment '{treatment}' requires presenterSide "
+                        f"'left' or 'right', found '{presenter_side}'"
+                    ),
+                }
+            )
+
+    return issues
+
+
+def check_moment_windows_do_not_overlap(scene_plan):
+
+    issues = []
+
+    moments_by_parent = {}
+
+    for scene in scene_plan["scenes"]:
+
+        if scene["type"] != "moment":
             continue
 
-        layout = parent.get("layout", "center")
-        treatment = scene["treatment"]
+        moments_by_parent.setdefault(scene["parentSceneId"], []).append(scene)
 
-        if treatment in MOMENT_REQUIRES_CENTER and layout != "center":
-            issues.append(
-                {
-                    "check": "moment_layout_mismatch",
-                    "severity": "medium",
-                    "sceneId": scene["id"],
-                    "detail": (
-                        f"Moment treatment '{treatment}' requires parent layout "
-                        f"'center', but parent {parent['id']} has layout '{layout}'"
-                    ),
-                }
-            )
+    for parent_id, moments in moments_by_parent.items():
 
-        elif treatment in MOMENT_REQUIRES_SIDE and layout not in ("left", "right"):
-            issues.append(
-                {
-                    "check": "moment_layout_mismatch",
-                    "severity": "medium",
-                    "sceneId": scene["id"],
-                    "detail": (
-                        f"Moment treatment '{treatment}' requires parent layout "
-                        f"'left' or 'right', but parent {parent['id']} has layout '{layout}'"
-                    ),
-                }
-            )
+        moments = sorted(moments, key=lambda m: m["offsetInParentFrames"])
+
+        kept_windows = []
+
+        for moment in moments:
+
+            start = moment["offsetInParentFrames"] - MOMENT_TRANSITION_FRAMES
+            end = moment["offsetInParentFrames"] + moment["durationInFrames"] + MOMENT_TRANSITION_FRAMES
+
+            overlaps = any(start < w_end and end > w_start for w_start, w_end in kept_windows)
+
+            if overlaps:
+                issues.append(
+                    {
+                        "check": "moment_windows_overlap",
+                        "severity": "medium",
+                        "sceneId": moment["id"],
+                        "detail": (
+                            f"Moment's on-screen window (including transition pad) overlaps "
+                            f"another moment on the same parent scene {parent_id}"
+                        ),
+                    }
+                )
+                continue
+
+            kept_windows.append((start, end))
 
     return issues
 
@@ -353,7 +399,8 @@ def run_qa(episode: Path):
     issues += check_scene_plan_asset_ids(scene_plan, assets)
     issues += check_timeline_continuity(scene_plan)
     issues += check_overlay_scenes_within_bounds(scene_plan)
-    issues += check_moment_layout_agreement(scene_plan)
+    issues += check_moment_presenter_side_agreement(scene_plan)
+    issues += check_moment_windows_do_not_overlap(scene_plan)
     issues += check_rendered_duration(episode, scene_plan)
 
     return {

@@ -2,7 +2,8 @@ from unittest.mock import patch
 
 from qa_check import (
     check_missing_media,
-    check_moment_layout_agreement,
+    check_moment_presenter_side_agreement,
+    check_moment_windows_do_not_overlap,
     check_overlay_scenes_within_bounds,
     check_rendered_duration,
     check_scene_plan_asset_ids,
@@ -123,76 +124,124 @@ def test_check_scene_plan_asset_ids_ignores_non_side_image_moments():
     assert check_scene_plan_asset_ids(scene_plan, []) == []
 
 
-def test_check_moment_layout_agreement_passes_for_bottom_callout_on_center():
+def test_check_moment_presenter_side_agreement_passes_for_bottom_callout_without_side():
     scene_plan = {
         "scenes": [
-            {"id": "a", "type": "presenter", "layout": "center"},
-            {"id": "m", "type": "moment", "treatment": "bottom-callout", "parentSceneId": "a"},
+            {"id": "m", "type": "moment", "treatment": "bottom-callout"},
         ]
     }
 
-    assert check_moment_layout_agreement(scene_plan) == []
+    assert check_moment_presenter_side_agreement(scene_plan) == []
 
 
-def test_check_moment_layout_agreement_passes_for_bottom_callout_on_default_layout():
+def test_check_moment_presenter_side_agreement_flags_bottom_callout_with_side():
     scene_plan = {
         "scenes": [
-            {"id": "a", "type": "presenter"},
-            {"id": "m", "type": "moment", "treatment": "bottom-callout", "parentSceneId": "a"},
+            {"id": "m", "type": "moment", "treatment": "bottom-callout", "presenterSide": "left"},
         ]
     }
 
-    assert check_moment_layout_agreement(scene_plan) == []
-
-
-def test_check_moment_layout_agreement_flags_bottom_callout_on_side_layout():
-    scene_plan = {
-        "scenes": [
-            {"id": "a", "type": "presenter", "layout": "left"},
-            {"id": "m", "type": "moment", "treatment": "bottom-callout", "parentSceneId": "a"},
-        ]
-    }
-
-    issues = check_moment_layout_agreement(scene_plan)
+    issues = check_moment_presenter_side_agreement(scene_plan)
 
     assert len(issues) == 1
-    assert issues[0]["check"] == "moment_layout_mismatch"
+    assert issues[0]["check"] == "moment_presenter_side_mismatch"
     assert issues[0]["sceneId"] == "m"
 
 
-def test_check_moment_layout_agreement_passes_for_side_text_on_left():
+def test_check_moment_presenter_side_agreement_passes_for_side_text_with_side():
     scene_plan = {
         "scenes": [
-            {"id": "a", "type": "presenter", "layout": "left"},
-            {"id": "m", "type": "moment", "treatment": "side-text", "parentSceneId": "a"},
+            {"id": "m", "type": "moment", "treatment": "side-text", "presenterSide": "left"},
         ]
     }
 
-    assert check_moment_layout_agreement(scene_plan) == []
+    assert check_moment_presenter_side_agreement(scene_plan) == []
 
 
-def test_check_moment_layout_agreement_flags_side_text_on_center():
+def test_check_moment_presenter_side_agreement_flags_side_text_without_side():
     scene_plan = {
         "scenes": [
-            {"id": "a", "type": "presenter", "layout": "center"},
-            {"id": "m", "type": "moment", "treatment": "side-text", "parentSceneId": "a"},
+            {"id": "m", "type": "moment", "treatment": "side-text"},
         ]
     }
 
-    issues = check_moment_layout_agreement(scene_plan)
+    issues = check_moment_presenter_side_agreement(scene_plan)
 
     assert len(issues) == 1
     assert issues[0]["sceneId"] == "m"
 
 
-def test_check_moment_layout_agreement_ignores_missing_parent():
+def test_check_moment_windows_do_not_overlap_passes_for_well_spaced_moments():
     scene_plan = {
         "scenes": [
-            {"id": "m", "type": "moment", "treatment": "side-text", "parentSceneId": "does-not-exist"},
+            {
+                "id": "m1",
+                "type": "moment",
+                "parentSceneId": "a",
+                "offsetInParentFrames": 0,
+                "durationInFrames": 90,
+            },
+            {
+                "id": "m2",
+                "type": "moment",
+                "parentSceneId": "a",
+                "offsetInParentFrames": 500,
+                "durationInFrames": 150,
+            },
         ]
     }
 
-    assert check_moment_layout_agreement(scene_plan) == []
+    assert check_moment_windows_do_not_overlap(scene_plan) == []
+
+
+def test_check_moment_windows_do_not_overlap_flags_overlapping_moments_same_parent():
+    scene_plan = {
+        "scenes": [
+            {
+                "id": "m1",
+                "type": "moment",
+                "parentSceneId": "a",
+                "offsetInParentFrames": 0,
+                "durationInFrames": 90,
+            },
+            {
+                "id": "m2",
+                "type": "moment",
+                "parentSceneId": "a",
+                "offsetInParentFrames": 100,  # within m1's trailing transition pad
+                "durationInFrames": 150,
+            },
+        ]
+    }
+
+    issues = check_moment_windows_do_not_overlap(scene_plan)
+
+    assert len(issues) == 1
+    assert issues[0]["check"] == "moment_windows_overlap"
+    assert issues[0]["sceneId"] == "m2"
+
+
+def test_check_moment_windows_do_not_overlap_ignores_different_parents():
+    scene_plan = {
+        "scenes": [
+            {
+                "id": "m1",
+                "type": "moment",
+                "parentSceneId": "a",
+                "offsetInParentFrames": 0,
+                "durationInFrames": 90,
+            },
+            {
+                "id": "m2",
+                "type": "moment",
+                "parentSceneId": "b",
+                "offsetInParentFrames": 0,
+                "durationInFrames": 90,
+            },
+        ]
+    }
+
+    assert check_moment_windows_do_not_overlap(scene_plan) == []
 
 
 def test_check_timeline_continuity_passes_for_contiguous_scenes():

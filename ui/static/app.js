@@ -518,11 +518,13 @@ function renderMomentRow(m, i, assetOptions) {
     `
       : `<input type="text" class="moment-text-input" value="${escapeHtml(m.text || "")}" />`;
 
+  const sideNote = m.presenterSide ? `presenter → ${escapeHtml(m.presenterSide)} — ` : "";
+
   return `
     <div class="ai-decision editable-scene" data-index="${i}">
       <span class="scene-type">${escapeHtml(label)}</span>
       ${contentInput}
-      <span class="reason">presenter → ${escapeHtml(m.requiredLayout)} — clip ${escapeHtml(m.videoId || "?")} — offset ${m.offsetInParentFrames}f, up to ${m.maxDurationInParentFrames}f${m.reason ? ` — ${escapeHtml(m.reason)}` : ""}</span>
+      <span class="reason">${sideNote}clip ${escapeHtml(m.videoId || "?")} — offset ${m.offsetInParentFrames}f, up to ${m.maxDurationInParentFrames}f${m.reason ? ` — ${escapeHtml(m.reason)}` : ""}</span>
       <a class="secondary small adjust-timing-link" href="${previewAppUrl(state.episodePath, m.sceneId)}" target="_blank" rel="noopener">Adjust timing</a>
       <button class="secondary small remove-moment-btn" data-index="${i}">Remove</button>
     </div>

@@ -187,7 +187,7 @@ def _bottom_callout_payload(**overrides):
         "offsetInParentFrames": 10,
         "maxDurationInParentFrames": 90,
         "treatment": "bottom-callout",
-        "requiredLayout": "center",
+        "presenterSide": None,
         "text": "Hello",
         "reason": "topic shift",
     }
@@ -203,7 +203,7 @@ def _side_image_payload(**overrides):
         "offsetInParentFrames": 20,
         "maxDurationInParentFrames": 120,
         "treatment": "side-image",
-        "requiredLayout": "left",
+        "presenterSide": "left",
         "assetId": "asset-1",
         "caption": "a diagram",
         "reason": "visual aid",
@@ -252,7 +252,7 @@ def test_update_moments_writes_file_and_merges_scene_plan(tmp_path):
     assert moment_scenes[0]["offsetInParentFrames"] == 15
 
 
-def test_update_moments_sets_parent_layout_for_side_image(tmp_path):
+def test_update_moments_stores_presenter_side_for_side_image(tmp_path):
     episode = _make_episode(tmp_path)
     _make_scene_plan(episode)
 
@@ -270,9 +270,10 @@ def test_update_moments_sets_parent_layout_for_side_image(tmp_path):
     moment_scenes = [s for s in scene_plan_on_disk["scenes"] if s["type"] == "moment"]
     assert len(moment_scenes) == 1
     assert moment_scenes[0]["assetId"] == "asset-2"
+    assert moment_scenes[0]["presenterSide"] == "left"
 
     parent = next(s for s in scene_plan_on_disk["scenes"] if s["id"] == "scene-001")
-    assert parent["layout"] == "left"
+    assert "layout" not in parent
 
 
 def test_update_moments_can_remove_scenes_by_omitting_them(tmp_path):

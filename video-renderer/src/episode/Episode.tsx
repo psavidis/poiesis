@@ -29,26 +29,48 @@ const LAYOUT_GEOMETRY: Record<PresenterLayout, { widthPct: number; leftPct: numb
 
 const TRANSITION_FRAMES = 24;
 
-const layoutOf = (scene: PresenterScene | undefined): PresenterLayout => scene?.layout ?? "center";
+// A window (in frames local to a presenter scene) during which the
+// presenter should be off-center, derived from a single moment's own
+// on-screen span — NOT the whole presenter scene. This is the fix for the
+// bug where the presenter used to shift for a whole (possibly 60s+) scene
+// even though the side content it was making room for was only visible for
+// a few seconds: the presenter now only leaves center immediately before
+// the moment appears and returns immediately after it ends.
+interface LayoutWindow {
+    // Frame (local to the scene) the slide-out begins — moment's own start
+    // minus TRANSITION_FRAMES, clamped to the scene's own bounds.
+    start: number;
+    // Frame the slide-back-to-center completes — moment's own end plus
+    // TRANSITION_FRAMES, clamped.
+    end: number;
+    side: "left" | "right";
+}
+
+const layoutWindowsForScene = (scene: PresenterScene, moments: MomentScene[]): LayoutWindow[] => {
+    const windows = moments
+        .filter((m) => m.parentSceneId === scene.id && m.presenterSide)
+        .map((m) => ({
+            start: Math.max(0, m.offsetInParentFrames - TRANSITION_FRAMES),
+            end: Math.min(scene.durationInFrames, m.offsetInParentFrames + m.durationInFrames + TRANSITION_FRAMES),
+            side: m.presenterSide as "left" | "right",
+        }))
+        .sort((a, b) => a.start - b.start);
+
+    return windows;
+};
 
 const PresenterSequence = ({
                                 scene,
                                 video,
-                                previousLayout,
-                                nextLayout,
+                                layoutWindows,
                             }: {
     scene: PresenterScene;
     video: EpisodeVideo;
-    // The chronologically adjacent presenter scenes' layouts (not the scenes
-    // themselves — that's all the animation needs), so this scene's own
-    // <Sequence> — which has its own frame clock starting at 0 — can
-    // interpolate from where the presenter was, and toward where it's about
-    // to go, instead of cutting instantly at the boundary.
-    previousLayout: PresenterLayout;
-    nextLayout: PresenterLayout;
+    // This scene's own moment-driven shift windows (see layoutWindowsForScene)
+    // — everything the animation needs to know is local to this scene, no
+    // adjacency with neighboring presenter scenes required anymore.
+    layoutWindows: LayoutWindow[];
 }) => {
-    const thisLayout = layoutOf(scene);
-
     return (
         <Sequence
             from={scene.timelineStartFrame}
@@ -57,9 +79,7 @@ const PresenterSequence = ({
             <AnimatedPresenterFrame
                 video={video}
                 scene={scene}
-                fromLayout={previousLayout}
-                thisLayout={thisLayout}
-                toLayout={nextLayout}
+                layoutWindows={layoutWindows}
             />
         </Sequence>
     );
@@ -68,49 +88,45 @@ const PresenterSequence = ({
 const AnimatedPresenterFrame = ({
                                      video,
                                      scene,
-                                     fromLayout,
-                                     thisLayout,
-                                     toLayout,
+                                     layoutWindows,
                                  }: {
     video: EpisodeVideo;
     scene: PresenterScene;
-    fromLayout: PresenterLayout;
-    thisLayout: PresenterLayout;
-    toLayout: PresenterLayout;
+    layoutWindows: LayoutWindow[];
 }) => {
     const frame = useCurrentFrame();
-    const { durationInFrames } = useVideoConfig();
 
-    const enterWindow = Math.min(TRANSITION_FRAMES, Math.floor(durationInFrames / 2));
-    const exitWindow = Math.min(TRANSITION_FRAMES, Math.ceil(durationInFrames / 2));
-    const exitStart = Math.max(enterWindow, durationInFrames - exitWindow);
+    const centerGeo = LAYOUT_GEOMETRY.center;
 
-    const fromGeo = LAYOUT_GEOMETRY[fromLayout];
-    const thisGeo = LAYOUT_GEOMETRY[thisLayout];
-    const toGeo = LAYOUT_GEOMETRY[toLayout];
+    // Find the window (if any) whose padded span contains the current
+    // frame, and interpolate: center -> side across the leading pad, hold
+    // at the side for the moment's own span, side -> center across the
+    // trailing pad. Frames outside every window stay at dead center — most
+    // of a long scene is unaffected, which is the whole point of the fix.
+    const activeWindow = layoutWindows.find((w) => frame >= w.start && frame < w.end);
 
-    // Only actually animate when the layout is changing at that boundary —
-    // a scene surrounded by the same layout on both sides never moves,
-    // avoiding a pointless micro-animation on every single cut.
-    const widthPct =
-        fromLayout === thisLayout && toLayout === thisLayout
-            ? thisGeo.widthPct
-            : interpolate(
-                  frame,
-                  [0, enterWindow, exitStart, durationInFrames],
-                  [fromGeo.widthPct, thisGeo.widthPct, thisGeo.widthPct, toGeo.widthPct],
-                  { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
-              );
+    let widthPct = centerGeo.widthPct;
+    let leftPct = centerGeo.leftPct;
 
-    const leftPct =
-        fromLayout === thisLayout && toLayout === thisLayout
-            ? thisGeo.leftPct
-            : interpolate(
-                  frame,
-                  [0, enterWindow, exitStart, durationInFrames],
-                  [fromGeo.leftPct, thisGeo.leftPct, thisGeo.leftPct, toGeo.leftPct],
-                  { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
-              );
+    if (activeWindow) {
+        const sideGeo = LAYOUT_GEOMETRY[activeWindow.side];
+        const enterEnd = Math.min(activeWindow.start + TRANSITION_FRAMES, activeWindow.end);
+        const exitStart = Math.max(activeWindow.end - TRANSITION_FRAMES, enterEnd);
+
+        widthPct = interpolate(
+            frame,
+            [activeWindow.start, enterEnd, exitStart, activeWindow.end],
+            [centerGeo.widthPct, sideGeo.widthPct, sideGeo.widthPct, centerGeo.widthPct],
+            { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+        );
+
+        leftPct = interpolate(
+            frame,
+            [activeWindow.start, enterEnd, exitStart, activeWindow.end],
+            [centerGeo.leftPct, sideGeo.leftPct, sideGeo.leftPct, centerGeo.leftPct],
+            { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+        );
+    }
 
     return (
         <AbsoluteFill>
@@ -167,11 +183,9 @@ const LoopingBackground = ({ path, duration }: { path: string; duration: number 
 
 const MomentSequence = ({
                              scene,
-                             parent,
                              asset,
                          }: {
     scene: MomentScene;
-    parent: PresenterScene;
     asset: EpisodeAsset | undefined;
 }) => {
     switch (scene.treatment) {
@@ -179,13 +193,13 @@ const MomentSequence = ({
             return <BottomCallout text={scene.text ?? ""} />;
 
         case "side-text": {
-            const presenterOnLeft = layoutOf(parent) === "left";
+            const presenterOnLeft = scene.presenterSide === "left";
             return <SideText text={scene.text ?? ""} presenterOnLeft={presenterOnLeft} />;
         }
 
         case "side-image": {
             if (!asset) return null;
-            const presenterOnLeft = layoutOf(parent) === "left";
+            const presenterOnLeft = scene.presenterSide === "left";
             return (
                 <SideImage
                     path={asset.path}
@@ -224,20 +238,9 @@ export const Episode = ({
             .map((scene) => [scene.id, scene])
     );
 
-    // Presenter scenes in timeline order, so each one can look up its
-    // chronological predecessor/successor's layout for the slide animation
-    // at its boundaries — the scene plan doesn't otherwise encode adjacency.
-    const orderedPresenterScenes = [...presenterSceneMap.values()].sort(
-        (a, b) => a.timelineStartFrame - b.timelineStartFrame
+    const momentScenes = typedScenePlan.scenes.filter(
+        (scene): scene is MomentScene => scene.type === "moment"
     );
-
-    const previousLayoutById = new Map<string, PresenterLayout>();
-    const nextLayoutById = new Map<string, PresenterLayout>();
-
-    orderedPresenterScenes.forEach((scene, index) => {
-        previousLayoutById.set(scene.id, layoutOf(orderedPresenterScenes[index - 1]));
-        nextLayoutById.set(scene.id, layoutOf(orderedPresenterScenes[index + 1]));
-    });
 
     const renderScene = (scene: Scene) => {
         switch (scene.type) {
@@ -253,8 +256,7 @@ export const Episode = ({
                         key={scene.id}
                         scene={scene}
                         video={video}
-                        previousLayout={previousLayoutById.get(scene.id) ?? "center"}
-                        nextLayout={nextLayoutById.get(scene.id) ?? "center"}
+                        layoutWindows={layoutWindowsForScene(scene, momentScenes)}
                     />
                 );
             }
@@ -286,7 +288,7 @@ export const Episode = ({
                         from={parent.timelineStartFrame + scene.offsetInParentFrames}
                         durationInFrames={scene.durationInFrames}
                     >
-                        <MomentSequence scene={scene} parent={parent} asset={asset} />
+                        <MomentSequence scene={scene} asset={asset} />
                     </Sequence>
                 );
             }

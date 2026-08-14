@@ -178,7 +178,7 @@ class MomentProposal(BaseModel):
     offsetInParentFrames: int
     maxDurationInParentFrames: int
     treatment: str
-    requiredLayout: str
+    presenterSide: str | None = None
     text: str | None = None
     assetId: str | None = None
     caption: str | None = None
@@ -193,14 +193,15 @@ class MomentsUpdate(BaseModel):
 def update_moments(path: str, body: MomentsUpdate):
     """Human edits to AI-proposed moment overlays: treatment, text/assetId,
     timing (offsetInParentFrames), duration (maxDurationInParentFrames,
-    capped by merge_moment_scenes at duration_for_treatment(...)), and the
-    parent presenter scene's requiredLayout. Writes the edited proposals
-    back to moments.json, then deterministically re-merges them into
-    scene-plan.json the same way generate_moments.py does after the LLM
-    call — no LLM involved here. merge_moment_scenes rebuilds all moment
-    scenes (and their parents' layout field) from scratch each call, so
-    this is safe to call repeatedly even if scenes were already merged
-    before."""
+    capped by merge_moment_scenes at duration_for_treatment(...)), and
+    presenterSide. Writes the edited proposals back to moments.json, then
+    deterministically re-merges them into scene-plan.json the same way
+    generate_moments.py does after the LLM call — no LLM involved here.
+    merge_moment_scenes rebuilds all moment scenes from scratch each call
+    (never touching their parent presenter scenes — the presenter's
+    on-screen position is derived per-frame from each moment's own window
+    at render time, not a static field), so this is safe to call repeatedly
+    even if scenes were already merged before."""
 
     episode = resolve_episode(path)
     processing = episode / "processing"

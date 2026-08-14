@@ -24,6 +24,41 @@ def test_no_windows_when_scene_shorter_than_threshold():
     assert find_monotony_eligible_windows(scene_plan) == []
 
 
+def test_ignores_overlay_scenes_without_timeline_start_frame():
+    # regression: overlay scenes (moment/caption/image) position themselves
+    # via parentSceneId/offsetInParentFrames, not timelineStartFrame — a
+    # scene plan that already has them merged in (e.g. a --force re-run)
+    # must not crash trying to sort by a field they don't have.
+    scene_plan = {
+        "fps": 30,
+        "scenes": [
+            {
+                "id": "scene-001",
+                "type": "presenter",
+                "videoId": "001",
+                "timelineStartFrame": 0,
+                "durationInFrames": 900,  # 30s, exceeds 18s threshold
+                "sourceStartFrame": 0,
+                "sourceEndFrame": 900,
+            },
+            {
+                "id": "scene-moment-0",
+                "type": "moment",
+                "treatment": "bottom-callout",
+                "text": "hi",
+                "parentSceneId": "scene-001",
+                "offsetInParentFrames": 600,
+                "durationInFrames": 90,
+            },
+        ],
+    }
+
+    windows = find_monotony_eligible_windows(scene_plan)
+
+    assert len(windows) == 1
+    assert windows[0]["sceneId"] == "scene-001"
+
+
 def test_window_found_when_scene_exceeds_threshold():
     scene_plan = {
         "fps": 30,

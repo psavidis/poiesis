@@ -28,12 +28,15 @@ export interface SceneEffects {
     transition: string;
 }
 
-// Where the presenter sits in the frame. Defaults to "center" (today's only
-// behavior — full-frame) when absent, so every existing episode's
-// scene-plan.json keeps rendering exactly as before with no migration.
-// "left"/"right" free up the opposite side of the frame for a moment's
-// side-text/side-image treatment (see MomentScene below) — the presenter
-// animates to/from this position rather than cutting, see PresenterSequence.
+// Where the presenter sits in the frame. "center" (full-frame) is the
+// default everywhere the presenter isn't actively making room for a
+// side-text/side-image moment. Deliberately NOT a field on PresenterScene:
+// the presenter's position is derived per-frame from whichever MomentScene
+// is currently active (see Episode.tsx's layoutWindowsForScene), not a
+// static property of the whole scene — otherwise the presenter shifts for
+// the scene's entire duration even though the moment content it's making
+// room for is only on screen for a few seconds in the middle. See
+// MomentScene.presenterSide below.
 export type PresenterLayout = "center" | "left" | "right";
 
 export interface PresenterScene {
@@ -45,7 +48,6 @@ export interface PresenterScene {
     timelineStartFrame: number;
     durationInFrames: number;
     effects: SceneEffects;
-    layout?: PresenterLayout;
 }
 
 export interface TitleScene {
@@ -56,11 +58,13 @@ export interface TitleScene {
     durationInFrames: number;
 }
 
-// A moment's treatment must agree with its parent presenter scene's layout:
-// "bottom-callout" requires layout "center" (today's emphasis-chip look);
-// "side-text"/"side-image" require layout "left" or "right" (content fills
-// whichever side the presenter isn't occupying). Validated in
-// pipeline/generate_moments.py, not just assumed.
+// A moment's treatment implies whether/how the presenter moves:
+// "bottom-callout" leaves the presenter full-frame (presenterSide absent);
+// "side-text"/"side-image" require a presenterSide ("left" or "right") —
+// the presenter animates to that side only for this moment's own window
+// (plus a short transition pad either side), then animates back to center
+// once the moment ends, rather than for its whole parent scene's duration.
+// Validated in pipeline/generate_moments.py, not just assumed.
 export type MomentTreatment = "bottom-callout" | "side-text" | "side-image";
 
 export interface MomentScene {
@@ -70,6 +74,7 @@ export interface MomentScene {
     text?: string;
     assetId?: string;
     caption?: string;
+    presenterSide?: "left" | "right";
     parentSceneId: string;
     offsetInParentFrames: number;
     durationInFrames: number;

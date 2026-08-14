@@ -17,8 +17,14 @@ def find_monotony_eligible_windows(scene_plan, threshold_seconds=MONOTONY_THRESH
     fps = scene_plan["fps"]
     threshold_frames = threshold_seconds * fps
 
+    # Only scenes with an absolute timelineStartFrame (presenter/title) can
+    # be sorted this way — overlay scenes (moment/caption/image) position
+    # themselves relative to a parent via offsetInParentFrames and have no
+    # such field. Filtering here (rather than assuming the plan never has
+    # overlays yet) keeps this safe to call on a --force re-run against an
+    # already-processed scene-plan.json, not just a freshly-analyzed one.
     scenes = sorted(
-        scene_plan["scenes"],
+        (s for s in scene_plan["scenes"] if "timelineStartFrame" in s),
         key=lambda s: s["timelineStartFrame"]
     )
 
