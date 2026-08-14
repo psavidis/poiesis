@@ -1,6 +1,7 @@
 from generate_captions import (
     captions_for_presenter_scene,
     merge_caption_scenes,
+    should_regenerate,
 )
 
 
@@ -182,3 +183,49 @@ def test_merge_caption_scenes_skips_proposal_with_missing_parent():
     merged = merge_caption_scenes(scene_plan, proposals)
 
     assert [s for s in merged["scenes"] if s["type"] == "caption"] == []
+
+
+def test_merge_caption_scenes_with_empty_proposals_strips_existing_captions():
+    # This is exactly what --disable relies on: merge_caption_scenes(plan, [])
+    # removes every existing caption scene and adds none back.
+    scene_plan = {
+        "fps": 30,
+        "scenes": [
+            _presenter_scene(source_start=0, source_end=300, timeline_start=0),
+            {
+                "id": "scene-caption-0",
+                "type": "caption",
+                "text": "hello there",
+                "parentSceneId": "scene-001",
+                "offsetInParentFrames": 10,
+                "durationInFrames": 20,
+            },
+        ],
+    }
+
+    merged = merge_caption_scenes(scene_plan, [])
+
+    assert [s for s in merged["scenes"] if s["type"] == "caption"] == []
+    assert [s for s in merged["scenes"] if s["type"] == "presenter"] != []
+
+
+def test_should_regenerate_when_no_previous_output():
+    assert should_regenerate(None, force=False) is True
+
+
+def test_should_regenerate_false_when_already_generated_and_not_forced():
+    previous = {"captions": [{"text": "hello"}]}
+    assert should_regenerate(previous, force=False) is False
+
+
+def test_should_regenerate_true_when_forced():
+    previous = {"captions": [{"text": "hello"}]}
+    assert should_regenerate(previous, force=True) is True
+
+
+def test_should_regenerate_true_when_previously_disabled_even_without_force():
+    # Regression guard: re-enabling captions (running without --disable
+    # again) must actually regenerate them, not stay silently disabled
+    # because captions.json already exists from the --disable run.
+    previous = {"captions": [], "disabled": True}
+    assert should_regenerate(previous, force=False) is True

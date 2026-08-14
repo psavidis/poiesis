@@ -7,6 +7,11 @@ const state = {
   socket: null,
   logText: "",
   logVisible: false,
+  // Persisted per browser session (not per episode) — full-sentence
+  // captions are tiresome on some episodes; this skips generating them on
+  // the next full pipeline run rather than requiring a manual re-run of
+  // generate_captions.py --disable afterward.
+  skipCaptions: false,
 };
 
 // Which stages produce an artifact worth showing the human for review —
@@ -163,6 +168,10 @@ function render() {
           <button id="run-render" class="secondary" ${running ? "disabled" : ""}>Render</button>
         </div>
       </div>
+      <label class="checkbox-row">
+        <input type="checkbox" id="skip-captions-toggle" ${state.skipCaptions ? "checked" : ""} ${running ? "disabled" : ""} />
+        Skip captions on next full pipeline run (removes any already generated)
+      </label>
       <p class="hint">Every stage below shells out to the same scripts you'd run from the
       terminal, using your Claude Code CLI login — no separate API key, nothing hidden.</p>
       <div class="stage-list" id="stage-list"></div>
@@ -199,6 +208,10 @@ function render() {
   document.getElementById("run-all").addEventListener("click", runFullPipeline);
   document.getElementById("run-qa").addEventListener("click", () => runSecondaryStage("qa_check"));
   document.getElementById("run-render").addEventListener("click", runRender);
+
+  document.getElementById("skip-captions-toggle").addEventListener("change", (e) => {
+    state.skipCaptions = e.target.checked;
+  });
 
   const cancelBtn = document.getElementById("cancel-run");
   if (cancelBtn) cancelBtn.addEventListener("click", cancelRun);
@@ -246,7 +259,11 @@ function runSecondaryStage(stageId) {
 }
 
 function runFullPipeline() {
-  runOverWebSocket("/ws/pipeline/run", { path: state.episodePath }, "__pipeline__");
+  runOverWebSocket(
+    "/ws/pipeline/run",
+    { path: state.episodePath, skipCaptions: state.skipCaptions },
+    "__pipeline__"
+  );
 }
 
 function runRender() {

@@ -28,6 +28,23 @@ def load_transcript(episode: Path, video_id: str):
     return load_json(path)
 
 
+def should_regenerate(previous_output, force):
+    """previous_output is the parsed contents of captions.json (or None if
+    it doesn't exist yet). A prior --disable run leaves {"captions": [],
+    "disabled": True} there, which must NOT count as "already generated" —
+    otherwise re-enabling captions (running without --disable again) would
+    silently stay disabled forever, skipped by the same check meant for the
+    normal already-ran case."""
+
+    if previous_output is None:
+        return True
+
+    if previous_output.get("disabled", False):
+        return True
+
+    return force
+
+
 def captions_for_presenter_scene(scene, transcript, fps):
     """Clips this clip's transcript segments to the scene's post-silence-trim
     [sourceStartFrame, sourceEndFrame) window and returns them positioned
@@ -158,6 +175,14 @@ def main():
         help="Regenerate captions even if already applied"
     )
 
+    parser.add_argument(
+        "--disable",
+        action="store_true",
+        help="Remove any existing caption scenes from scene-plan.json and skip "
+             "generating new ones — for episodes where captions are more tiresome "
+             "than helpful (e.g. dense back-and-forth talk, or a style choice)"
+    )
+
     args = parser.parse_args()
 
     episode = Path(args.episode_folder).resolve()
@@ -171,7 +196,25 @@ def main():
         print(f"ERROR: Missing scene plan: {scene_plan_file}")
         sys.exit(1)
 
-    if output_file.exists() and not args.force:
+    if args.disable:
+        scene_plan = load_json(scene_plan_file)
+
+        # merge_caption_scenes([]) strips every existing "caption" scene and
+        # adds none back — same idempotent-rebuild behavior every other
+        # merge_*_scenes function already has, so this converges to "no
+        # captions" regardless of whether a previous run already generated
+        # them.
+        scene_plan = merge_caption_scenes(scene_plan, [])
+
+        write_json_atomic(output_file, {"captions": [], "disabled": True})
+        write_json_atomic(scene_plan_file, scene_plan)
+
+        print("Captions disabled — removed any existing caption scenes.")
+        return
+
+    previous_output = load_json(output_file) if output_file.exists() else None
+
+    if not should_regenerate(previous_output, args.force):
         print("Captions already generated. Skipping.")
         print(output_file)
         return

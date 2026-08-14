@@ -331,11 +331,15 @@ async def ws_run_pipeline(websocket: WebSocket):
     async def build_command(params):
         episode = resolve_episode(params["path"])
         force = bool(params.get("force", False))
+        skip_captions = bool(params.get("skipCaptions", False))
 
         command = [str(PROJECT_ROOT / "create_episode.sh"), str(episode)]
 
         if force:
             command.append("--force")
+
+        if skip_captions:
+            command.append("--skip-captions")
 
         return command
 

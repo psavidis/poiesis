@@ -40,6 +40,14 @@ def main():
         help="Force regeneration where supported"
     )
 
+    parser.add_argument(
+        "--skip-captions",
+        action="store_true",
+        help="Don't generate burned-in captions — removes any existing "
+             "caption scenes too, for episodes where full-sentence captions "
+             "are more tiresome than helpful"
+    )
+
     args = parser.parse_args()
 
     episode = Path(args.episode_folder).resolve()
@@ -154,7 +162,9 @@ def main():
         str(episode)
     ]
 
-    if args.force:
+    if args.skip_captions:
+        captions_command.append("--disable")
+    elif args.force:
         captions_command.append("--force")
 
     run(captions_command)

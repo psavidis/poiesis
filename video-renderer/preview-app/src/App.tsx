@@ -87,6 +87,26 @@ export function App() {
         });
     };
 
+    // Client-side only — never written back to scene-plan.json. Lets you
+    // quickly check "how does this look without captions" without touching
+    // saved data; pipeline/generate_captions.py --disable (via the control
+    // panel's "Skip captions" checkbox) is the persisted equivalent.
+    const [showCaptions, setShowCaptions] = useState(true);
+
+    const playerProps = useMemo(() => {
+        if (!episodeProps || showCaptions) return episodeProps;
+
+        return {
+            ...episodeProps,
+            scenePlan: {
+                ...episodeProps.scenePlan,
+                scenes: episodeProps.scenePlan.scenes.map((s) =>
+                    s.type === "presenter" ? { ...s, effects: { ...s.effects, captions: false } } : s
+                ),
+            },
+        };
+    }, [episodeProps, showCaptions]);
+
     const parentScene: PresenterScene | undefined = useMemo(() => {
         if (!episodeProps || !sceneId) return undefined;
         return episodeProps.scenePlan.scenes.find(
@@ -200,7 +220,7 @@ export function App() {
                 <Player
                     ref={playerRef}
                     component={Episode as any}
-                    inputProps={episodeProps}
+                    inputProps={playerProps}
                     durationInFrames={Math.max(
                         1,
                         episodeProps.scenePlan.scenes.reduce(
@@ -229,6 +249,17 @@ export function App() {
                             : undefined
                     }
                 />
+            </div>
+
+            <div style={playerWrapStyle}>
+                <label style={styles.checkboxRow}>
+                    <input
+                        type="checkbox"
+                        checked={showCaptions}
+                        onChange={(e) => setShowCaptions(e.target.checked)}
+                    />
+                    Show captions in this preview (view-only — does not change scene-plan.json)
+                </label>
             </div>
 
             <div style={playerWrapStyle}>
@@ -312,5 +343,13 @@ const styles: Record<string, React.CSSProperties> = {
         display: "flex",
         alignItems: "center",
         gap: 12,
+    },
+    checkboxRow: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        fontSize: 13,
+        color: "#9aa7b4",
+        cursor: "pointer",
     },
 };
