@@ -107,7 +107,23 @@ export const sideContentStyle = (presenterOnLeft: boolean): React.CSSProperties 
     padding: "6%",
 });
 
-export const SideText = ({ text, presenterOnLeft }: { text: string; presenterOnLeft: boolean }) => {
+// "quote" (default) vs. "title" — see SideTextStyle in types.ts. Both share
+// the same slide/fade choreography; only the typographic treatment
+// differs, so this is one lookup table rather than two components.
+const SIDE_TEXT_STYLE = {
+    quote: { fontSize: 52, fontWeight: 700, letterSpacing: "normal", textTransform: "none" as const },
+    title: { fontSize: 58, fontWeight: 800, letterSpacing: "0.02em", textTransform: "uppercase" as const },
+};
+
+export const SideText = ({
+                              text,
+                              presenterOnLeft,
+                              style = "quote",
+                          }: {
+    text: string;
+    presenterOnLeft: boolean;
+    style?: "quote" | "title";
+}) => {
     const frame = useCurrentFrame();
     const { durationInFrames } = useVideoConfig();
 
@@ -129,6 +145,8 @@ export const SideText = ({ text, presenterOnLeft }: { text: string; presenterOnL
         { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
     );
 
+    const typeStyle = SIDE_TEXT_STYLE[style];
+
     return (
         <AbsoluteFill style={{ pointerEvents: "none" }}>
             <div style={sideContentStyle(presenterOnLeft)}>
@@ -137,8 +155,10 @@ export const SideText = ({ text, presenterOnLeft }: { text: string; presenterOnL
                         opacity,
                         transform: `translateX(${translateX}px)`,
                         fontFamily: brand.fonts.family,
-                        fontSize: 52,
-                        fontWeight: 700,
+                        fontSize: typeStyle.fontSize,
+                        fontWeight: typeStyle.fontWeight,
+                        letterSpacing: typeStyle.letterSpacing,
+                        textTransform: typeStyle.textTransform,
                         lineHeight: 1.2,
                         color: brand.colors.text,
                         textAlign: presenterOnLeft ? "right" : "left",

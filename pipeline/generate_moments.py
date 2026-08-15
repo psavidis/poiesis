@@ -80,6 +80,55 @@ def group_transcript_by_clip(transcript, manifest):
     return clips
 
 
+def chapters_from_scene_plan(scene_plan):
+    """The episode's chapter structure, derived from already-merged "title"
+    scenes (generate_title_scenes.py runs before this stage — see
+    run_pipeline.py) — each chapter starts at a title card's own
+    timelineStartFrame and runs until the next title card (or the episode's
+    end). No chapter-scoped state is stored anywhere; this is recomputed
+    fresh from scene_plan every call, same "derive, don't persist redundant
+    state" convention find_monotony_eligible_windows already follows.
+    Returns chapters in timeline order, each with a stable "chapterId"
+    (c0, c1, ...) an episode-relative index gives, plus its own start/end
+    absolute frame bounds (end is None for the last chapter — open-ended)."""
+
+    titles = sorted(
+        (s for s in scene_plan["scenes"] if s["type"] == "title"),
+        key=lambda s: s["timelineStartFrame"]
+    )
+
+    chapters = []
+
+    for index, title in enumerate(titles):
+
+        chapters.append(
+            {
+                "chapterId": f"c{index}",
+                "text": title["text"],
+                "start": title["timelineStartFrame"],
+                "end": titles[index + 1]["timelineStartFrame"] if index + 1 < len(titles) else None,
+            }
+        )
+
+    return chapters
+
+
+def chapter_for_absolute_frame(chapters, absolute_frame):
+    """Which chapter (if any) a given absolute timeline frame falls in —
+    None for anything before the episode's first title card (the performed
+    intro, which generate_title_scenes.py deliberately never titles)."""
+
+    for chapter in chapters:
+
+        if absolute_frame < chapter["start"]:
+            continue
+
+        if chapter["end"] is None or absolute_frame < chapter["end"]:
+            return chapter["chapterId"]
+
+    return None
+
+
 def build_candidate_windows(scene_plan, transcript, manifest):
 
     fps = scene_plan["fps"]
@@ -87,6 +136,9 @@ def build_candidate_windows(scene_plan, transcript, manifest):
     clips = group_transcript_by_clip(transcript, manifest)
 
     windows = find_monotony_eligible_windows(scene_plan)
+
+    scenes_by_id = {scene["id"]: scene for scene in scene_plan["scenes"] if "timelineStartFrame" in scene}
+    chapters = chapters_from_scene_plan(scene_plan)
 
     candidates = []
 
@@ -99,6 +151,12 @@ def build_candidate_windows(scene_plan, transcript, manifest):
         if not matching:
             continue
 
+        parent = scenes_by_id.get(window["sceneId"])
+        absolute_frame = (
+            parent["timelineStartFrame"] + window["offsetInParentFrames"]
+            if parent else None
+        )
+
         candidates.append(
             {
                 "windowId": f"w{index}",
@@ -107,20 +165,58 @@ def build_candidate_windows(scene_plan, transcript, manifest):
                 "offsetInParentFrames": window["offsetInParentFrames"],
                 "maxDurationInParentFrames": window["maxDurationInParentFrames"],
                 "text": " ".join(segment["text"] for segment in matching),
+                "chapterId": (
+                    chapter_for_absolute_frame(chapters, absolute_frame)
+                    if absolute_frame is not None else None
+                ),
             }
         )
 
     return candidates
 
 
-def format_windows_for_prompt(candidates):
+def format_windows_for_prompt(candidates, chapters=None):
+    """Groups candidate windows under their chapter heading (falling back to
+    an "(intro)" heading for windows before the first title card, or
+    "(unplaced)" for the rare case a window's parent scene can't be
+    resolved) — a director reasoning about one chapter's visual story at a
+    time needs its windows presented together, not as one flat list with no
+    structure. chapters is optional so callers/tests that only care about
+    the flat-list behavior can omit it."""
+
+    chapters_by_id = {c["chapterId"]: c for c in (chapters or [])}
+
+    grouped = {}
+    order = []
+
+    for candidate in candidates:
+
+        chapter_id = candidate.get("chapterId")
+
+        if chapter_id not in grouped:
+            grouped[chapter_id] = []
+            order.append(chapter_id)
+
+        grouped[chapter_id].append(candidate)
 
     lines = []
 
-    for candidate in candidates:
-        lines.append(f"[{candidate['windowId']}]")
-        lines.append(candidate["text"])
+    for chapter_id in order:
+
+        heading = "(intro, before the first chapter)"
+
+        if chapter_id in chapters_by_id:
+            heading = f'Chapter "{chapters_by_id[chapter_id]["text"]}"'
+        elif chapter_id is not None:
+            heading = "(unplaced)"
+
+        lines.append(f"=== {heading} ===")
         lines.append("")
+
+        for candidate in grouped[chapter_id]:
+            lines.append(f"[{candidate['windowId']}]")
+            lines.append(candidate["text"])
+            lines.append("")
 
     return "\n".join(lines)
 
@@ -234,6 +330,41 @@ def is_diagram_grounded(diagram, source_text):
     return True
 
 
+def is_terms_grounded(terms, source_text):
+    """Grounding check for a proposed "side-terms" moment: same
+    any-word-matches discipline as is_diagram_grounded (terms are short
+    words/phrases, not full sentences, so is_grounded's stricter
+    70%-of-words threshold is noisier here) — every term must have at
+    least one word (or stem) actually present in the window's transcript
+    text, catching a fabricated term the presenter never said."""
+
+    if not terms or len(terms) > MAX_SIDE_TERMS:
+        return False
+
+    source_words = set(normalize_for_grounding(source_text).split())
+    source_stems = {_stem(word) for word in source_words}
+
+    for term in terms:
+
+        text = term.get("text")
+
+        if not text:
+            return False
+
+        term_words = normalize_for_grounding(text).split()
+
+        if not term_words:
+            return False
+
+        if not any(
+            word in source_words or _stem(word) in source_stems
+            for word in term_words
+        ):
+            return False
+
+    return True
+
+
 def duration_for_treatment(treatment, style=None):
     if style is None:
         style = load_style()
@@ -246,11 +377,16 @@ def duration_for_treatment(treatment, style=None):
         "side-image": duration_frames["sideImage"],
         "side-code": duration_frames["sideCode"],
         "side-diagram": duration_frames["sideDiagram"],
+        "side-terms": duration_frames["sideTerms"],
         "full-visual": duration_frames["fullVisual"],
     }[treatment]
 
 
-SIDE_TREATMENTS = {"side-text", "side-image", "side-code", "side-diagram"}
+SIDE_TREATMENTS = {"side-text", "side-image", "side-code", "side-diagram", "side-terms"}
+
+VALID_SIDE_TEXT_STYLES = {"quote", "title"}
+VALID_TERM_LEVELS = {"muted", "primary", "accent"}
+MAX_SIDE_TERMS = 4
 
 
 def cap_full_visual_ratio(proposals, style):
@@ -304,11 +440,13 @@ def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, pr
     candidates = build_candidate_windows(scene_plan, transcript, manifest)
 
     if not candidates:
-        return []
+        return [], ""
+
+    chapters = chapters_from_scene_plan(scene_plan)
 
     prompt = prompt_template.replace(
         "{windows}",
-        format_windows_for_prompt(candidates)
+        format_windows_for_prompt(candidates, chapters)
     ).replace(
         "{assets}",
         format_assets_for_prompt(assets)
@@ -320,7 +458,17 @@ def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, pr
         episode_context
     )
 
-    response = llm.complete_json(prompt, thinking=False)
+    # thinking=True (was False): this single call now does two things —
+    # reason chapter-by-chapter about each chapter's own visual story (which
+    # needs weighing pacing/variety/where restraint is better than another
+    # treatment), THEN commit each window's treatment against that
+    # reasoning. That's a genuinely harder task than the old "judge this
+    # window in isolation" version, in the same way generate_title_scenes.py
+    # already needed thinking=True to reliably find real chapter boundaries
+    # across a whole episode instead of a handful.
+    response = llm.complete_json(prompt, thinking=True)
+
+    storyboard_notes = response.get("storyboardNotes", "")
 
     candidates_by_id = {c["windowId"]: c for c in candidates}
     assets_by_id = {a["id"]: a for a in assets}
@@ -366,11 +514,15 @@ def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, pr
 
             text = moment.get("text")
             presenter_side = moment.get("presenterSide")
+            side_text_style = moment.get("sideTextStyle", "quote")
 
             if not text or not is_grounded(text, candidate["text"]):
                 continue
 
             if presenter_side not in ("left", "right"):
+                continue
+
+            if side_text_style not in VALID_SIDE_TEXT_STYLES:
                 continue
 
             claimed_windows.add(window_id)
@@ -384,6 +536,40 @@ def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, pr
                     "maxDurationInParentFrames": candidate["maxDurationInParentFrames"],
                     "treatment": "side-text",
                     "text": text,
+                    "sideTextStyle": side_text_style,
+                    "presenterSide": presenter_side,
+                    "reason": moment.get("reason", ""),
+                }
+            )
+
+        elif treatment == "side-terms":
+
+            terms = moment.get("terms")
+            presenter_side = moment.get("presenterSide")
+
+            if not isinstance(terms, list) or presenter_side not in ("left", "right"):
+                continue
+
+            if not all(
+                isinstance(term, dict) and term.get("level") in VALID_TERM_LEVELS
+                for term in terms
+            ):
+                continue
+
+            if not is_terms_grounded(terms, candidate["text"]):
+                continue
+
+            claimed_windows.add(window_id)
+
+            proposals.append(
+                {
+                    "windowId": window_id,
+                    "sceneId": candidate["sceneId"],
+                    "videoId": candidate["videoId"],
+                    "offsetInParentFrames": candidate["offsetInParentFrames"],
+                    "maxDurationInParentFrames": candidate["maxDurationInParentFrames"],
+                    "treatment": "side-terms",
+                    "terms": terms,
                     "presenterSide": presenter_side,
                     "reason": moment.get("reason", ""),
                 }
@@ -623,7 +809,7 @@ def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, pr
 
     proposals = [p for p in proposals if p["maxDurationInParentFrames"] > 0]
 
-    return proposals
+    return proposals, storyboard_notes
 
 
 def dedupe_overlapping_windows(proposals, style=None):
@@ -748,6 +934,12 @@ def merge_moment_scenes(scene_plan, proposals):
         if proposal.get("diagram"):
             moment_scene["diagram"] = proposal["diagram"]
 
+        if proposal.get("sideTextStyle"):
+            moment_scene["sideTextStyle"] = proposal["sideTextStyle"]
+
+        if proposal.get("terms"):
+            moment_scene["terms"] = proposal["terms"]
+
         insert_overlay_scene(
             merged_scenes,
             scenes_by_id,
@@ -820,7 +1012,7 @@ def main():
     print()
 
     try:
-        proposals = propose_moments(
+        proposals, storyboard_notes = propose_moments(
             scene_plan,
             transcript,
             manifest,
@@ -831,7 +1023,7 @@ def main():
             episode_context=load_episode_narrative_text(episode)
         )
 
-        write_json_atomic(output_file, {"moments": proposals})
+        write_json_atomic(output_file, {"moments": proposals, "storyboardNotes": storyboard_notes})
 
         scene_plan = merge_moment_scenes(scene_plan, proposals)
 

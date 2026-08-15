@@ -100,6 +100,24 @@ describe("layoutWindowsForScene", () => {
         expect(windows.map((w) => w.side)).toEqual(["left", "right"]);
         expect(windows[0].start).toBeLessThan(windows[1].start);
     });
+
+    it("moves the presenter for a side-terms moment, same as any other side-* treatment", () => {
+        const scene = presenterScene({ durationInFrames: 900 });
+        const moment = sideMoment({
+            treatment: "side-terms",
+            text: undefined,
+            terms: [{ text: "Aggregates", level: "primary" }],
+            presenterSide: "right",
+            offsetInParentFrames: 300,
+            durationInFrames: 150,
+        });
+
+        const windows = layoutWindowsForScene(scene, [moment]);
+
+        expect(windows).toEqual([
+            { start: 300 - TRANSITION_FRAMES, end: 300 + 150 + TRANSITION_FRAMES, side: "right" },
+        ]);
+    });
 });
 
 describe("captionHiddenWindowsForScene", () => {

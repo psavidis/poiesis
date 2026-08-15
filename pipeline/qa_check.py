@@ -132,7 +132,7 @@ def is_overlay_scene(scene):
 # side, so it belongs with bottom-callout here (no presenterSide), not
 # with the side-* treatments.
 MOMENT_REQUIRES_NO_SIDE = {"bottom-callout", "full-visual"}
-MOMENT_REQUIRES_SIDE = {"side-text", "side-image", "side-code", "side-diagram"}
+MOMENT_REQUIRES_SIDE = {"side-text", "side-image", "side-code", "side-diagram", "side-terms"}
 
 # Mirrors Episode.tsx's TRANSITION_FRAMES / generate_moments.py's
 # TRANSITION_FRAMES — the presenter's actual on-screen shift window is a

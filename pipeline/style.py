@@ -17,6 +17,11 @@ DEFAULTS = {
             "sideImage": 150,
             "sideCode": 240,
             "sideDiagram": 180,
+            # A stack of several staggered-reveal terms needs enough time
+            # for the last one to finish revealing and still be readable —
+            # closer to sideDiagram's reveal-heavy duration than a single
+            # static phrase.
+            "sideTerms": 180,
             "fullVisual": 300,
         },
         # A full-visual moment hides the presenter entirely, so it should

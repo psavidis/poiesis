@@ -69,7 +69,7 @@ export interface TitleScene {
 
 // A moment's treatment implies whether/how the presenter moves:
 // "bottom-callout" leaves the presenter full-frame (presenterSide absent);
-// "side-text"/"side-image"/"side-code"/"side-diagram" require a
+// "side-text"/"side-image"/"side-code"/"side-diagram"/"side-terms" require a
 // presenterSide ("left" or "right") — the presenter animates to that side
 // only for this moment's own window (plus a short transition pad either
 // side), then animates back to center once the moment ends, rather than
@@ -79,7 +79,29 @@ export interface TitleScene {
 // but Episode.tsx's layoutWindowsForScene treats it as a fourth ("hidden")
 // state rather than reusing bottom-callout's "stays centered" meaning.
 // Validated in pipeline/generate_moments.py, not just assumed.
-export type MomentTreatment = "bottom-callout" | "side-text" | "side-image" | "side-code" | "side-diagram" | "full-visual";
+export type MomentTreatment = "bottom-callout" | "side-text" | "side-image" | "side-code" | "side-diagram" | "side-terms" | "full-visual";
+
+// "quote" (default, existing behavior unchanged) renders a single phrase
+// exactly as before. "title" is a bolder/larger typographic treatment for a
+// moment that's announcing a chapter/concept rather than quoting a claim —
+// same component, same grounding, same side-panel positioning, only the
+// type-scale branch differs. Only meaningful when treatment is "side-text";
+// deliberately NOT a new MomentTreatment value, since the only real
+// difference from ordinary side-text is typographic weight, not layout or
+// validation.
+export type SideTextStyle = "quote" | "title";
+
+// One term in a "side-terms" moment's layered typography stack (see
+// SideTerms.tsx) — a small, fixed set of emphasis levels rather than
+// freeform size/weight/color per term, so independently-generated moments
+// stay visually consistent with each other instead of each one inventing
+// its own type scale.
+export type TermEmphasisLevel = "muted" | "primary" | "accent";
+
+export interface TermEmphasis {
+    text: string;
+    level: TermEmphasisLevel;
+}
 
 // What fills the frame for a "full-visual" moment — reuses the same
 // underlying data (assetId/diagram/text) other treatments already carry
@@ -125,6 +147,11 @@ export interface MomentScene {
     // assetId/diagram (already-present fields above) the full-frame
     // content should render from.
     fullVisualKind?: FullVisualKind;
+    // Only meaningful when treatment is "side-text" — see SideTextStyle.
+    // Absent/undefined means "quote", same as before this field existed.
+    sideTextStyle?: SideTextStyle;
+    // Required for "side-terms" — the layered term list (see TermEmphasis).
+    terms?: TermEmphasis[];
     parentSceneId: string;
     offsetInParentFrames: number;
     durationInFrames: number;

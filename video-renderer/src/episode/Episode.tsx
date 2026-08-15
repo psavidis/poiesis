@@ -19,6 +19,7 @@ import { DiagramBlock } from "./DiagramBlock";
 import { EpisodeImage } from "./EpisodeImage";
 import { FullVisualMoment } from "./FullVisualMoment";
 import { BottomCallout, SideImage, SideText } from "./MomentTreatments";
+import { SideTerms } from "./SideTerms";
 import { TRANSITION_FRAMES } from "./timing";
 
 // Frame geometry for each layout, as a fraction of the full frame. "left"/
@@ -401,7 +402,7 @@ const MomentSequence = ({
 
         case "side-text": {
             const presenterOnLeft = scene.presenterSide === "left";
-            return <SideText text={scene.text ?? ""} presenterOnLeft={presenterOnLeft} />;
+            return <SideText text={scene.text ?? ""} presenterOnLeft={presenterOnLeft} style={scene.sideTextStyle} />;
         }
 
         case "side-image": {
@@ -432,6 +433,12 @@ const MomentSequence = ({
             if (!scene.diagram) return null;
             const presenterOnLeft = scene.presenterSide === "left";
             return <DiagramBlock diagram={scene.diagram} presenterOnLeft={presenterOnLeft} />;
+        }
+
+        case "side-terms": {
+            if (!scene.terms || scene.terms.length === 0) return null;
+            const presenterOnLeft = scene.presenterSide === "left";
+            return <SideTerms terms={scene.terms} presenterOnLeft={presenterOnLeft} />;
         }
 
         case "full-visual": {
