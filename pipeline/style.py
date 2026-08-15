@@ -22,6 +22,10 @@ DEFAULTS = {
             # closer to sideDiagram's reveal-heavy duration than a single
             # static phrase.
             "sideTerms": 180,
+            # Two short flanking labels, comparable read time to a single
+            # sideText phrase — the presenter doesn't move for this one, so
+            # there's no slide-aside animation eating into the window.
+            "comparison": 150,
             "fullVisual": 300,
         },
         # A full-visual moment hides the presenter entirely, so it should

@@ -68,18 +68,19 @@ export interface TitleScene {
 }
 
 // A moment's treatment implies whether/how the presenter moves:
-// "bottom-callout" leaves the presenter full-frame (presenterSide absent);
-// "side-text"/"side-image"/"side-code"/"side-diagram"/"side-terms" require a
-// presenterSide ("left" or "right") — the presenter animates to that side
-// only for this moment's own window (plus a short transition pad either
-// side), then animates back to center once the moment ends, rather than
-// for its whole parent scene's duration. "full-visual" hides the presenter
-// entirely for its own window (plus the same transition pad) instead of
-// moving it to a side — presenterSide is absent, same as bottom-callout,
-// but Episode.tsx's layoutWindowsForScene treats it as a fourth ("hidden")
-// state rather than reusing bottom-callout's "stays centered" meaning.
-// Validated in pipeline/generate_moments.py, not just assumed.
-export type MomentTreatment = "bottom-callout" | "side-text" | "side-image" | "side-code" | "side-diagram" | "side-terms" | "full-visual";
+// "bottom-callout" and "comparison" leave the presenter full-frame
+// (presenterSide absent); "side-text"/"side-image"/"side-code"/
+// "side-diagram"/"side-terms" require a presenterSide ("left" or "right")
+// — the presenter animates to that side only for this moment's own window
+// (plus a short transition pad either side), then animates back to center
+// once the moment ends, rather than for its whole parent scene's duration.
+// "full-visual" hides the presenter entirely for its own window (plus the
+// same transition pad) instead of moving it to a side — presenterSide is
+// absent, same as bottom-callout, but Episode.tsx's layoutWindowsForScene
+// treats it as a fourth ("hidden") state rather than reusing bottom-callout's
+// "stays centered" meaning. Validated in pipeline/generate_moments.py, not
+// just assumed.
+export type MomentTreatment = "bottom-callout" | "side-text" | "side-image" | "side-code" | "side-diagram" | "side-terms" | "comparison" | "full-visual";
 
 // "quote" (default, existing behavior unchanged) renders a single phrase
 // exactly as before. "title" is a bolder/larger typographic treatment for a
@@ -101,6 +102,15 @@ export type TermEmphasisLevel = "muted" | "primary" | "accent";
 export interface TermEmphasis {
     text: string;
     level: TermEmphasisLevel;
+}
+
+// Exactly two labels in fixed left/right slots — deliberately not TermEmphasis's
+// N-item stack, since a comparison is always a two-way contrast, not a list of
+// related terms. The presenter stays centered/full-frame between them (see
+// MomentTreatment above), unlike every side-* treatment.
+export interface ComparisonData {
+    left: string;
+    right: string;
 }
 
 // What fills the frame for a "full-visual" moment — reuses the same
@@ -152,6 +162,8 @@ export interface MomentScene {
     sideTextStyle?: SideTextStyle;
     // Required for "side-terms" — the layered term list (see TermEmphasis).
     terms?: TermEmphasis[];
+    // Required for "comparison" — the two flanking labels (see ComparisonData).
+    comparison?: ComparisonData;
     parentSceneId: string;
     offsetInParentFrames: number;
     durationInFrames: number;

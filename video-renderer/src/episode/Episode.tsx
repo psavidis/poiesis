@@ -15,6 +15,7 @@ import { AnimatedTitle } from "./AnimatedTitle";
 import { BeatOverlay } from "./BeatOverlay";
 import { CaptionText } from "./CaptionText";
 import { CodeBlock } from "./CodeBlock";
+import { Comparison } from "./Comparison";
 import { DiagramBlock } from "./DiagramBlock";
 import { EpisodeImage } from "./EpisodeImage";
 import { FullVisualMoment } from "./FullVisualMoment";
@@ -439,6 +440,11 @@ const MomentSequence = ({
             if (!scene.terms || scene.terms.length === 0) return null;
             const presenterOnLeft = scene.presenterSide === "left";
             return <SideTerms terms={scene.terms} presenterOnLeft={presenterOnLeft} />;
+        }
+
+        case "comparison": {
+            if (!scene.comparison) return null;
+            return <Comparison comparison={scene.comparison} />;
         }
 
         case "full-visual": {

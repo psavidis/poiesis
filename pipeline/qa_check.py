@@ -130,8 +130,10 @@ def is_overlay_scene(scene):
 # not a moment-vs-parent one — there's no parent "layout" field anymore.
 # "full-visual" hides the presenter entirely rather than moving it to a
 # side, so it belongs with bottom-callout here (no presenterSide), not
-# with the side-* treatments.
-MOMENT_REQUIRES_NO_SIDE = {"bottom-callout", "full-visual"}
+# with the side-* treatments. "comparison" likewise leaves the presenter
+# centered/full-frame — its two labels flank the frame's outer margins
+# instead of requiring the presenter to vacate one side.
+MOMENT_REQUIRES_NO_SIDE = {"bottom-callout", "comparison", "full-visual"}
 MOMENT_REQUIRES_SIDE = {"side-text", "side-image", "side-code", "side-diagram", "side-terms"}
 
 # Mirrors Episode.tsx's TRANSITION_FRAMES / generate_moments.py's

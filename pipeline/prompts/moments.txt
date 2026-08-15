@@ -1,7 +1,9 @@
 You are acting as the visual director for a software-engineering YouTube
-video — not as someone filling in a form one window at a time. Your job has
-two phases: first think through the episode's visual story chapter by
-chapter, then commit each window's treatment against that thinking.
+video — not as someone filling in a form one window at a time. A separate
+earlier pass already thought through this episode's visual story chapter by
+chapter (see the storyboard reasoning below, one entry per chapter) — your
+job now is to commit each window's treatment against that thinking, not to
+re-derive it.
 
 The candidate windows below are stretches of transcript where the presenter
 has been talking with no visual change for a while, grouped under the
@@ -9,36 +11,9 @@ chapter (title card) they fall within. A chapter is a real narrative unit —
 it has its own idea, its own arc, and deserves its own visual story, not a
 pile of independently-judged windows that happen to share a heading.
 
-=== PHASE 1: Chapter-by-chapter story ===
-
-Before assigning any treatment, go chapter by chapter (in the order they're
-given) and reason briefly about each one:
-
-- What is this chapter actually trying to make the viewer understand?
-- Does it need a constructed visual (diagram) that helps build a mental
-  model, a real image/code snippet that grounds it in something concrete, a
-  single strong statement that deserves emphasis, or is it fine with no
-  visual change at all?
-- Looking at the chapters so far — are you about to repeat the same
-  treatment back to back? Repetition reads as a template, not direction.
-  Favor variety across chapters unless a chapter genuinely calls for the
-  same tool a neighboring one used.
-- Is there a genuinely strong candidate for "full-visual" — the one moment
-  in this chapter (if any) where a picture, diagram, or statement is central
-  enough that it should take over the whole screen for a few seconds? Most
-  chapters will have none. Across the whole episode, look for the one or
-  two chapters where this is real, rather than defaulting to never using it.
-
-Write this reasoning as "storyboardNotes" — a few sentences per chapter,
-concatenated into one string. This is working notes for a human reviewing
-your decisions, not shown to the viewer — be concrete about *why*, not just
-*what*.
-
-=== PHASE 2: Per-window commitment ===
-
-Only now, for each window, decide ONE of these treatments, or propose
-nothing — justified by your chapter reasoning above, not judged as if the
-window were the only thing that exists:
+For each window, decide ONE of these treatments, or propose nothing —
+justified by the storyboard reasoning for that window's chapter, not judged
+as if the window were the only thing that exists:
 
 1. "bottom-callout": a short on-screen phrase, quoted directly from what is
    said in that window, shown as an overlay on top of the still-playing
@@ -100,7 +75,22 @@ window were the only thing that exists:
    Keep it small — at most 4 terms. If there's really only one concept here,
    use "side-text" instead; "side-terms" is for when there are genuinely
    several related terms worth naming together.
-7. "full-visual": the visual takes over the ENTIRE frame and the presenter
+7. "comparison": exactly two short labels shown flanking the presenter, one
+   on the far left and one on the far right, while the presenter stays
+   centered and full-frame (unlike every side-* treatment above, the
+   presenter does NOT move for this one). Use this ONLY when the window is
+   drawing a direct, explicit two-way contrast between two things (e.g. "X
+   vs Y", "not X, but Y") — not for a list of related terms (that's
+   "side-terms") and not for a single claim (that's "side-text" or
+   "bottom-callout"). Decide:
+   - "left": the label for the first/left-hand side of the contrast, taken
+     from or directly reflecting what is actually said.
+   - "right": the label for the second/right-hand side of the contrast,
+     same grounding requirement.
+   Keep both labels short — a word or short phrase, not a sentence. Do NOT
+   include "presenterSide" for "comparison" — same reason as full-visual,
+   there's no side to choose.
+8. "full-visual": the visual takes over the ENTIRE frame and the presenter
    disappears from view for a few seconds while their voice continues as
    narration. This is a bigger commitment than any "side-*" treatment, so
    reserve it for moments where the visual is central enough to genuinely
@@ -121,7 +111,7 @@ window were the only thing that exists:
      the window — same grounding rules as "bottom-callout"/"side-text" —
      used when the moment's weight comes from the words themselves, not an
      image or diagram.
-8. Nothing.
+9. Nothing.
 
 Use these sparingly and deliberately — most windows should get NOTHING.
 Reserve "side-text"/"side-image"/"side-code"/"side-diagram"/"side-terms"
@@ -134,8 +124,9 @@ or "right") — the content fills the opposite side. Prefer "left" for the
 presenter unless there's a specific reason to use "right" (e.g. two
 consecutive side treatments in the same clip alternating sides feels more
 dynamic than always the same side). Do NOT include "presenterSide" for
-"full-visual" — the presenter isn't moved to a side, it's hidden entirely,
-so there's no side to choose.
+"full-visual" or "comparison" — for full-visual the presenter is hidden
+entirely, and for comparison the presenter stays centered, so in both
+cases there's no side to choose.
 
 Text (for "bottom-callout" and "side-text") must be a short phrase taken
 directly from what is actually said in the window — quote it closely, do
@@ -187,11 +178,10 @@ Keep all string values on a single line.
 Schema:
 
 {
-  "storyboardNotes": "your Phase 1 chapter-by-chapter reasoning, as one string",
   "moments": [
     {
       "windowId": "string, must match a windowId below",
-      "treatment": "bottom-callout" | "side-text" | "side-image" | "side-code" | "side-diagram" | "side-terms" | "full-visual",
+      "treatment": "bottom-callout" | "side-text" | "side-image" | "side-code" | "side-diagram" | "side-terms" | "comparison" | "full-visual",
       "fullVisualKind": "image" | "diagram" | "text" — required for full-visual, omit otherwise",
       "text": "required for bottom-callout, side-text, and full-visual with fullVisualKind 'text'",
       "sideTextStyle": "quote" | "title" — optional for side-text, defaults to 'quote' if omitted, not used otherwise",
@@ -199,7 +189,8 @@ Schema:
       "codeAssetId": "required for side-code, must match a codeAssetId below",
       "diagram": "required for side-diagram, and for full-visual with fullVisualKind 'diagram': { nodes: [{id, label}], edges: [{from, to, label?}], layout: 'horizontal'|'vertical' }",
       "terms": "required for side-terms: [{ text, level: 'muted'|'primary'|'accent' }], at most 4 terms",
-      "presenterSide": "left" | "right" — required for side-text, side-image, side-code, side-diagram, and side-terms, omit for bottom-callout and full-visual",
+      "comparison": "required for comparison: { left, right }, both short phrases",
+      "presenterSide": "left" | "right" — required for side-text, side-image, side-code, side-diagram, and side-terms, omit for bottom-callout, comparison, and full-visual",
       "reason": "short justification"
     }
   ]
@@ -211,6 +202,12 @@ this to judge how central a window's content is to the episode as a whole,
 not just to fill in unfamiliar terms:
 
 {episode_context}
+
+Storyboard reasoning from the earlier chapter-level pass — this is the
+"why" your per-window treatment decisions should follow. Each chapter's
+notes explain what that chapter needs and why:
+
+{storyboard}
 
 Candidate windows, grouped by chapter:
 

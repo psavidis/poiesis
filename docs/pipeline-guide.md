@@ -40,6 +40,9 @@ original_footage/*.mov
  generate_title_scenes.py  -> processing/title_scenes.json + merges "title" scenes into scene-plan.json
       |
       v
+ generate_storyboard.py    -> processing/storyboard.json  (chapter-level visual-story reasoning,
+      |                       read as context by generate_moments.py below — no scenes of its own)
+      v
  generate_moments.py       -> processing/moments.json + merges "moment" scenes (and parent layout)
       |
       v
@@ -70,7 +73,7 @@ Run all the stages above `key_footage.py` in one shot with `./create_episode.sh 
 |---|---|---|---|
 | `presenter` | `analyze_scenes.py` (deterministic) | your talking-head footage, silence-trimmed | absolute `timelineStartFrame` |
 | `title` | `generate_title_scenes.py` (AI) | full-screen text card, anchored to the transcript segment where a new topic actually begins — can split a clip mid-recording, not just sit at a clip boundary | absolute `timelineStartFrame` |
-| `moment` | `generate_moments.py` (AI) | `bottom-callout` (short phrase over the full-frame presenter), `side-text` (longer phrase filling one side), `side-image` (an indexed asset filling one side), `side-code` (a real source file from `code/`, syntax-highlighted), `side-diagram` (a small LLM-authored node/edge diagram), or `full-visual` (an image, diagram, or headline phrase filling the ENTIRE frame — the presenter is hidden, voice continues) | relative to a parent `presenter` scene |
+| `moment` | `generate_moments.py` (AI) | `bottom-callout` (short phrase over the full-frame presenter), `side-text` (longer phrase filling one side), `side-image` (an indexed asset filling one side), `side-code` (a real source file from `code/`, syntax-highlighted), `side-diagram` (a small LLM-authored node/edge diagram), `side-terms` (a stack of 2-4 related terms, each with an emphasis level), `comparison` (two short labels flanking the full-frame presenter — a direct two-way contrast, presenter stays centered), or `full-visual` (an image, diagram, or headline phrase filling the ENTIRE frame — the presenter is hidden, voice continues) | relative to a parent `presenter` scene |
 | `image` | hand-authored / edit-plan only | inset picture-in-picture overlay from `graphics/` | relative to a parent `presenter` scene |
 | `caption` | `generate_captions.py` (deterministic) | burned-in subtitle text, lower-third | relative to a parent `presenter` scene |
 | `beat` | `generate_emphasis.py` (AI) | `word-pop` (a word/phrase pops into view), `underline` (an accent line draws under it), or `icon-accent` (the word/phrase next to a small icon — arrow/check/warning/gear) — a brief kinetic accent on a single word or short phrase, timed to when it's actually spoken | relative to a parent `presenter` scene |
@@ -86,13 +89,16 @@ text must actually appear in what was said; `side-image`/`side-code`/`full-visua
 selections must reference a real, indexed asset (never an invented id); `side-diagram`/
 `full-visual` diagram node labels are checked against the window's transcript text as a guard
 against wholesale fabrication (diagrams are the one content type where the LLM constructs new
-structure rather than selecting from a list — see below). `side-text`/`side-image`/`side-code`/
-`side-diagram` require a `presenterSide` (`"left"`/`"right"`) so the presenter animates to that
-side to make room — two moments on the same parent can't claim overlapping on-screen windows.
-`bottom-callout` and `full-visual` never set `presenterSide`: a `bottom-callout` leaves the
-presenter full-frame, while `full-visual` hides the presenter entirely (rather than moving it
-to a side) for its own window — reserved for visuals that need the whole frame, and kept rarer
-than the side treatments (see `config.json`'s `style.moments.fullVisualMaxRatioToSideMoments`).
+structure rather than selecting from a list — see below); `side-terms`/`comparison` labels are
+checked the same way, word-by-word against the transcript, since they're short phrases rather
+than full sentences. `side-text`/`side-image`/`side-code`/`side-diagram`/`side-terms` require a
+`presenterSide` (`"left"`/`"right"`) so the presenter animates to that side to make room — two
+moments on the same parent can't claim overlapping on-screen windows. `bottom-callout`,
+`comparison`, and `full-visual` never set `presenterSide`: `bottom-callout` and `comparison`
+both leave the presenter full-frame (comparison's two labels flank the outer margins instead of
+requiring a side), while `full-visual` hides the presenter entirely (rather than moving it to a
+side) for its own window — reserved for visuals that need the whole frame, and kept rarer than
+the side treatments (see `config.json`'s `style.moments.fullVisualMaxRatioToSideMoments`).
 Nothing is trusted blindly.
 
 `beat` scenes work differently from `moment`/`title`: they're not monotony-gated, and they're
@@ -231,6 +237,15 @@ scene plays audio from the *original* (unkeyed) source file via a separate `<Aud
 element, trimmed to the same `sourceStartFrame`/`sourceEndFrame` as the video, regardless of
 whether that scene uses keyed or raw footage. So audio is present and in sync whether or not
 you've run background removal.
+
+**No horizontal flip, anywhere in this path**: `key_footage.py` never applies an `hflip`, and
+neither does the Remotion compositing path (`Episode.tsx` and the moment components only ever
+use uniform `scale()`, never a negative-X transform). Footage should be recorded and, if
+finished outside Poiesis (e.g. a manual DaVinci pass), delivered without a horizontal-flip
+effect applied — a flip meant to "unmirror" a webcam preview will incorrectly mirror footage
+that was never mirrored to begin with (verified on real source footage: logos/text on
+clothing read correctly in the raw recording). If a rendered episode looks mirrored, the cause
+is upstream of this pipeline, not in it.
 
 ## Looping video background (behind the presenter)
 
