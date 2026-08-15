@@ -10,15 +10,24 @@ export const CaptionText = ({ text }: { text: string }) => {
     const frame = useCurrentFrame();
     const { durationInFrames } = useVideoConfig();
 
-    const opacity = interpolate(
-        frame,
-        [0, 4, durationInFrames - 4, durationInFrames],
-        [0, 1, 1, 0],
-        {
-            extrapolateLeft: "clamp",
-            extrapolateRight: "clamp",
-        }
-    );
+    // Fade envelope needs 4 frames in + 4 out. Below 8 total frames (a
+    // caption clipped to a sliver by a scene trim boundary) there isn't
+    // room for a separate fade-in and fade-out breakpoint without the
+    // interpolate() input range colliding, so just cut straight to full
+    // opacity instead.
+    const fadeFrames = Math.min(4, Math.floor((durationInFrames - 1) / 2));
+
+    const opacity = fadeFrames <= 0
+        ? 1
+        : interpolate(
+            frame,
+            [0, fadeFrames, durationInFrames - fadeFrames, durationInFrames],
+            [0, 1, 1, 0],
+            {
+                extrapolateLeft: "clamp",
+                extrapolateRight: "clamp",
+            }
+        );
 
     return (
         <AbsoluteFill

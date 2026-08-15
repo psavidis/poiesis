@@ -8,6 +8,9 @@ from pathlib import Path
 PIPELINE_DIR = Path(__file__).parent
 PROJECT_ROOT = PIPELINE_DIR.parent
 
+# Must match CaptionText.tsx's fade envelope (4 frames in + 4 frames out).
+CAPTION_MIN_DURATION_FRAMES = 8
+
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from generate_title_scenes import write_json_atomic  # noqa: E402
@@ -81,6 +84,14 @@ def captions_for_presenter_scene(scene, transcript, fps):
         # still on a long sentence is a minor style issue; one that vanishes
         # before the speaker finishes is a broken experience.
         duration = clipped_end - clipped_start
+
+        # Renderer's CaptionText fades in/out over 4 frames each way, so
+        # anything shorter than that fade envelope (8 frames) can't be
+        # trimmed to just a sliver — a segment straddling a scene's trim
+        # boundary and clipped down to a handful of frames isn't worth
+        # showing anyway.
+        if duration < CAPTION_MIN_DURATION_FRAMES:
+            continue
 
         text = segment["text"].strip()
 

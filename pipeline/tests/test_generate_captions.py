@@ -91,6 +91,25 @@ def test_captions_for_presenter_scene_does_not_cap_long_segments():
     assert captions[0]["text"] == "a very long uninterrupted segment"
 
 
+def test_captions_for_presenter_scene_drops_slivers_clipped_below_fade_envelope():
+    # Regression guard: a segment straddling a trim boundary can clip down
+    # to just a few frames. CaptionText's fade needs >=8 frames (4 in + 4
+    # out); anything shorter crashed the renderer with a non-monotonic
+    # interpolate() inputRange. See scene-caption-25/55 in a real episode.
+    scene = _presenter_scene(source_start=60, source_end=300)
+
+    transcript = {
+        "segments": [
+            # frames 30 -> 65, clipped to [60, 65) = 5 frames, below the floor
+            {"start": 1.0, "end": 65 / 30, "text": "sliver"},
+        ]
+    }
+
+    captions = captions_for_presenter_scene(scene, transcript, fps=30)
+
+    assert captions == []
+
+
 def test_captions_for_presenter_scene_skips_blank_text():
     scene = _presenter_scene(source_start=0, source_end=300)
 
