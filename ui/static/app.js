@@ -627,22 +627,21 @@ const TREATMENT_LABELS = {
   comparison: "COMPARISON",
 };
 
-// Treatments whose content doesn't live in m.text (side-terms/side-diagram/
-// side-code/comparison all use their own field) get a plain read-only
-// summary instead of the free-text input — that input only ever writes to
-// m.text, so showing it for these treatments would look editable while
-// silently doing nothing to what actually renders. Remove-and-redo is the
-// correct edit path for these until each gets a real structured editor
-// (tracked separately, see #22 for the side-terms/side-text-style version
-// of this same gap).
-const NO_TEXT_EDIT_TREATMENTS = new Set(["side-terms", "side-diagram", "side-code", "comparison"]);
+// Treatments whose content doesn't live in m.text (side-diagram/side-code/
+// comparison all use their own field, and there's no per-field editor for
+// them yet) get a plain read-only summary instead of the free-text input —
+// that input only ever wrote to m.text, so showing it for these treatments
+// would look editable while silently doing nothing to what actually
+// renders. Remove-and-redo is the correct edit path for these until each
+// gets a real structured editor. side-terms and side-text (sideTextStyle)
+// got real editors below (see #22) and are no longer in this set.
+const NO_TEXT_EDIT_TREATMENTS = new Set(["side-diagram", "side-code", "comparison"]);
+
+const VALID_TERM_LEVELS = ["muted", "primary", "accent"];
 
 function summarizeMomentContent(m) {
   if (m.treatment === "comparison" && m.comparison) {
     return `${m.comparison.left || "?"} vs ${m.comparison.right || "?"}`;
-  }
-  if (m.treatment === "side-terms" && m.terms) {
-    return m.terms.map((t) => t.text).join(", ");
   }
   if (m.treatment === "side-diagram" && m.diagram) {
     return (m.diagram.nodes || []).map((n) => n.label).join(" → ");
@@ -651,6 +650,30 @@ function summarizeMomentContent(m) {
     return m.codeAssetId || "";
   }
   return "";
+}
+
+// side-terms gets one row per term (text input + level dropdown) instead
+// of a single field — a term stack is 2-4 independent {text, level} pairs,
+// not one string, so there's no single input that could represent it.
+function renderTermsEditor(terms) {
+  return `
+    <div class="moment-terms-editor">
+      ${(terms || [])
+        .map(
+          (t, ti) => `
+        <div class="moment-term-row" data-term-index="${ti}">
+          <input type="text" class="moment-term-text-input" value="${escapeHtml(t.text || "")}" />
+          <select class="moment-term-level-input">
+            ${VALID_TERM_LEVELS.map(
+              (level) => `<option value="${level}" ${level === t.level ? "selected" : ""}>${level}</option>`
+            ).join("")}
+          </select>
+        </div>
+      `
+        )
+        .join("")}
+    </div>
+  `;
 }
 
 function renderMomentRow(m, i, assetOptions) {
@@ -668,9 +691,24 @@ function renderMomentRow(m, i, assetOptions) {
           .join("")}
       </select>
     `
+      : m.treatment === "side-terms"
+      ? renderTermsEditor(m.terms)
       : NO_TEXT_EDIT_TREATMENTS.has(m.treatment)
       ? `<span class="moment-content-readonly">${escapeHtml(summarizeMomentContent(m))}</span>`
       : `<input type="text" class="moment-text-input" value="${escapeHtml(m.text || "")}" />`;
+
+  // sideTextStyle only applies to side-text — a dropdown next to its text
+  // input, not a replacement for it (both text and style are independently
+  // editable for this treatment).
+  const styleInput =
+    m.treatment === "side-text"
+      ? `
+      <select class="moment-style-input">
+        <option value="quote" ${(m.sideTextStyle || "quote") === "quote" ? "selected" : ""}>quote</option>
+        <option value="title" ${m.sideTextStyle === "title" ? "selected" : ""}>title</option>
+      </select>
+    `
+      : "";
 
   const sideNote = m.presenterSide ? `presenter → ${escapeHtml(m.presenterSide)} — ` : "";
 
@@ -678,6 +716,7 @@ function renderMomentRow(m, i, assetOptions) {
     <div class="ai-decision editable-scene" data-index="${i}">
       <span class="scene-type">${escapeHtml(label)}</span>
       ${contentInput}
+      ${styleInput}
       <span class="reason">${sideNote}clip ${escapeHtml(m.videoId || "?")} — offset ${m.offsetInParentFrames}f, up to ${m.maxDurationInParentFrames}f${m.reason ? ` — ${escapeHtml(m.reason)}` : ""}</span>
       <a class="secondary small adjust-timing-link" href="${previewAppUrl(state.episodePath, m.sceneId)}" target="_blank" rel="noopener">Adjust timing</a>
       <button class="secondary small remove-moment-btn" data-index="${i}">Remove</button>
@@ -756,6 +795,37 @@ async function wireMomentEditor(initialMoments) {
           };
         });
       }
+
+      const styleSelect = row.querySelector(".moment-style-input");
+      if (styleSelect) {
+        styleSelect.addEventListener("change", (e) => {
+          moments[index] = { ...moments[index], sideTextStyle: e.target.value };
+        });
+      }
+
+      // Each term row has its own text input + level dropdown — both write
+      // into the same position of moments[index].terms, since a term is one
+      // {text, level} pair, not two independently-tracked fields.
+      row.querySelectorAll(".moment-term-row").forEach((termRow) => {
+        const termIndex = Number(termRow.dataset.termIndex);
+
+        const updateTerm = (patch) => {
+          const terms = (moments[index].terms || []).map((t, ti) =>
+            ti === termIndex ? { ...t, ...patch } : t
+          );
+          moments[index] = { ...moments[index], terms };
+        };
+
+        const termTextInput = termRow.querySelector(".moment-term-text-input");
+        if (termTextInput) {
+          termTextInput.addEventListener("input", (e) => updateTerm({ text: e.target.value }));
+        }
+
+        const termLevelInput = termRow.querySelector(".moment-term-level-input");
+        if (termLevelInput) {
+          termLevelInput.addEventListener("change", (e) => updateTerm({ level: e.target.value }));
+        }
+      });
 
       row.querySelector(".remove-moment-btn").addEventListener("click", () => {
         moments.splice(index, 1);

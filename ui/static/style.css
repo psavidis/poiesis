@@ -380,6 +380,40 @@ a.secondary.small:hover {
   flex-basis: 100%;
 }
 
+.ai-decision.editable-scene .moment-terms-editor {
+  flex: 1;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.moment-term-row {
+  display: flex;
+  gap: 6px;
+}
+
+.moment-term-text-input {
+  flex: 1;
+  min-width: 120px;
+  padding: 6px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.moment-term-level-input,
+.moment-style-input {
+  padding: 6px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 14px;
+}
+
 .editor-actions {
   display: flex;
   align-items: center;

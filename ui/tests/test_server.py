@@ -256,6 +256,25 @@ def _side_image_payload(**overrides):
     return payload
 
 
+def _side_terms_payload(**overrides):
+    payload = {
+        "windowId": "w3",
+        "sceneId": "scene-001",
+        "videoId": "001",
+        "offsetInParentFrames": 30,
+        "maxDurationInParentFrames": 180,
+        "treatment": "side-terms",
+        "presenterSide": "left",
+        "terms": [
+            {"text": "Value Objects", "level": "muted"},
+            {"text": "Aggregates", "level": "primary"},
+        ],
+        "reason": "names the related DDD building blocks together",
+    }
+    payload.update(overrides)
+    return payload
+
+
 def test_update_moments_returns_404_without_scene_plan(tmp_path):
     episode = _make_episode(tmp_path)
 
@@ -294,6 +313,76 @@ def test_update_moments_writes_file_and_merges_scene_plan(tmp_path):
     assert len(moment_scenes) == 1
     assert moment_scenes[0]["text"] == "Edited emphasis"
     assert moment_scenes[0]["offsetInParentFrames"] == 15
+
+
+def test_update_moments_round_trips_edited_side_terms(tmp_path):
+    # Regression for #22: MomentProposal used to be missing the `terms`
+    # field entirely, so any save through this endpoint on a side-terms
+    # moment (even an edit to some other field on the same payload) would
+    # silently drop its terms array — pydantic parses only fields the model
+    # declares, so an undeclared `terms` key on the request body never
+    # reaches model_dump() at all.
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    edited_terms = [
+        {"text": "Value Objects", "level": "muted"},
+        {"text": "Aggregates", "level": "accent"},  # changed from "primary"
+        {"text": "Entities", "level": "primary"},  # newly added term
+    ]
+
+    response = client.put(
+        "/api/episode/moments",
+        params={"path": str(episode)},
+        json={"moments": [_side_terms_payload(terms=edited_terms)]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["moments"][0]["terms"] == edited_terms
+
+    moments_on_disk = json.loads(
+        (episode / "processing" / "moments.json").read_text()
+    )
+    assert moments_on_disk["moments"][0]["terms"] == edited_terms
+
+    scene_plan_on_disk = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    moment_scene = next(s for s in scene_plan_on_disk["scenes"] if s["type"] == "moment")
+    assert moment_scene["terms"] == edited_terms
+    assert "presenterSide" not in moment_scene or moment_scene["presenterSide"] == "left"
+
+
+def test_update_moments_round_trips_edited_side_text_style(tmp_path):
+    # Same gap as above, for sideTextStyle on a side-text moment.
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    payload = {
+        "windowId": "w4",
+        "sceneId": "scene-001",
+        "videoId": "001",
+        "offsetInParentFrames": 40,
+        "maxDurationInParentFrames": 150,
+        "treatment": "side-text",
+        "presenterSide": "right",
+        "text": "Introducing the pattern",
+        "sideTextStyle": "title",
+        "reason": "announces a new concept",
+    }
+
+    response = client.put(
+        "/api/episode/moments",
+        params={"path": str(episode)},
+        json={"moments": [payload]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["moments"][0]["sideTextStyle"] == "title"
+
+    scene_plan_on_disk = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    moment_scene = next(s for s in scene_plan_on_disk["scenes"] if s["type"] == "moment")
+    assert moment_scene["sideTextStyle"] == "title"
 
 
 def test_update_moments_does_not_attach_unrelated_fields_to_bottom_callout(tmp_path):

@@ -260,6 +260,8 @@ class MomentProposal(BaseModel):
     codeAssetId: str | None = None
     diagram: dict | None = None
     comparison: dict | None = None
+    terms: list[dict] | None = None
+    sideTextStyle: str | None = None
     caption: str | None = None
     reason: str = ""
 
