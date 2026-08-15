@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { CROSSFADE_TRANSITION_FRAMES, bottomCalloutWindowsForScene, clampedMomentDuration, crossfadeInFramesForScene, layoutWindowsForScene } from "./Episode";
+import { CROSSFADE_TRANSITION_FRAMES, captionHiddenWindowsForScene, clampedMomentDuration, crossfadeInFramesForScene, layoutWindowsForScene } from "./Episode";
 import { TRANSITION_FRAMES } from "./timing";
 import type { MomentScene, PresenterScene } from "./types";
 
@@ -102,12 +102,12 @@ describe("layoutWindowsForScene", () => {
     });
 });
 
-describe("bottomCalloutWindowsForScene", () => {
-    it("returns no windows when the scene has no bottom-callout moments", () => {
+describe("captionHiddenWindowsForScene", () => {
+    it("returns no windows when the scene has no bottom-callout or full-visual moments", () => {
         const scene = presenterScene();
         const moment = sideMoment({ treatment: "side-text", presenterSide: "left" });
 
-        expect(bottomCalloutWindowsForScene(scene, [moment])).toEqual([]);
+        expect(captionHiddenWindowsForScene(scene, [moment])).toEqual([]);
     });
 
     it("ignores moments belonging to a different parent scene", () => {
@@ -118,10 +118,10 @@ describe("bottomCalloutWindowsForScene", () => {
             parentSceneId: "scene-999",
         });
 
-        expect(bottomCalloutWindowsForScene(scene, [moment])).toEqual([]);
+        expect(captionHiddenWindowsForScene(scene, [moment])).toEqual([]);
     });
 
-    it("returns the callout's own on-screen window, unpadded (no transition pad, unlike layoutWindowsForScene)", () => {
+    it("returns a bottom-callout's own on-screen window, unpadded (no transition pad, unlike layoutWindowsForScene)", () => {
         const scene = presenterScene();
         const moment = sideMoment({
             treatment: "bottom-callout",
@@ -130,22 +130,38 @@ describe("bottomCalloutWindowsForScene", () => {
             durationInFrames: 90,
         });
 
-        expect(bottomCalloutWindowsForScene(scene, [moment])).toEqual([
+        expect(captionHiddenWindowsForScene(scene, [moment])).toEqual([
             { start: 300, end: 390 },
         ]);
     });
 
-    it("ignores side/full-visual moments — only bottom-callout occupies the caption's space", () => {
-        const scene = presenterScene();
-        const sideText = sideMoment({ treatment: "side-text", presenterSide: "left" });
-        const fullVisual = sideMoment({
-            id: "m-full",
+    it("returns a full-visual's window padded by TRANSITION_FRAMES, matching layoutWindowsForScene's " +
+        "own \"hidden\" window — the caption must disappear in sync with the presenter's own fade, " +
+        "not a beat early/late relative to it (regression: confirmed against a real render where the " +
+        "transcript caption rendered underneath a full-visual moment's own bordered frame)", () => {
+        const scene = presenterScene({ durationInFrames: 900 });
+        const moment = sideMoment({
             treatment: "full-visual",
             presenterSide: undefined,
-            fullVisualKind: "text",
+            fullVisualKind: "image",
+            offsetInParentFrames: 300,
+            durationInFrames: 150,
         });
 
-        expect(bottomCalloutWindowsForScene(scene, [sideText, fullVisual])).toEqual([]);
+        const captionWindows = captionHiddenWindowsForScene(scene, [moment]);
+        const layoutWindows = layoutWindowsForScene(scene, [moment]);
+
+        expect(captionWindows).toEqual([
+            { start: 300 - TRANSITION_FRAMES, end: 300 + 150 + TRANSITION_FRAMES },
+        ]);
+        expect(captionWindows[0]).toEqual({ start: layoutWindows[0].start, end: layoutWindows[0].end });
+    });
+
+    it("ignores side-* moments — the presenter only moves aside, never hiding the caption's own space", () => {
+        const scene = presenterScene();
+        const sideText = sideMoment({ treatment: "side-text", presenterSide: "left" });
+
+        expect(captionHiddenWindowsForScene(scene, [sideText])).toEqual([]);
     });
 
     it("returns multiple windows when several bottom-callouts target the same scene", () => {
@@ -165,9 +181,33 @@ describe("bottomCalloutWindowsForScene", () => {
             durationInFrames: 90,
         });
 
-        expect(bottomCalloutWindowsForScene(scene, [first, second])).toEqual([
+        expect(captionHiddenWindowsForScene(scene, [first, second])).toEqual([
             { start: 100, end: 190 },
             { start: 500, end: 590 },
+        ]);
+    });
+
+    it("returns both a bottom-callout window and a full-visual window when both target the same scene", () => {
+        const scene = presenterScene({ durationInFrames: 900 });
+        const callout = sideMoment({
+            id: "m-callout",
+            treatment: "bottom-callout",
+            presenterSide: undefined,
+            offsetInParentFrames: 100,
+            durationInFrames: 90,
+        });
+        const fullVisual = sideMoment({
+            id: "m-full",
+            treatment: "full-visual",
+            presenterSide: undefined,
+            fullVisualKind: "text",
+            offsetInParentFrames: 500,
+            durationInFrames: 90,
+        });
+
+        expect(captionHiddenWindowsForScene(scene, [callout, fullVisual])).toEqual([
+            { start: 100, end: 190 },
+            { start: 500 - TRANSITION_FRAMES, end: 500 + 90 + TRANSITION_FRAMES },
         ]);
     });
 });
