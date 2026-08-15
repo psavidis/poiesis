@@ -118,3 +118,47 @@ export async function editPlan(episodePath: string, instruction: string): Promis
     }
     return res.json();
 }
+
+export type RunMessage =
+    | { type: "start"; command: string }
+    | { type: "log"; line: string }
+    | { type: "error"; message: string }
+    | { type: "done"; exitCode: number }
+    | { type: "cancelled" };
+
+export interface RunHandle {
+    cancel: () => void;
+}
+
+// Shared WebSocket-run helper for /ws/pipeline/run, /ws/stage/run, and
+// /ws/render/run — all three speak the identical {type: start|log|error|
+// done|cancelled} protocol (see ui/server.py's _stream_command), so every
+// caller (the collapsed progress flow's "Start" button, Advanced's
+// per-stage Run/Re-run, its Render/QA-check buttons) shares one
+// implementation instead of three copies of the same WebSocket plumbing
+// ui/static/app.js's runOverWebSocket() used to be.
+export function runOverWebSocket(
+    path: string,
+    params: Record<string, unknown>,
+    onMessage: (msg: RunMessage) => void
+): RunHandle {
+    const protocol = API_BASE.startsWith("https:") ? "wss:" : "ws:";
+    const wsBase = API_BASE.replace(/^https?:/, protocol);
+    const socket = new WebSocket(`${wsBase}${path}`);
+
+    socket.addEventListener("open", () => {
+        socket.send(JSON.stringify(params));
+    });
+
+    socket.addEventListener("message", (event) => {
+        onMessage(JSON.parse(event.data) as RunMessage);
+    });
+
+    return {
+        cancel: () => {
+            if (socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({ type: "cancel" }));
+            }
+        },
+    };
+}

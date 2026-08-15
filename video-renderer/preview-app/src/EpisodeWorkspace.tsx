@@ -2,13 +2,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Player, type PlayerRef } from "@remotion/player";
 import { Episode } from "video-renderer-src/episode/Episode";
 import type { EpisodeProps, PresenterScene, Scene, ScenePlan } from "video-renderer-src/episode/types";
-import { getAssets, getCodeAssets, getManifest, getMoments, getScenePlan, saveMoments } from "./api";
+import { getAssets, getCodeAssets, getManifest, getMoments, getScenePlan, saveMoments, type EpisodeStatus } from "./api";
 import { ActiveSceneBar } from "./ActiveSceneBar";
+import { AdvancedPanel } from "./AdvancedPanel";
 import { ChapterStrip } from "./ChapterStrip";
 import { EditPlanChat } from "./EditPlanChat";
 import { manifestToEpisodeBaseProps } from "./episodeProps";
 import { normalizeMoment } from "./momentDuration";
 import { OverlayStrip, type EditableOverlay } from "./OverlayStrip";
+import { ProgressFlow } from "./ProgressFlow";
 
 function useQueryParams() {
     const params = new URLSearchParams(window.location.search);
@@ -29,6 +31,13 @@ export function EpisodeWorkspace() {
     const [moments, setMoments] = useState<{ moments: any[] } | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [saveStatus, setSaveStatus] = useState("");
+    const [episodeStatus, setEpisodeStatus] = useState<EpisodeStatus | null>(null);
+    // Persisted per browser session, matching ui/static/app.js's
+    // `includeCaptions` default (unticked = don't generate them —
+    // full-sentence captions are tiresome on some episodes). Owned here
+    // (not inside AdvancedPanel) since ProgressFlow's "Start" button needs
+    // to read it too.
+    const [includeCaptions, setIncludeCaptions] = useState(false);
 
     const playerRef = useRef<PlayerRef>(null);
     const [currentFrame, setCurrentFrame] = useState(0);
@@ -192,21 +201,57 @@ export function EpisodeWorkspace() {
         playerRef.current.seekTo(absoluteFrame);
     };
 
+    // The progress flow and Advanced panel render regardless of whether
+    // episodeProps has loaded yet — a freshly-picked episode with no
+    // pipeline output should show "Start" and empty progress dots, not
+    // disappear behind the player's own "Loading preview…"/error guards
+    // below. episodePath-less loads (no ?path=) skip both, since there's
+    // no episode to run anything against.
+    const header = episodePath ? (
+        <>
+            <div style={styles.brandBanner}>
+                <img src="/poiesis-logo.png" alt="" style={styles.brandLogo} />
+                <span style={styles.brandText}>Poiesis Preview</span>
+            </div>
+            <ProgressFlow episodePath={episodePath} skipCaptions={!includeCaptions} onStatusChange={setEpisodeStatus} />
+            <AdvancedPanel
+                episodePath={episodePath}
+                status={episodeStatus}
+                onStatusChange={setEpisodeStatus}
+                includeCaptions={includeCaptions}
+                onIncludeCaptionsChange={setIncludeCaptions}
+            />
+        </>
+    ) : null;
+
     if (error) {
         return (
-            <div style={styles.message}>
-                <div style={styles.messageTitle}>Preview unavailable</div>
-                <div>{error}</div>
+            <div style={styles.container}>
+                {header}
+                <div style={styles.message}>
+                    <div style={styles.messageTitle}>Preview unavailable</div>
+                    <div>{error}</div>
+                </div>
             </div>
         );
     }
 
     if (!episodeProps) {
-        return <div style={styles.message}>Loading preview…</div>;
+        return (
+            <div style={styles.container}>
+                {header}
+                <div style={styles.message}>Loading preview…</div>
+            </div>
+        );
     }
 
     if (sceneId && !parentScene) {
-        return <div style={styles.message}>Scene "{sceneId}" not found in scene-plan.json</div>;
+        return (
+            <div style={styles.container}>
+                {header}
+                <div style={styles.message}>Scene "{sceneId}" not found in scene-plan.json</div>
+            </div>
+        );
     }
 
     // With no sceneId, this is a full-episode preview rather than a
@@ -226,10 +271,7 @@ export function EpisodeWorkspace() {
 
     return (
         <div style={styles.container}>
-            <div style={styles.brandBanner}>
-                <img src="/poiesis-logo.png" alt="" style={styles.brandLogo} />
-                <span style={styles.brandText}>Poiesis Preview</span>
-            </div>
+            {header}
 
             <div style={playerWrapStyle}>
                 <Player
