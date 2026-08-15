@@ -1,5 +1,60 @@
 const API_BASE = "http://127.0.0.1:8000";
 
+// Matches ui/server.py's own default — used when the picker has nowhere
+// else to start (no remembered localStorage path yet), so a fresh install
+// opens at the same place the old control panel did.
+export const DEFAULT_BROWSE_PATH = "/Users/petros/Youtube/Philosoftware/Videos";
+
+export interface BrowseEntry {
+    name: string;
+    path: string;
+    isEpisode: boolean;
+}
+
+export interface BrowseResult {
+    path: string;
+    parent: string | null;
+    isEpisode: boolean;
+    entries: BrowseEntry[];
+}
+
+export async function browse(path?: string): Promise<BrowseResult> {
+    const url = path
+        ? `${API_BASE}/api/browse?path=${encodeURIComponent(path)}`
+        : `${API_BASE}/api/browse`;
+    const res = await fetch(url);
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || `Failed to browse: ${res.status}`);
+    }
+    return res.json();
+}
+
+export interface EpisodeStageStatus {
+    id: string;
+    label: string;
+    complete: boolean | null;
+}
+
+export interface EpisodeStatus {
+    episode: string;
+    path: string;
+    stages: EpisodeStageStatus[];
+    secondary: EpisodeStageStatus[];
+    hasRender: boolean;
+}
+
+export async function getEpisodeStatus(episodePath: string): Promise<EpisodeStatus> {
+    const res = await fetch(
+        `${API_BASE}/api/episode/status?path=${encodeURIComponent(episodePath)}`
+    );
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || `Failed to load episode status: ${res.status}`);
+    }
+    return res.json();
+}
+
 async function getArtifact(episodePath: string, name: string) {
     const res = await fetch(
         `${API_BASE}/api/episode/artifact?path=${encodeURIComponent(episodePath)}&name=${encodeURIComponent(name)}`

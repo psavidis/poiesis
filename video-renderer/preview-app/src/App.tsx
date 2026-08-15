@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { EpisodePicker } from "./EpisodePicker";
 import { EpisodeWorkspace } from "./EpisodeWorkspace";
 import { RouterProvider, useRouter } from "./Router";
 
@@ -6,25 +7,25 @@ import { RouterProvider, useRouter } from "./Router";
 // anyone's saved bookmark from before this router existed — always links
 // to the bare "/" with a ?path= (and optionally &sceneId=) query param.
 // Redirecting "/" with a path param straight to "/episode" (preserving the
-// full query string) means none of those callers need to change for this
-// issue to land; #25 will replace this redirect with a real picker once
-// there's somewhere else for a path-less "/" to go.
-function RootRedirect() {
+// full query string) means none of those callers need to change: a "/"
+// with a path still goes straight to the workspace, while a bare "/" now
+// shows the real picker instead of #24's placeholder.
+function Root() {
     const { navigate } = useRouter();
 
+    const hasPath = new URLSearchParams(window.location.search).has("path");
+
     useEffect(() => {
-        const hasPath = new URLSearchParams(window.location.search).has("path");
         if (hasPath) {
             navigate("/episode" + window.location.search);
         }
-    }, [navigate]);
+    }, [navigate, hasPath]);
 
-    if (new URLSearchParams(window.location.search).has("path")) {
+    if (hasPath) {
         return null;
     }
 
-    // #25 replaces this with a real episode picker.
-    return <div style={{ fontFamily: "system-ui, sans-serif", color: "#e8edf2", padding: 24 }}>Episode picker coming soon.</div>;
+    return <EpisodePicker />;
 }
 
 function Routes() {
@@ -34,7 +35,7 @@ function Routes() {
         return <EpisodeWorkspace />;
     }
 
-    return <RootRedirect />;
+    return <Root />;
 }
 
 export function App() {
