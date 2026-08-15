@@ -30,6 +30,7 @@ function sceneLabel(scene: Scene): string {
             return `clip ${scene.videoId}`;
         case "title":
         case "caption":
+        case "beat":
             return truncate(scene.text);
         case "moment":
             return scene.text ? truncate(scene.text) : (scene.assetId ?? scene.treatment);
