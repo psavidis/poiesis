@@ -124,3 +124,91 @@ def test_ws_stage_run_allows_concurrent_runs_for_different_episodes(tmp_path, mo
         while msg["type"] == "log":
             msg = first_ws.receive_json()
         assert msg["type"] in ("cancelled", "done")
+
+
+def _fake_stream_process(command, cwd=None, on_start=None):
+    """Replaces process_runner.stream_process for render-command tests —
+    the real function unconditionally Popen()s whatever command it's
+    given, which for /ws/render/run means a REAL Remotion render (a
+    genuinely expensive, minutes-long subprocess tree) against a fake
+    tmp_path episode with no real footage. These tests only care about
+    what command ws_run_render CONSTRUCTS, not that a real render
+    completes, so stub the actual process-spawning boundary instead of
+    relying on a cancel message racing a real subprocess to death."""
+
+    if on_start is not None:
+        on_start(None)
+
+    yield "__EXIT_CODE__0"
+
+
+def test_ws_render_run_defaults_to_render_episode_sh(tmp_path, monkeypatch):
+    episode = tmp_path / "episode"
+    episode.mkdir()
+
+    monkeypatch.setattr(server, "stream_process", _fake_stream_process)
+
+    with client.websocket_connect("/ws/render/run") as ws:
+        ws.send_json({"path": str(episode)})
+        start_msg = ws.receive_json()
+
+        assert start_msg["type"] == "start"
+        assert "render_episode.sh" in start_msg["command"]
+        assert "export_davinci.py" not in start_msg["command"]
+
+        msg = ws.receive_json()
+        while msg["type"] == "log":
+            msg = ws.receive_json()
+        assert msg["type"] == "done"
+
+
+def test_ws_render_run_format_davinci_invokes_export_davinci(tmp_path, monkeypatch):
+    episode = tmp_path / "episode"
+    episode.mkdir()
+
+    monkeypatch.setattr(server, "stream_process", _fake_stream_process)
+
+    with client.websocket_connect("/ws/render/run") as ws:
+        ws.send_json({"path": str(episode), "format": "davinci"})
+        start_msg = ws.receive_json()
+
+        assert start_msg["type"] == "start"
+        assert "export_davinci.py" in start_msg["command"]
+        assert "render_episode.sh" not in start_msg["command"]
+        assert str(episode) in start_msg["command"]
+
+        msg = ws.receive_json()
+        while msg["type"] == "log":
+            msg = ws.receive_json()
+        assert msg["type"] == "done"
+
+
+def test_ws_render_run_format_davinci_passes_resolution(tmp_path, monkeypatch):
+    episode = tmp_path / "episode"
+    episode.mkdir()
+
+    monkeypatch.setattr(server, "stream_process", _fake_stream_process)
+
+    with client.websocket_connect("/ws/render/run") as ws:
+        ws.send_json({"path": str(episode), "format": "davinci", "resolution": "3840x2160"})
+        start_msg = ws.receive_json()
+
+        assert start_msg["type"] == "start"
+        assert "3840x2160" in start_msg["command"]
+
+        msg = ws.receive_json()
+        while msg["type"] == "log":
+            msg = ws.receive_json()
+        assert msg["type"] == "done"
+
+
+def test_ws_render_run_rejects_invalid_resolution_for_davinci_format(tmp_path):
+    episode = tmp_path / "episode"
+    episode.mkdir()
+
+    with client.websocket_connect("/ws/render/run") as ws:
+        ws.send_json({"path": str(episode), "format": "davinci", "resolution": "not-a-resolution"})
+        msg = ws.receive_json()
+
+    assert msg["type"] == "error"
+    assert "not-a-resolution" in msg["message"]

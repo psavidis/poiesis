@@ -162,4 +162,13 @@ export type EpisodeBaseProps = {
 
 export type EpisodeProps = EpisodeBaseProps & {
     scenePlan: ScenePlan;
+    // Restricts rendering to only these scene types, e.g. ["caption"] to
+    // render a transparent clip containing just captions with everything
+    // else (presenter, titles, moments, images) omitted. Omitted/undefined
+    // renders every scene, matching all prior behavior. Scenes of other
+    // types are still present in scenePlan and still resolved for parent
+    // lookups (e.g. a caption scene still finds its parent presenter scene
+    // to compute its own timelineStartFrame) — only their own rendering is
+    // skipped, so this doesn't require the caller to prune scenePlan itself.
+    onlyTypes?: Scene["type"][];
 };

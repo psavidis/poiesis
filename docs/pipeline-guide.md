@@ -285,11 +285,22 @@ against wholesale fabrication before a diagram proposal is accepted.
 
 ## What's deliberately NOT built (and why)
 
-- **A DaVinci Resolve export path** — considered and explicitly rejected. Exporting to an
-  editable Resolve timeline would break the core architecture: `scene-plan.json` stops being
-  the single source of truth the moment a human starts hand-editing a copy of it inside
-  Resolve's own timeline format. The real fix for "editing feels slow" was faster iteration
-  tooling (Remotion Studio, fast preview renders), not a second editable representation.
+- **A bidirectional DaVinci Resolve sync** — considered and explicitly rejected. Reading edits
+  back from a Resolve project into `scene-plan.json` would break the core architecture:
+  `scene-plan.json` stops being the single source of truth the moment two systems both write
+  to it. The real fix for "editing feels slow" was faster iteration tooling (Remotion Studio,
+  fast preview renders), not a second writable representation.
+
+  This does **not** rule out exporting *to* Resolve for finishing work — see
+  `pipeline/export_davinci.py` (issues #13, #16). That export is one-directional
+  (Poiesis → Resolve) and per-element: presenter footage, titles, captions, moments, and images
+  each render as their own transparent clip on their own OTIO track, so a Resolve project has
+  scene- and element-level cut points, independent audio, and organized tracks for finishing
+  (color, trim, intro/outro/background/music, audio mix). Nothing reads a Resolve project back
+  into `scene-plan.json` — if a caption, title, or moment is wrong, the fix happens in Poiesis
+  and the episode gets re-exported. The original ADR's fork risk was specifically about two
+  systems both writing the same state; a one-directional, re-exportable finishing pass doesn't
+  reintroduce that risk, so it isn't the "editable Resolve timeline" this ADR rejects.
 
 ## QA is metadata AND rendered-file checks, not a visual review
 

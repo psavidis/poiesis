@@ -176,6 +176,29 @@ main {
   cursor: pointer;
 }
 
+.render-options {
+  display: flex;
+  gap: 24px;
+  margin-top: 12px;
+}
+
+.render-options label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.render-options select {
+  padding: 6px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 14px;
+}
+
 .error {
   color: #ff8f8f;
 }

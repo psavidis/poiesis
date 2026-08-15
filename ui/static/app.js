@@ -13,6 +13,12 @@ const state = {
   // the next full pipeline run; translated to the inverted --skip-captions
   // flag only where the backend command is actually built.
   includeCaptions: false,
+  // "video" (default, render_episode.sh -> MP4) or "davinci"
+  // (pipeline/export_davinci.py -> an OTIO timeline + per-scene
+  // transparent clips the user imports into DaVinci Resolve). Both
+  // formats accept the same optional resolution override.
+  renderFormat: "video",
+  renderResolution: "",
 };
 
 // Which stages produce an artifact worth showing the human for review —
@@ -173,6 +179,28 @@ function render() {
         <input type="checkbox" id="include-captions-toggle" ${state.includeCaptions ? "checked" : ""} ${running ? "disabled" : ""} />
         Include captions on next full pipeline run (leave unticked to remove any already generated)
       </label>
+      <div class="render-options">
+        <label>
+          Output format
+          <select id="render-format-select" ${running ? "disabled" : ""}>
+            <option value="video" ${state.renderFormat === "video" ? "selected" : ""}>Video (MP4)</option>
+            <option value="davinci" ${state.renderFormat === "davinci" ? "selected" : ""}>DaVinci Resolve project (OTIO timeline)</option>
+          </select>
+        </label>
+        <label>
+          Resolution
+          <select id="render-resolution-select" ${running ? "disabled" : ""}>
+            <option value="" ${state.renderResolution === "" ? "selected" : ""}>Default (from config.json)</option>
+            <option value="1920x1080" ${state.renderResolution === "1920x1080" ? "selected" : ""}>1920x1080</option>
+            <option value="3840x2160" ${state.renderResolution === "3840x2160" ? "selected" : ""}>3840x2160</option>
+          </select>
+        </label>
+      </div>
+      <p class="hint">"DaVinci Resolve project" renders presenter + overlays only (titles,
+      moments, captions already baked in) as one transparent clip per scene, plus a
+      timeline.otio you import via Resolve's File → Import Timeline → OpenTimelineIO —
+      background/intro/outro/music stay a manual step in Resolve either way, same as
+      today's transparent render workflow.</p>
       <p class="hint">Every stage below shells out to the same scripts you'd run from the
       terminal, using your Claude Code CLI login — no separate API key, nothing hidden.</p>
       <div class="stage-list" id="stage-list"></div>
@@ -212,6 +240,14 @@ function render() {
 
   document.getElementById("include-captions-toggle").addEventListener("change", (e) => {
     state.includeCaptions = e.target.checked;
+  });
+
+  document.getElementById("render-format-select").addEventListener("change", (e) => {
+    state.renderFormat = e.target.value;
+  });
+
+  document.getElementById("render-resolution-select").addEventListener("change", (e) => {
+    state.renderResolution = e.target.value;
   });
 
   const cancelBtn = document.getElementById("cancel-run");
@@ -268,7 +304,11 @@ function runFullPipeline() {
 }
 
 function runRender() {
-  runOverWebSocket("/ws/render/run", { path: state.episodePath }, "__render__");
+  const params = { path: state.episodePath, format: state.renderFormat };
+  if (state.renderResolution) {
+    params.resolution = state.renderResolution;
+  }
+  runOverWebSocket("/ws/render/run", params, "__render__");
 }
 
 function runOverWebSocket(path, params, runningId) {

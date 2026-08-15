@@ -1,12 +1,17 @@
 from pathlib import Path
 from unittest.mock import patch
 
+import opentimelineio as otio
+
 from export_davinci import (
+    OVERLAY_TRACK_TYPES,
     build_otio_timeline,
     clip_label,
     export_davinci,
-    render_scene_clips,
-    scene_ranges,
+    overlay_scenes_of_type,
+    presenter_scenes,
+    render_overlay_clips,
+    render_presenter_clips,
     validate_export,
 )
 
@@ -41,7 +46,7 @@ def _scene_plan_two_clips_and_a_title():
                 "sourceEndFrame": 200,
                 "timelineStartFrame": 160,
                 "durationInFrames": 200,
-                "effects": {"captions": True, "transition": "none"},
+                "effects": {"captions": False, "transition": "none"},
             },
             {
                 "id": "scene-moment-0",
@@ -60,52 +65,42 @@ def _scene_plan_two_clips_and_a_title():
                 "offsetInParentFrames": 0,
                 "durationInFrames": 60,
             },
+            {
+                "id": "scene-caption-1",
+                "type": "caption",
+                "text": "captions off on this scene",
+                "parentSceneId": "scene-002",
+                "offsetInParentFrames": 0,
+                "durationInFrames": 60,
+            },
         ],
     }
 
 
-def test_scene_ranges_includes_only_track_scenes_in_timeline_order():
-    ranges = scene_ranges(_scene_plan_two_clips_and_a_title())
+def test_presenter_scenes_in_timeline_order():
+    scenes = presenter_scenes(_scene_plan_two_clips_and_a_title())
 
-    assert ranges == [
-        ("scene-001", 0, 100),
-        ("scene-title-002", 100, 160),
-        ("scene-002", 160, 360),
-    ]
+    assert [s["id"] for s in scenes] == ["scene-001", "scene-002"]
 
 
-def test_scene_ranges_excludes_overlay_scenes():
+def test_overlay_scenes_of_type_filters_and_sorts():
     scene_plan = _scene_plan_two_clips_and_a_title()
 
-    ranges = scene_ranges(scene_plan)
-    ids = {scene_id for scene_id, _, _ in ranges}
+    titles = overlay_scenes_of_type(scene_plan, "title")
+    moments = overlay_scenes_of_type(scene_plan, "moment")
 
-    assert "scene-moment-0" not in ids
-    assert "scene-caption-0" not in ids
+    assert [s["id"] for s in titles] == ["scene-title-002"]
+    assert [s["id"] for s in moments] == ["scene-moment-0"]
 
 
-def test_scene_ranges_sorts_by_timeline_position_even_if_out_of_order_in_the_list():
-    scene_plan = {
-        "fps": 30,
-        "scenes": [
-            {
-                "id": "scene-002",
-                "type": "presenter",
-                "timelineStartFrame": 100,
-                "durationInFrames": 50,
-            },
-            {
-                "id": "scene-001",
-                "type": "presenter",
-                "timelineStartFrame": 0,
-                "durationInFrames": 100,
-            },
-        ],
-    }
+def test_overlay_scenes_of_type_captions_respects_parent_effects_flag():
+    scene_plan = _scene_plan_two_clips_and_a_title()
 
-    ranges = scene_ranges(scene_plan)
+    captions = overlay_scenes_of_type(scene_plan, "caption")
 
-    assert [scene_id for scene_id, _, _ in ranges] == ["scene-001", "scene-002"]
+    # scene-caption-0's parent (scene-001) has captions enabled;
+    # scene-caption-1's parent (scene-002) has them disabled.
+    assert [s["id"] for s in captions] == ["scene-caption-0"]
 
 
 def test_clip_label_uses_title_text_for_title_scenes():
@@ -114,116 +109,237 @@ def test_clip_label_uses_title_text_for_title_scenes():
     assert clip_label(scene) == "Chapter Two"
 
 
+def test_clip_label_uses_caption_text_for_caption_scenes():
+    scene = {"type": "caption", "id": "scene-caption-0", "text": "hello"}
+
+    assert clip_label(scene) == "hello"
+
+
 def test_clip_label_uses_presenter_prefix_for_presenter_scenes():
     scene = {"type": "presenter", "id": "scene-001"}
 
     assert clip_label(scene) == "presenter — scene-001"
 
 
-def test_build_otio_timeline_has_one_clip_per_track_scene_in_order():
+def test_render_presenter_clips_invokes_remotion_per_presenter_scene(tmp_path):
     scene_plan = _scene_plan_two_clips_and_a_title()
-    ranges = scene_ranges(scene_plan)
-    clips = [(scene_id, Path(f"/fake/{scene_id}.mov")) for scene_id, _, _ in ranges]
-
-    timeline = build_otio_timeline(scene_plan, clips)
-
-    track = timeline.tracks[0]
-    assert [c.name for c in track] == ["presenter — scene-001", "Chapter Two", "presenter — scene-002"]
-
-
-def test_build_otio_timeline_clip_durations_match_scene_durations():
-    scene_plan = _scene_plan_two_clips_and_a_title()
-    ranges = scene_ranges(scene_plan)
-    clips = [(scene_id, Path(f"/fake/{scene_id}.mov")) for scene_id, _, _ in ranges]
-
-    timeline = build_otio_timeline(scene_plan, clips)
-
-    track = timeline.tracks[0]
-    durations = [c.source_range.duration.value for c in track]
-
-    assert durations == [100, 60, 200]
-
-
-def test_render_scene_clips_invokes_remotion_per_scene(tmp_path):
-    scene_plan = _scene_plan_two_clips_and_a_title()
-    output_dir = tmp_path / "clips"
 
     with patch("export_davinci.subprocess.run") as mock_run:
-        clips = render_scene_clips(tmp_path, scene_plan, output_dir)
+        clips = render_presenter_clips(scene_plan, tmp_path)
 
-    assert mock_run.call_count == 3
-    assert [scene_id for scene_id, _ in clips] == ["scene-001", "scene-title-002", "scene-002"]
+    assert mock_run.call_count == 2
+    assert [scene_id for scene_id, _ in clips] == ["scene-001", "scene-002"]
 
     first_call_command = mock_run.call_args_list[0].args[0]
     assert "npx" in first_call_command
     assert "--frames=0-99" in first_call_command
-    assert "--codec=prores" in first_call_command
+    assert '"onlyTypes": ["presenter"]' in first_call_command[-1]
 
 
-def test_render_scene_clips_passes_resolution_when_given(tmp_path):
+def test_render_presenter_clips_passes_resolution_when_given(tmp_path):
     scene_plan = _scene_plan_two_clips_and_a_title()
-    output_dir = tmp_path / "clips"
 
     with patch("export_davinci.subprocess.run") as mock_run:
-        render_scene_clips(tmp_path, scene_plan, output_dir, resolution="3840x2160")
+        render_presenter_clips(scene_plan, tmp_path, resolution="3840x2160")
 
     first_call_command = mock_run.call_args_list[0].args[0]
     assert "--width=3840" in first_call_command
     assert "--height=2160" in first_call_command
 
 
-def test_render_scene_clips_resume_skips_existing_clips(tmp_path):
+def test_render_overlay_clips_uses_absolute_position_for_frame_range(tmp_path):
     scene_plan = _scene_plan_two_clips_and_a_title()
-    output_dir = tmp_path / "clips"
-    output_dir.mkdir()
-
-    # Simulate scene-001 already rendered by a prior run that crashed
-    # partway through.
-    (output_dir / "scene-001.mov").write_bytes(b"fake")
 
     with patch("export_davinci.subprocess.run") as mock_run:
-        clips = render_scene_clips(tmp_path, scene_plan, output_dir, resume=True)
+        clips = render_overlay_clips(scene_plan, "caption", tmp_path)
+
+    assert [scene_id for scene_id, _ in clips] == ["scene-caption-0"]
+
+    command = mock_run.call_args_list[0].args[0]
+    # scene-caption-0: parent scene-001 starts at 0, offset 0, duration 60
+    assert "--frames=0-59" in command
+    assert '"onlyTypes": ["caption"]' in command[-1]
+
+
+def test_render_overlay_clips_skips_captions_disabled_on_parent(tmp_path):
+    scene_plan = _scene_plan_two_clips_and_a_title()
+
+    with patch("export_davinci.subprocess.run") as mock_run:
+        clips = render_overlay_clips(scene_plan, "caption", tmp_path)
+
+    assert all(scene_id != "scene-caption-1" for scene_id, _ in clips)
+    called_paths = [call.args[0][3] for call in mock_run.call_args_list]
+    assert not any("scene-caption-1" in path for path in called_paths)
+
+
+def test_render_overlay_clips_empty_when_no_scenes_of_type(tmp_path):
+    scene_plan = _scene_plan_two_clips_and_a_title()
+
+    with patch("export_davinci.subprocess.run") as mock_run:
+        clips = render_overlay_clips(scene_plan, "image", tmp_path)
+
+    assert clips == []
+    assert mock_run.call_count == 0
+
+
+def test_render_clips_resume_skips_existing_clips(tmp_path):
+    scene_plan = _scene_plan_two_clips_and_a_title()
+    tmp_path.mkdir(exist_ok=True)
+
+    (tmp_path / "presenter-scene-001.mov").write_bytes(b"fake")
+
+    with patch("export_davinci.subprocess.run") as mock_run:
+        clips = render_presenter_clips(scene_plan, tmp_path, resume=True)
+
+    assert mock_run.call_count == 1
+    assert [scene_id for scene_id, _ in clips] == ["scene-001", "scene-002"]
+
+
+def test_render_clips_resume_rerenders_empty_clip(tmp_path):
+    scene_plan = _scene_plan_two_clips_and_a_title()
+    tmp_path.mkdir(exist_ok=True)
+
+    (tmp_path / "presenter-scene-001.mov").write_bytes(b"")
+
+    with patch("export_davinci.subprocess.run") as mock_run:
+        render_presenter_clips(scene_plan, tmp_path, resume=True)
 
     assert mock_run.call_count == 2
-    rendered_ids = [call.args[0][3] for call in mock_run.call_args_list]
-    assert all("scene-001" not in path for path in rendered_ids)
-    assert [scene_id for scene_id, _ in clips] == ["scene-001", "scene-title-002", "scene-002"]
 
 
-def test_render_scene_clips_resume_rerenders_empty_clip(tmp_path):
+def test_render_clips_without_resume_rerenders_everything(tmp_path):
     scene_plan = _scene_plan_two_clips_and_a_title()
-    output_dir = tmp_path / "clips"
-    output_dir.mkdir()
+    tmp_path.mkdir(exist_ok=True)
 
-    # A zero-byte file (e.g. left by a crashed ffmpeg/remotion process)
-    # must not be treated as a successfully rendered clip.
-    (output_dir / "scene-001.mov").write_bytes(b"")
+    (tmp_path / "presenter-scene-001.mov").write_bytes(b"fake")
 
     with patch("export_davinci.subprocess.run") as mock_run:
-        render_scene_clips(tmp_path, scene_plan, output_dir, resume=True)
+        render_presenter_clips(scene_plan, tmp_path)
 
-    assert mock_run.call_count == 3
+    assert mock_run.call_count == 2
 
 
-def test_render_scene_clips_without_resume_rerenders_everything(tmp_path):
+def test_build_otio_timeline_creates_one_track_per_populated_type():
     scene_plan = _scene_plan_two_clips_and_a_title()
-    output_dir = tmp_path / "clips"
-    output_dir.mkdir()
 
-    (output_dir / "scene-001.mov").write_bytes(b"fake")
+    presenter_clips = [("scene-001", Path("/fake/presenter-scene-001.mov")),
+                        ("scene-002", Path("/fake/presenter-scene-002.mov"))]
+    overlay_clips_by_type = {
+        "title": [("scene-title-002", Path("/fake/title-scene-title-002.mov"))],
+        "caption": [("scene-caption-0", Path("/fake/caption-scene-caption-0.mov"))],
+        "moment": [("scene-moment-0", Path("/fake/moment-scene-moment-0.mov"))],
+        "image": [],
+    }
 
-    with patch("export_davinci.subprocess.run") as mock_run:
-        render_scene_clips(tmp_path, scene_plan, output_dir)
+    timeline = build_otio_timeline(scene_plan, presenter_clips, overlay_clips_by_type)
 
-    assert mock_run.call_count == 3
+    track_names = [t.name for t in timeline.tracks]
+
+    assert "Video — Presenter" in track_names
+    assert "Audio — Presenter" in track_names
+    assert "Video — Titles" in track_names
+    assert "Video — Captions" in track_names
+    assert "Video — Moments" in track_names
+    # No images in this plan -> no empty track created.
+    assert "Video — Images" not in track_names
+
+
+def test_build_otio_timeline_presenter_audio_track_references_same_media_as_video():
+    scene_plan = _scene_plan_two_clips_and_a_title()
+
+    presenter_clips = [("scene-001", Path("/fake/presenter-scene-001.mov"))]
+
+    timeline = build_otio_timeline(scene_plan, presenter_clips, {t: [] for t in OVERLAY_TRACK_TYPES})
+
+    video_track = next(t for t in timeline.tracks if t.name == "Video — Presenter")
+    audio_track = next(t for t in timeline.tracks if t.name == "Audio — Presenter")
+
+    assert video_track[0].media_reference.target_url == audio_track[0].media_reference.target_url
+    assert audio_track.kind == "Audio"
+    assert video_track.kind == "Video"
+
+
+def test_build_otio_timeline_clip_durations_match_scene_durations():
+    scene_plan = _scene_plan_two_clips_and_a_title()
+
+    overlay_clips_by_type = {
+        "title": [("scene-title-002", Path("/fake/title-scene-title-002.mov"))],
+        "caption": [],
+        "moment": [],
+        "image": [],
+    }
+
+    timeline = build_otio_timeline(scene_plan, [], overlay_clips_by_type)
+
+    title_track = next(t for t in timeline.tracks if t.name == "Video — Titles")
+
+    # scene-title-002 starts at frame 100, so a leading Gap fills [0, 100)
+    # before the clip itself.
+    assert title_track[0].source_range.duration.value == 100
+    assert title_track[1].source_range.duration.value == 60
+
+
+def test_build_otio_timeline_inserts_gaps_so_sparse_clips_land_at_absolute_position():
+    # Regression guard: a real export had moments/titles packed back-to-back
+    # instead of at their real timeline positions, because Track.append()
+    # places clips immediately after each other with no gap by default.
+    scene_plan = _scene_plan_two_clips_and_a_title()
+
+    overlay_clips_by_type = {
+        "title": [],
+        "caption": [("scene-caption-0", Path("/fake/caption-scene-caption-0.mov"))],
+        "moment": [("scene-moment-0", Path("/fake/moment-scene-moment-0.mov"))],
+        "image": [],
+    }
+
+    timeline = build_otio_timeline(scene_plan, [], overlay_clips_by_type)
+
+    moment_track = next(t for t in timeline.tracks if t.name == "Video — Moments")
+
+    # scene-moment-0: parent scene-001 (timelineStartFrame 0) + offset 10.
+    assert isinstance(moment_track[0], otio.schema.Gap)
+    assert moment_track[0].source_range.duration.value == 10
+    assert moment_track[1].name == "scene-moment-0"
+
+    # scene-caption-0 starts at absolute frame 0 (parent scene-001, offset
+    # 0) -> no leading gap needed.
+    caption_track = next(t for t in timeline.tracks if t.name == "Video — Captions")
+    assert caption_track[0].name == "hello"
+
+
+def test_build_otio_timeline_no_gap_when_clips_are_contiguous():
+    scene_plan = _scene_plan_two_clips_and_a_title()
+
+    presenter_clips = [("scene-001", Path("/fake/presenter-scene-001.mov")),
+                        ("scene-002", Path("/fake/presenter-scene-002.mov"))]
+
+    timeline = build_otio_timeline(scene_plan, presenter_clips, {t: [] for t in OVERLAY_TRACK_TYPES})
+
+    video_track = next(t for t in timeline.tracks if t.name == "Video — Presenter")
+
+    # scene-001 ends at 100, scene-002 starts at 160 -> a 60-frame gap
+    # between them, but no gap before scene-001 itself (starts at 0).
+    assert video_track[0].name == "presenter — scene-001"
+    assert isinstance(video_track[1], otio.schema.Gap)
+    assert video_track[1].source_range.duration.value == 60
+    assert video_track[2].name == "presenter — scene-002"
+
+
+def test_export_davinci_writes_under_episode_root_not_processing(tmp_path):
+    scene_plan = _scene_plan_two_clips_and_a_title()
+
+    with patch("export_davinci.subprocess.run"):
+        timeline_path, _ = export_davinci(tmp_path, scene_plan)
+
+    assert timeline_path == tmp_path / "davinci-export" / "timeline.otio"
+    assert "processing" not in timeline_path.parts
 
 
 def test_export_davinci_regenerates_scene_plan_ts_before_rendering(tmp_path):
     # Remotion renders from generated/episode/scene-plan.ts, a codegen'd
     # copy of scene-plan.json — not the JSON file. If export_davinci
-    # doesn't refresh it first, a scene-plan.json fix (e.g. dropping
-    # slivers from generate_captions.py) silently doesn't take effect and
-    # Remotion keeps rendering the stale plan.
+    # doesn't refresh it first, a scene-plan.json fix silently doesn't
+    # take effect and Remotion keeps rendering the stale plan.
     scene_plan = _scene_plan_two_clips_and_a_title()
 
     with patch("export_davinci.subprocess.run") as mock_run:
@@ -233,7 +349,6 @@ def test_export_davinci_regenerates_scene_plan_ts_before_rendering(tmp_path):
     regen_calls = [c for c in commands if "generate_scene_plan_ts.py" in c[1]]
 
     assert len(regen_calls) == 1
-    # Must happen before any Remotion render call.
     regen_index = commands.index(regen_calls[0])
     render_indices = [i for i, c in enumerate(commands) if "remotion" in c]
     assert all(regen_index < i for i in render_indices)
@@ -241,16 +356,15 @@ def test_export_davinci_regenerates_scene_plan_ts_before_rendering(tmp_path):
 
 def test_validate_export_reports_missing_clip(tmp_path):
     scene_plan = _scene_plan_two_clips_and_a_title()
-    clips_dir = tmp_path / "clips"
-    clips_dir.mkdir()
     timeline_path = tmp_path / "timeline.otio"
     timeline_path.write_text("{}")
 
-    # only create 2 of the 3 expected clips
-    (clips_dir / "scene-001.mov").write_bytes(b"fake")
-    (clips_dir / "scene-title-002.mov").write_bytes(b"fake")
+    presenter_clips = [("scene-001", tmp_path / "presenter-scene-001.mov"),
+                        ("scene-002", tmp_path / "presenter-scene-002.mov")]
+    (tmp_path / "presenter-scene-001.mov").write_bytes(b"fake")
+    # scene-002's clip is never written.
 
-    issues = validate_export(scene_plan, clips_dir, timeline_path)
+    issues = validate_export(scene_plan, presenter_clips, {t: [] for t in OVERLAY_TRACK_TYPES}, timeline_path)
 
     assert len(issues) == 1
     assert "scene-002" in issues[0]
@@ -258,10 +372,9 @@ def test_validate_export_reports_missing_clip(tmp_path):
 
 def test_validate_export_reports_missing_timeline_file(tmp_path):
     scene_plan = _scene_plan_two_clips_and_a_title()
-    clips_dir = tmp_path / "clips"
     timeline_path = tmp_path / "timeline.otio"
 
-    issues = validate_export(scene_plan, clips_dir, timeline_path)
+    issues = validate_export(scene_plan, [], {t: [] for t in OVERLAY_TRACK_TYPES}, timeline_path)
 
     assert len(issues) == 1
     assert "timeline" in issues[0].lower()
@@ -269,14 +382,14 @@ def test_validate_export_reports_missing_timeline_file(tmp_path):
 
 def test_validate_export_no_issues_when_everything_present(tmp_path):
     scene_plan = _scene_plan_two_clips_and_a_title()
-    clips_dir = tmp_path / "clips"
-    clips_dir.mkdir()
     timeline_path = tmp_path / "timeline.otio"
     timeline_path.write_text("{}")
 
-    for scene_id in ("scene-001", "scene-title-002", "scene-002"):
-        (clips_dir / f"{scene_id}.mov").write_bytes(b"fake")
+    presenter_clips = [("scene-001", tmp_path / "presenter-scene-001.mov"),
+                        ("scene-002", tmp_path / "presenter-scene-002.mov")]
+    for _, path in presenter_clips:
+        path.write_bytes(b"fake")
 
-    issues = validate_export(scene_plan, clips_dir, timeline_path)
+    issues = validate_export(scene_plan, presenter_clips, {t: [] for t in OVERLAY_TRACK_TYPES}, timeline_path)
 
     assert issues == []

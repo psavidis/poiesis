@@ -424,16 +424,35 @@ async def ws_run_render(websocket: WebSocket):
     async def build_command(params):
         episode = resolve_episode(params["path"])
         resolution = params.get("resolution")
+        output_format = params.get("format", "video")
+
+        if resolution and not RESOLUTION_PATTERN.match(resolution):
+            await websocket.send_json(
+                {"type": "error", "message": f"Invalid resolution: {resolution}"}
+            )
+            return None
+
+        if output_format == "davinci":
+            # Same underlying scene-plan-driven, per-scene transparent
+            # render as render_episode.sh --transparent, just cut into one
+            # clip per track scene and assembled into an OTIO timeline the
+            # user imports into a fresh DaVinci Resolve project — see
+            # pipeline/export_davinci.py's own docstring. Background/intro/
+            # outro/music stay a manual Resolve step either way.
+            command = [
+                sys.executable,
+                str(PROJECT_ROOT / "pipeline" / "export_davinci.py"),
+                str(episode),
+            ]
+
+            if resolution:
+                command.append(resolution)
+
+            return episode, command
 
         command = [str(PROJECT_ROOT / "render_episode.sh"), str(episode)]
 
         if resolution:
-            if not RESOLUTION_PATTERN.match(resolution):
-                await websocket.send_json(
-                    {"type": "error", "message": f"Invalid resolution: {resolution}"}
-                )
-                return None
-
             command.append(resolution)
 
         return episode, command

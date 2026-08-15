@@ -364,6 +364,7 @@ export const Episode = ({
                             codeAssets,
                             backgroundVideo,
                             scenePlan: typedScenePlan,
+                            onlyTypes,
                         }: EpisodeProps) => {
 
     const videoMap = new Map(
@@ -426,6 +427,10 @@ export const Episode = ({
     });
 
     const renderScene = (scene: Scene) => {
+        if (onlyTypes && !onlyTypes.includes(scene.type)) {
+            return null;
+        }
+
         switch (scene.type) {
             case "presenter": {
                 const video = videoMap.get(scene.videoId);

@@ -86,6 +86,8 @@ right after — the next render already reflects the change, no separate manual 
 # Python Library Dependencies
 
 - pip install json-repair
+- pip install opentimelineio (only needed for `pipeline/export_davinci.py` —
+  DaVinci Resolve export)
 
 
 
@@ -244,6 +246,35 @@ brand background so title cards don't false-positive), an audio track that's sil
 entirely, and audio/video streams whose lengths have drifted apart (not frame-accurate
 lip-sync, but enough to catch a truncated or dropped audio track). Run it again after
 rendering to catch render-time failures the scene-plan checks can't see.
+
+### DaVinci Resolve export (automated per-scene alternative to `--transparent`)
+
+`--transparent` above produces one long transparent video the user has to manually cut and
+position in Resolve. `pipeline/export_davinci.py` automates that mechanical step: it renders
+one short transparent ProRes 4444 clip per scene (same flags as `--transparent`, just scoped
+to each scene's own frame range via Remotion's `--frames=`), and writes an
+[OpenTimelineIO](https://opentimelineio.readthedocs.io/) `timeline.otio` with those clips
+already placed in order — presenter clips, title cards, and moment/caption overlays already
+baked in exactly as they'd appear in a normal render, each as its own independently-editable
+timeline clip in Resolve rather than one flattened video.
+
+```bash
+python3 pipeline/export_davinci.py /path/to/episode
+python3 pipeline/export_davinci.py /path/to/episode 3840x2160   # optional resolution override
+```
+
+Requires `pip install opentimelineio` (see Python Library Dependencies above). Writes to
+`processing/davinci-export/timeline.otio` and `processing/davinci-export/clips/`. Open it in
+Resolve via **File → Import Timeline → OpenTimelineIO**. Same as `--transparent`:
+background/intro/outro/music are not part of this export — they stay a manual step on a
+project you build in Resolve. This is also available from the control panel UI's "Render"
+button via the **Output format** selector, alongside the existing MP4 render.
+
+Note: no interchange format (OTIO, AAF, EDL, FCPXML) reliably carries titles/text as
+real, editable Resolve title objects on import — that's why titles are baked into each
+clip's pixels via Remotion rather than left as Resolve-native text. Only clip placement
+(in/out points, order, timeline position) survives the OTIO round-trip, which is exactly
+what this export needs it for.
 
 ## Background removal (optional, not part of the default pipeline)
 
