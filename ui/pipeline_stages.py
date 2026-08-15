@@ -94,6 +94,12 @@ PIPELINE_STAGES = [
         "title_scenes.json",
     ),
     Stage(
+        "generate_storyboard",
+        "Propose chapter storyboard (AI)",
+        lambda ep: [PYTHON, PIPELINE_DIR / "generate_storyboard.py", ep],
+        "storyboard.json",
+    ),
+    Stage(
         "generate_moments",
         "Propose moment scenes (AI)",
         lambda ep: [PYTHON, PIPELINE_DIR / "generate_moments.py", ep],

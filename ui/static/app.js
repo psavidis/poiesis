@@ -25,6 +25,7 @@ const state = {
 // this is the "make AI decisions transparent" surface the whole UI exists for.
 const ARTIFACT_STAGES = {
   generate_title_scenes: { artifact: "title_scenes.json", render: renderTitleScenes },
+  generate_storyboard: { artifact: "storyboard.json", render: renderStoryboard },
   generate_moments: { artifact: "moments.json", render: renderMoments },
   analyze_episode: { artifact: "episode_analysis.json", render: renderEpisodeAnalysis },
 };
@@ -397,6 +398,10 @@ async function showArtifact(stageId) {
       wireTitleSceneEditor(data.titles || []);
     }
 
+    if (stageId === "generate_storyboard") {
+      wireStoryboardEditor(data.chapters || []);
+    }
+
     if (stageId === "generate_moments") {
       await wireMomentEditor(data.moments || []);
     }
@@ -496,6 +501,86 @@ function wireTitleSceneEditor(initialTitles) {
   });
 }
 
+function renderStoryboard(data) {
+  const chapters = data.chapters || [];
+
+  if (!chapters.length) {
+    return `<p class="hint">No storyboard reasoning proposed.</p>`;
+  }
+
+  return `
+    <p class="hint">Claude's chapter-by-chapter visual-story reasoning — this is what "Propose
+    moment scenes" reads before deciding individual treatments. Edit a chapter's notes below,
+    then save — this only rewrites storyboard.json (no scene-plan.json change, no codegen
+    regeneration; storyboard notes don't produce scenes themselves). Re-running "Propose moment
+    scenes" afterward reads your edited reasoning without needing to regenerate it.</p>
+    <div class="scene-list" id="storyboard-editor">
+      ${chapters
+        .map(
+          (c, i) => `
+        <div class="ai-decision editable-scene" data-index="${i}">
+          <span class="scene-type">${escapeHtml(c.chapterText || c.chapterId)}</span>
+          <textarea class="storyboard-notes-input" rows="2">${escapeHtml(c.notes || "")}</textarea>
+        </div>
+      `
+        )
+        .join("")}
+    </div>
+    <div class="editor-actions">
+      <button id="save-storyboard-btn">Save changes</button>
+      <span id="save-storyboard-status" class="hint"></span>
+    </div>
+  `;
+}
+
+function wireStoryboardEditor(initialChapters) {
+  let chapters = initialChapters.map((c) => ({ ...c }));
+
+  const editor = document.getElementById("storyboard-editor");
+  const statusLabel = document.getElementById("save-storyboard-status");
+  const saveBtn = document.getElementById("save-storyboard-btn");
+
+  if (!editor || !saveBtn) return;
+
+  editor.querySelectorAll(".storyboard-notes-input").forEach((textarea) => {
+    textarea.addEventListener("input", () => {
+      const index = Number(textarea.closest(".editable-scene").dataset.index);
+      chapters[index] = { ...chapters[index], notes: textarea.value };
+    });
+  });
+
+  saveBtn.addEventListener("click", async () => {
+    saveBtn.disabled = true;
+    statusLabel.textContent = "Saving…";
+    statusLabel.classList.remove("error");
+
+    try {
+      const res = await fetch(
+        `/api/episode/storyboard?path=${encodeURIComponent(state.episodePath)}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chapters }),
+        }
+      );
+
+      if (!res.ok) {
+        const err = await res.json();
+        statusLabel.textContent = err.detail || "Save failed.";
+        statusLabel.classList.add("error");
+        return;
+      }
+
+      statusLabel.textContent = "Saved — re-run \"Propose moment scenes\" to use the edited reasoning.";
+    } catch (e) {
+      statusLabel.textContent = `Save failed: ${e}`;
+      statusLabel.classList.add("error");
+    } finally {
+      saveBtn.disabled = false;
+    }
+  });
+}
+
 function renderMoments(data) {
   const moments = data.moments || [];
 
@@ -539,7 +624,34 @@ const TREATMENT_LABELS = {
   "bottom-callout": "BOTTOM CALLOUT",
   "side-text": "SIDE TEXT",
   "side-image": "SIDE IMAGE",
+  comparison: "COMPARISON",
 };
+
+// Treatments whose content doesn't live in m.text (side-terms/side-diagram/
+// side-code/comparison all use their own field) get a plain read-only
+// summary instead of the free-text input — that input only ever writes to
+// m.text, so showing it for these treatments would look editable while
+// silently doing nothing to what actually renders. Remove-and-redo is the
+// correct edit path for these until each gets a real structured editor
+// (tracked separately, see #22 for the side-terms/side-text-style version
+// of this same gap).
+const NO_TEXT_EDIT_TREATMENTS = new Set(["side-terms", "side-diagram", "side-code", "comparison"]);
+
+function summarizeMomentContent(m) {
+  if (m.treatment === "comparison" && m.comparison) {
+    return `${m.comparison.left || "?"} vs ${m.comparison.right || "?"}`;
+  }
+  if (m.treatment === "side-terms" && m.terms) {
+    return m.terms.map((t) => t.text).join(", ");
+  }
+  if (m.treatment === "side-diagram" && m.diagram) {
+    return (m.diagram.nodes || []).map((n) => n.label).join(" → ");
+  }
+  if (m.treatment === "side-code") {
+    return m.codeAssetId || "";
+  }
+  return "";
+}
 
 function renderMomentRow(m, i, assetOptions) {
   const label = TREATMENT_LABELS[m.treatment] || m.treatment.toUpperCase();
@@ -556,6 +668,8 @@ function renderMomentRow(m, i, assetOptions) {
           .join("")}
       </select>
     `
+      : NO_TEXT_EDIT_TREATMENTS.has(m.treatment)
+      ? `<span class="moment-content-readonly">${escapeHtml(summarizeMomentContent(m))}</span>`
       : `<input type="text" class="moment-text-input" value="${escapeHtml(m.text || "")}" />`;
 
   const sideNote = m.presenterSide ? `presenter → ${escapeHtml(m.presenterSide)} — ` : "";

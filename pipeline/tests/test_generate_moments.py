@@ -5,7 +5,9 @@ from generate_moments import (
     chapter_for_absolute_frame,
     chapters_from_scene_plan,
     dedupe_overlapping_windows,
+    format_storyboard_for_prompt,
     format_windows_for_prompt,
+    is_comparison_grounded,
     is_diagram_grounded,
     is_grounded,
     is_terms_grounded,
@@ -57,6 +59,40 @@ def test_is_diagram_grounded_rejects_empty_nodes():
     diagram = {"nodes": [], "edges": [], "layout": "horizontal"}
 
     assert not is_diagram_grounded(diagram, "some source text")
+
+
+def test_is_comparison_grounded_accepts_both_sides_matching_source_words():
+    comparison = {"left": "monolith", "right": "microservices"}
+
+    assert is_comparison_grounded(
+        comparison, "we moved from a monolith to microservices last year"
+    )
+
+
+def test_is_comparison_grounded_rejects_fabricated_left_side():
+    comparison = {"left": "Kubernetes", "right": "microservices"}
+
+    assert not is_comparison_grounded(
+        comparison, "we moved from a monolith to microservices last year"
+    )
+
+
+def test_is_comparison_grounded_rejects_fabricated_right_side():
+    comparison = {"left": "monolith", "right": "Istio"}
+
+    assert not is_comparison_grounded(
+        comparison, "we moved from a monolith to microservices last year"
+    )
+
+
+def test_is_comparison_grounded_rejects_missing_side():
+    assert not is_comparison_grounded(
+        {"left": "monolith"}, "we moved from a monolith to microservices last year"
+    )
+
+
+def test_is_comparison_grounded_rejects_non_dict():
+    assert not is_comparison_grounded(None, "some source text")
 
 
 def test_is_diagram_grounded_rejects_more_than_max_nodes():
@@ -234,7 +270,7 @@ def test_format_windows_for_prompt_groups_by_chapter_heading():
 
     formatted = format_windows_for_prompt(candidates, chapters)
 
-    assert 'Chapter "Dependency Injection"' in formatted
+    assert 'Chapter [c0] "Dependency Injection"' in formatted
     assert "(intro, before the first chapter)" in formatted
     assert "[w0]" in formatted
     assert "first window text" in formatted
@@ -317,7 +353,7 @@ def test_propose_moments_accepts_grounded_bottom_callout():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -332,39 +368,40 @@ def test_propose_moments_accepts_grounded_bottom_callout():
     assert proposals[0]["presenterSide"] is None
 
 
-def test_propose_moments_returns_storyboard_notes_from_response():
-    llm = _FakeLLMClient(
-        {
-            "storyboardNotes": "This chapter is about X, so a diagram fits best.",
-            "moments": [],
-        }
-    )
+def test_format_storyboard_for_prompt_includes_chapter_headings_and_notes():
+    chapters = [
+        {"chapterId": "c0", "chapterText": "Intro", "notes": "Keep it simple."},
+        {"chapterId": "c1", "chapterText": "The Fix", "notes": "A diagram fits best here."},
+    ]
 
-    _, storyboard_notes = propose_moments(
-        _scene_plan_with_one_long_scene(),
-        _transcript_with_late_segment(),
-        _manifest_single_video(),
-        _no_assets(),
-        llm,
-        "{windows}{assets}",
-    )
+    formatted = format_storyboard_for_prompt(chapters)
 
-    assert storyboard_notes == "This chapter is about X, so a diagram fits best."
+    assert 'Chapter "Intro"' in formatted
+    assert "Keep it simple." in formatted
+    assert 'Chapter "The Fix"' in formatted
+    assert "A diagram fits best here." in formatted
 
 
-def test_propose_moments_defaults_storyboard_notes_when_absent_from_response():
+def test_format_storyboard_for_prompt_handles_empty_list():
+    assert format_storyboard_for_prompt([]) == "(no storyboard reasoning available)"
+
+
+def test_propose_moments_threads_storyboard_chapters_into_prompt():
     llm = _FakeLLMClient({"moments": []})
 
-    _, storyboard_notes = propose_moments(
+    propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
         _no_assets(),
         llm,
-        "{windows}{assets}",
+        "{windows}{assets}{storyboard}",
+        storyboard_chapters=[
+            {"chapterId": "c0", "chapterText": "Intro", "notes": "Favor restraint here."}
+        ],
     )
 
-    assert storyboard_notes == ""
+    assert "Favor restraint here." in llm.last_prompt
 
 
 def test_propose_moments_requests_thinking():
@@ -441,7 +478,7 @@ def test_propose_moments_clamps_max_duration_to_the_real_rendered_duration():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -496,7 +533,7 @@ def test_propose_moments_max_duration_stays_below_a_narrow_window_ceiling():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         scene_plan,
         transcript,
         _manifest_single_video(),
@@ -562,7 +599,7 @@ def test_propose_moments_clamps_duration_to_leave_room_for_transition_pad():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         scene_plan,
         transcript,
         _manifest_single_video(),
@@ -618,7 +655,7 @@ def test_propose_moments_drops_proposal_with_no_room_for_transition_pad():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         scene_plan,
         transcript,
         _manifest_single_video(),
@@ -644,7 +681,7 @@ def test_propose_moments_rejects_ungrounded_bottom_callout():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -670,7 +707,7 @@ def test_propose_moments_rejects_unknown_window_id():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -697,7 +734,7 @@ def test_propose_moments_accepts_grounded_side_text_with_valid_side():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -725,7 +762,7 @@ def test_propose_moments_rejects_side_text_without_presenter_side():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -752,7 +789,7 @@ def test_propose_moments_accepts_valid_side_image():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -783,7 +820,7 @@ def test_propose_moments_rejects_unknown_asset_id():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -809,7 +846,7 @@ def test_propose_moments_rejects_side_image_without_presenter_side():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -836,7 +873,7 @@ def test_propose_moments_accepts_valid_side_code():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -868,7 +905,7 @@ def test_propose_moments_rejects_unknown_code_asset_id():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -895,7 +932,7 @@ def test_propose_moments_rejects_side_code_without_presenter_side():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -932,7 +969,7 @@ def test_propose_moments_accepts_valid_side_diagram():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -970,7 +1007,7 @@ def test_propose_moments_rejects_side_diagram_with_dangling_edge():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -1001,7 +1038,7 @@ def test_propose_moments_rejects_side_diagram_exceeding_node_cap():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -1037,7 +1074,7 @@ def test_propose_moments_rejects_side_diagram_with_fabricated_labels():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -1065,7 +1102,7 @@ def test_propose_moments_accepts_side_text_with_title_style():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -1093,7 +1130,7 @@ def test_propose_moments_side_text_defaults_style_to_quote_when_omitted():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -1121,7 +1158,7 @@ def test_propose_moments_rejects_side_text_with_invalid_style():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -1153,7 +1190,7 @@ def test_propose_moments_accepts_valid_side_terms():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -1185,7 +1222,7 @@ def test_propose_moments_rejects_side_terms_missing_presenter_side():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -1212,7 +1249,7 @@ def test_propose_moments_rejects_side_terms_with_invalid_level():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -1239,7 +1276,7 @@ def test_propose_moments_rejects_side_terms_exceeding_max_terms():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -1269,7 +1306,90 @@ def test_propose_moments_rejects_side_terms_with_fabricated_term():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
+        _scene_plan_with_one_long_scene(),
+        _transcript_with_late_segment(),
+        _manifest_single_video(),
+        _no_assets(),
+        llm,
+        "{windows}{assets}{code_assets}",
+    )
+
+    assert proposals == []
+
+
+def test_propose_moments_accepts_valid_comparison():
+    # _transcript_with_late_segment's text is "the important key idea" —
+    # both sides below share a word/stem with it.
+    llm = _FakeLLMClient(
+        {
+            "moments": [
+                {
+                    "windowId": "w0",
+                    "treatment": "comparison",
+                    "comparison": {"left": "important", "right": "key idea"},
+                    "reason": "draws a direct two-way contrast",
+                }
+            ]
+        }
+    )
+
+    proposals = propose_moments(
+        _scene_plan_with_one_long_scene(),
+        _transcript_with_late_segment(),
+        _manifest_single_video(),
+        _no_assets(),
+        llm,
+        "{windows}{assets}{code_assets}",
+    )
+
+    assert len(proposals) == 1
+    assert proposals[0]["treatment"] == "comparison"
+    assert proposals[0]["comparison"] == {"left": "important", "right": "key idea"}
+    assert proposals[0]["presenterSide"] is None
+
+
+def test_propose_moments_rejects_comparison_with_fabricated_side():
+    llm = _FakeLLMClient(
+        {
+            "moments": [
+                {
+                    "windowId": "w0",
+                    "treatment": "comparison",
+                    "comparison": {"left": "important", "right": "Kubernetes"},
+                    "reason": "Kubernetes is never mentioned",
+                }
+            ]
+        }
+    )
+
+    proposals = propose_moments(
+        _scene_plan_with_one_long_scene(),
+        _transcript_with_late_segment(),
+        _manifest_single_video(),
+        _no_assets(),
+        llm,
+        "{windows}{assets}{code_assets}",
+    )
+
+    assert proposals == []
+
+
+def test_propose_moments_rejects_comparison_missing_side():
+    llm = _FakeLLMClient(
+        {
+            "moments": [
+                {
+                    "windowId": "w0",
+                    "treatment": "comparison",
+                    "comparison": {"left": "important"},
+                    "reason": "missing right side",
+                }
+            ]
+        }
+    )
+
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -1296,7 +1416,7 @@ def test_propose_moments_accepts_valid_full_visual_image():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -1328,7 +1448,7 @@ def test_propose_moments_rejects_full_visual_image_with_unknown_asset_id():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -1362,7 +1482,7 @@ def test_propose_moments_accepts_valid_full_visual_diagram():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -1399,7 +1519,7 @@ def test_propose_moments_rejects_full_visual_diagram_with_fabricated_labels():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -1426,7 +1546,7 @@ def test_propose_moments_accepts_valid_full_visual_text():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -1457,7 +1577,7 @@ def test_propose_moments_rejects_full_visual_text_ungrounded():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -1483,7 +1603,7 @@ def test_propose_moments_rejects_full_visual_missing_kind():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -1509,7 +1629,7 @@ def test_propose_moments_ignores_unrecognized_treatment():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -1542,7 +1662,7 @@ def test_propose_moments_does_not_double_propose_same_window():
         }
     )
 
-    proposals, _ = propose_moments(
+    proposals = propose_moments(
         _scene_plan_with_one_long_scene(),
         _transcript_with_late_segment(),
         _manifest_single_video(),
@@ -1876,6 +1996,41 @@ def test_merge_moment_scenes_side_terms_stores_terms():
 
     assert moment_scene["terms"] == terms
     assert moment_scene["presenterSide"] == "left"
+
+
+def test_merge_moment_scenes_comparison_stores_comparison_and_no_side():
+    scene_plan = {
+        "fps": 30,
+        "scenes": [
+            {
+                "id": "scene-001",
+                "type": "presenter",
+                "videoId": "001",
+                "timelineStartFrame": 0,
+                "durationInFrames": 900,
+            },
+        ],
+    }
+
+    proposals = [
+        {
+            "windowId": "w0",
+            "sceneId": "scene-001",
+            "videoId": "001",
+            "offsetInParentFrames": 500,
+            "maxDurationInParentFrames": 150,
+            "treatment": "comparison",
+            "comparison": {"left": "Monolith", "right": "Microservices"},
+            "presenterSide": None,
+            "reason": "the episode's central contrast",
+        }
+    ]
+
+    result = merge_moment_scenes(scene_plan, proposals)
+    moment_scene = next(s for s in result["scenes"] if s["type"] == "moment")
+
+    assert moment_scene["comparison"] == {"left": "Monolith", "right": "Microservices"}
+    assert "presenterSide" not in moment_scene
 
 
 def test_merge_moment_scenes_side_text_stores_style_when_present():

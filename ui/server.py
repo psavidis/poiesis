@@ -130,6 +130,7 @@ def episode_artifact(path: str, name: str):
 
     allowed = {
         "title_scenes.json",
+        "storyboard.json",
         "moments.json",
         "captions.json",
         "assets.json",
@@ -209,6 +210,42 @@ def update_title_scenes(path: str, body: TitleScenesUpdate):
     return {"titles": titles}
 
 
+class StoryboardChapter(BaseModel):
+    chapterId: str
+    chapterText: str
+    notes: str
+
+
+class StoryboardUpdate(BaseModel):
+    chapters: list[StoryboardChapter]
+
+
+@app.put("/api/episode/storyboard")
+def update_storyboard(path: str, body: StoryboardUpdate):
+    """Human edits to the AI's chapter-level storyboard reasoning. Unlike
+    title-scenes/moments, this has no scene-plan.json merge step — the
+    storyboard doesn't itself produce any scenes, it's read-as-context by
+    the next generate_moments.py run (see propose_moments's
+    storyboard_chapters param). Saving here just persists the edit; the
+    payoff is that re-running "Propose moment scenes" afterward reads the
+    edited reasoning without needing to regenerate it first."""
+
+    episode = resolve_episode(path)
+    processing = episode / "processing"
+
+    storyboard_path = processing / "storyboard.json"
+
+    chapters = [chapter.model_dump() for chapter in body.chapters]
+
+    try:
+        with episode_lock(episode, wait=False):
+            write_json_atomic(storyboard_path, {"chapters": chapters})
+    except EpisodeBusyError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    return {"chapters": chapters}
+
+
 class MomentProposal(BaseModel):
     windowId: str
     sceneId: str
@@ -222,6 +259,7 @@ class MomentProposal(BaseModel):
     assetId: str | None = None
     codeAssetId: str | None = None
     diagram: dict | None = None
+    comparison: dict | None = None
     caption: str | None = None
     reason: str = ""
 

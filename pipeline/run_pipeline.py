@@ -170,7 +170,21 @@ def main():
     run(title_scenes_command)
 
 
-    # 6c. Propose moment overlay scenes (bottom-callout/side-text/side-image)
+    # 6c. Propose chapter-level visual storyboard reasoning (runs before
+    # moment treatments are decided, so they can be judged against it)
+    storyboard_command = [
+        sys.executable,
+        str(pipeline / "generate_storyboard.py"),
+        str(episode)
+    ]
+
+    if args.force:
+        storyboard_command.append("--force")
+
+    run(storyboard_command)
+
+
+    # 6d. Propose moment overlay scenes (bottom-callout/side-text/side-image)
     moments_command = [
         sys.executable,
         str(pipeline / "generate_moments.py"),
@@ -183,7 +197,7 @@ def main():
     run(moments_command)
 
 
-    # 6d. Generate caption overlay scenes from trimmed transcripts
+    # 6e. Generate caption overlay scenes from trimmed transcripts
     captions_command = [
         sys.executable,
         str(pipeline / "generate_captions.py"),
@@ -198,7 +212,7 @@ def main():
     run(captions_command)
 
 
-    # 6e. Propose kinetic emphasis ("beat") overlay scenes from word-level
+    # 6f. Propose kinetic emphasis ("beat") overlay scenes from word-level
     # transcript timing — runs after moments/captions so it can see (and
     # avoid colliding with) whatever they already placed.
     emphasis_command = [

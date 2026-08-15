@@ -182,7 +182,14 @@ def format_windows_for_prompt(candidates, chapters=None):
     resolved) — a director reasoning about one chapter's visual story at a
     time needs its windows presented together, not as one flat list with no
     structure. chapters is optional so callers/tests that only care about
-    the flat-list behavior can omit it."""
+    the flat-list behavior can omit it.
+
+    The heading includes the real chapterId (e.g. "[c0]") alongside the
+    human-readable title text — generate_storyboard.py's prompt asks the
+    LLM to key its per-chapter notes by chapterId, and without the id
+    actually shown here the model has nothing to reference but the title
+    text itself, which doesn't match storyboard.json's real chapterId
+    values and silently breaks the lookup in propose_storyboard."""
 
     chapters_by_id = {c["chapterId"]: c for c in (chapters or [])}
 
@@ -206,7 +213,7 @@ def format_windows_for_prompt(candidates, chapters=None):
         heading = "(intro, before the first chapter)"
 
         if chapter_id in chapters_by_id:
-            heading = f'Chapter "{chapters_by_id[chapter_id]["text"]}"'
+            heading = f'Chapter [{chapter_id}] "{chapters_by_id[chapter_id]["text"]}"'
         elif chapter_id is not None:
             heading = "(unplaced)"
 
@@ -330,6 +337,27 @@ def is_diagram_grounded(diagram, source_text):
     return True
 
 
+def _phrase_grounded(text, source_words, source_stems):
+    """Shared any-word-matches check used by is_terms_grounded and
+    is_comparison_grounded: a short phrase counts as grounded if at least
+    one of its words (or stems) actually appears in the window's transcript
+    text — looser than is_grounded's 70%-of-words threshold, which is tuned
+    for full sentences, not short labels/terms."""
+
+    if not text:
+        return False
+
+    words = normalize_for_grounding(text).split()
+
+    if not words:
+        return False
+
+    return any(
+        word in source_words or _stem(word) in source_stems
+        for word in words
+    )
+
+
 def is_terms_grounded(terms, source_text):
     """Grounding check for a proposed "side-terms" moment: same
     any-word-matches discipline as is_diagram_grounded (terms are short
@@ -344,25 +372,31 @@ def is_terms_grounded(terms, source_text):
     source_words = set(normalize_for_grounding(source_text).split())
     source_stems = {_stem(word) for word in source_words}
 
-    for term in terms:
+    return all(
+        _phrase_grounded(term.get("text"), source_words, source_stems)
+        for term in terms
+    )
 
-        text = term.get("text")
 
-        if not text:
-            return False
+def is_comparison_grounded(comparison, source_text):
+    """Grounding check for a proposed "comparison" moment: both the "left"
+    and "right" labels must each have at least one word/stem actually
+    present in the window's transcript text — same discipline as
+    is_terms_grounded, applied to exactly two fixed labels instead of a
+    variable-length term list."""
 
-        term_words = normalize_for_grounding(text).split()
+    if not isinstance(comparison, dict):
+        return False
 
-        if not term_words:
-            return False
+    left = comparison.get("left")
+    right = comparison.get("right")
 
-        if not any(
-            word in source_words or _stem(word) in source_stems
-            for word in term_words
-        ):
-            return False
+    source_words = set(normalize_for_grounding(source_text).split())
+    source_stems = {_stem(word) for word in source_words}
 
-    return True
+    return _phrase_grounded(left, source_words, source_stems) and _phrase_grounded(
+        right, source_words, source_stems
+    )
 
 
 def duration_for_treatment(treatment, style=None):
@@ -378,6 +412,7 @@ def duration_for_treatment(treatment, style=None):
         "side-code": duration_frames["sideCode"],
         "side-diagram": duration_frames["sideDiagram"],
         "side-terms": duration_frames["sideTerms"],
+        "comparison": duration_frames["comparison"],
         "full-visual": duration_frames["fullVisual"],
     }[treatment]
 
@@ -427,7 +462,26 @@ def cap_full_visual_ratio(proposals, style):
     return kept
 
 
-def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, prompt_template: str, code_assets=None, episode_context=None):
+def format_storyboard_for_prompt(storyboard_chapters):
+    """Renders storyboard.json's per-chapter notes as prompt text — mirrors
+    format_windows_for_prompt's "=== heading ===" grouping style so the
+    two sections of the prompt (storyboard reasoning, then the windows it
+    applies to) read as one consistent document."""
+
+    if not storyboard_chapters:
+        return "(no storyboard reasoning available)"
+
+    lines = []
+
+    for chapter in storyboard_chapters:
+        lines.append(f'=== Chapter "{chapter.get("chapterText", "")}" ===')
+        lines.append(chapter.get("notes") or "(no notes for this chapter)")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, prompt_template: str, code_assets=None, episode_context=None, storyboard_chapters=None):
 
     if code_assets is None:
         code_assets = []
@@ -435,12 +489,15 @@ def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, pr
     if episode_context is None:
         episode_context = NO_CONTEXT_TEXT
 
+    if storyboard_chapters is None:
+        storyboard_chapters = []
+
     style = load_style()
 
     candidates = build_candidate_windows(scene_plan, transcript, manifest)
 
     if not candidates:
-        return [], ""
+        return []
 
     chapters = chapters_from_scene_plan(scene_plan)
 
@@ -456,19 +513,19 @@ def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, pr
     ).replace(
         "{episode_context}",
         episode_context
+    ).replace(
+        "{storyboard}",
+        format_storyboard_for_prompt(storyboard_chapters)
     )
 
-    # thinking=True (was False): this single call now does two things —
-    # reason chapter-by-chapter about each chapter's own visual story (which
-    # needs weighing pacing/variety/where restraint is better than another
-    # treatment), THEN commit each window's treatment against that
-    # reasoning. That's a genuinely harder task than the old "judge this
-    # window in isolation" version, in the same way generate_title_scenes.py
-    # already needed thinking=True to reliably find real chapter boundaries
-    # across a whole episode instead of a handful.
+    # thinking=True: committing each window's treatment against the
+    # storyboard's chapter-level reasoning (rather than judging the window
+    # in isolation) is a genuinely harder task than a flat per-window
+    # judgment, in the same way generate_title_scenes.py already needed
+    # thinking=True to reliably find real chapter boundaries across a whole
+    # episode instead of a handful. The chapter-level reasoning itself now
+    # happens earlier, in generate_storyboard.py's own thinking=True call.
     response = llm.complete_json(prompt, thinking=True)
-
-    storyboard_notes = response.get("storyboardNotes", "")
 
     candidates_by_id = {c["windowId"]: c for c in candidates}
     assets_by_id = {a["id"]: a for a in assets}
@@ -571,6 +628,29 @@ def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, pr
                     "treatment": "side-terms",
                     "terms": terms,
                     "presenterSide": presenter_side,
+                    "reason": moment.get("reason", ""),
+                }
+            )
+
+        elif treatment == "comparison":
+
+            comparison = moment.get("comparison")
+
+            if not is_comparison_grounded(comparison, candidate["text"]):
+                continue
+
+            claimed_windows.add(window_id)
+
+            proposals.append(
+                {
+                    "windowId": window_id,
+                    "sceneId": candidate["sceneId"],
+                    "videoId": candidate["videoId"],
+                    "offsetInParentFrames": candidate["offsetInParentFrames"],
+                    "maxDurationInParentFrames": candidate["maxDurationInParentFrames"],
+                    "treatment": "comparison",
+                    "comparison": {"left": comparison["left"], "right": comparison["right"]},
+                    "presenterSide": None,
                     "reason": moment.get("reason", ""),
                 }
             )
@@ -809,7 +889,7 @@ def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, pr
 
     proposals = [p for p in proposals if p["maxDurationInParentFrames"] > 0]
 
-    return proposals, storyboard_notes
+    return proposals
 
 
 def dedupe_overlapping_windows(proposals, style=None):
@@ -940,6 +1020,9 @@ def merge_moment_scenes(scene_plan, proposals):
         if proposal.get("terms"):
             moment_scene["terms"] = proposal["terms"]
 
+        if proposal.get("comparison"):
+            moment_scene["comparison"] = proposal["comparison"]
+
         insert_overlay_scene(
             merged_scenes,
             scenes_by_id,
@@ -979,6 +1062,7 @@ def main():
     scene_plan_file = processing / "scene-plan.json"
     assets_file = processing / "assets.json"
     code_assets_file = processing / "code_assets.json"
+    storyboard_file = processing / "storyboard.json"
     output_file = processing / "moments.json"
 
     if not transcript_file.exists():
@@ -993,6 +1077,11 @@ def main():
         print(f"ERROR: Missing scene plan: {scene_plan_file}")
         sys.exit(1)
 
+    if not storyboard_file.exists():
+        print(f"ERROR: Missing storyboard: {storyboard_file}")
+        print("Run generate_storyboard.py first — moment treatments are now decided against its chapter-level reasoning.")
+        sys.exit(1)
+
     if output_file.exists() and not args.force:
         print("Moments already proposed. Skipping.")
         print(output_file)
@@ -1004,6 +1093,7 @@ def main():
     transcript = load_json(transcript_file)
     manifest = load_json(manifest_file)
     scene_plan = load_json(scene_plan_file)
+    storyboard_chapters = load_json(storyboard_file).get("chapters", [])
 
     assets = load_json(assets_file)["assets"] if assets_file.exists() else []
     code_assets = load_json(code_assets_file)["codeAssets"] if code_assets_file.exists() else []
@@ -1012,7 +1102,7 @@ def main():
     print()
 
     try:
-        proposals, storyboard_notes = propose_moments(
+        proposals = propose_moments(
             scene_plan,
             transcript,
             manifest,
@@ -1020,10 +1110,11 @@ def main():
             llm,
             prompt_template,
             code_assets=code_assets,
-            episode_context=load_episode_narrative_text(episode)
+            episode_context=load_episode_narrative_text(episode),
+            storyboard_chapters=storyboard_chapters
         )
 
-        write_json_atomic(output_file, {"moments": proposals, "storyboardNotes": storyboard_notes})
+        write_json_atomic(output_file, {"moments": proposals})
 
         scene_plan = merge_moment_scenes(scene_plan, proposals)
 
