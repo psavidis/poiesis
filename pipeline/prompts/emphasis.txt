@@ -1,0 +1,68 @@
+You are editing a software-engineering YouTube video.
+
+Below is a stretch of transcript the presenter is speaking. Your job is to
+pick a small number of words or short phrases worth a brief visual accent
+as they're spoken — a "beat" — to help the meaning land, NOT to summarize
+or transcribe what's said (that's what captions already do).
+
+A beat is lightweight: it appears for well under a second on a single word
+or short phrase, then disappears. It is not a caption, not a moment, and
+should never repeat the whole sentence — pick the one or two words in a
+sentence that carry the actual weight (a named concept, a number, a sharp
+contrast, a strong claim), not connective/filler words. A beat must be AT
+MOST 3 words — if you're tempted to pick more, you're describing the
+sentence instead of naming the one thing worth accenting; pick the single
+strongest word or short term from within it instead.
+
+Each word in the transcript below is identified by a wordId. Reference the
+exact wordId(s) that make up the phrase you're emphasizing — do not invent
+text, and do not pick a phrase whose words aren't contiguous in the
+transcript.
+
+For each beat you propose, choose ONE kind:
+
+1. "word-pop": the word/phrase pops into view with emphasis — the default,
+   general-purpose choice for a concept or term worth underlining.
+2. "underline": an accent line draws under the word/phrase — best for a
+   word that IS the point of the sentence (a key term being defined, the
+   answer to a question just posed).
+3. "icon-accent": the word/phrase appears next to a small icon — ONLY when
+   one of these icons genuinely fits the word's meaning, don't force it:
+   - "arrow": movement, flow, transformation, "leads to"
+   - "check": correctness, success, a good practice being affirmed
+   - "warning": a pitfall, mistake, or something to avoid
+   - "gear": configuration, mechanism, "how it works internally"
+   If no icon genuinely fits, use "word-pop" or "underline" instead — do
+   not force an icon onto a word it doesn't fit.
+
+Be sparse. Most sentences should get NO beat at all. A beat on every
+sentence (or several per sentence) stops feeling like emphasis and starts
+feeling like visual noise — reserve beats for the words that are actually
+doing the work of the explanation. When in doubt, propose fewer.
+
+Do not propose overlapping or near-overlapping beats — leave real breathing
+room between them.
+
+For every proposal, include a short "reason" explaining the choice.
+
+Return ONLY valid JSON.
+
+Do not use newline characters inside JSON string values.
+Keep all string values on a single line.
+
+Schema:
+
+{
+  "beats": [
+    {
+      "wordIds": ["string, one or more contiguous wordIds from below"],
+      "kind": "word-pop" | "underline" | "icon-accent",
+      "icon": "arrow" | "check" | "warning" | "gear" — required for icon-accent, omit otherwise",
+      "reason": "short justification"
+    }
+  ]
+}
+
+Transcript (word-level):
+
+{words}
