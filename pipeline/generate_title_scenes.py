@@ -11,17 +11,10 @@ PROJECT_ROOT = PIPELINE_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from llm.client import LLMClient
+from style import load_style
 
 
 PROMPT_FILE = PIPELINE_DIR / "prompts" / "title_scenes.txt"
-
-TITLE_DURATION_FRAMES = 60
-
-# Two proposed titles closer together than this are treated as the same
-# topic shift proposed twice — keep the first (chronologically earliest)
-# and drop the later one, rather than inserting two title cards a couple
-# seconds apart.
-MIN_TITLE_SPACING_SECONDS = 20
 
 # A split landing this close to a presenter scene's own start/end produces
 # a presenter "piece" too short to read as real footage — just a handful
@@ -115,7 +108,10 @@ def format_transcript_for_prompt(transcript, manifest):
     return "\n".join(lines)
 
 
-def propose_title_scenes(transcript, manifest, llm: LLMClient, prompt_template: str):
+def propose_title_scenes(transcript, manifest, llm: LLMClient, prompt_template: str, style=None):
+
+    if style is None:
+        style = load_style()
 
     segments = indexed_segments(transcript, manifest)
 
@@ -175,7 +171,7 @@ def propose_title_scenes(transcript, manifest, llm: LLMClient, prompt_template: 
         too_close = (
             last_kept_segment is not None
             and segment["videoId"] == last_kept_segment["videoId"]
-            and segment["start"] - last_kept_segment["start"] < MIN_TITLE_SPACING_SECONDS
+            and segment["start"] - last_kept_segment["start"] < style["titles"]["minSpacingSeconds"]
         )
 
         if too_close:
@@ -247,7 +243,7 @@ def _snapped_split_frame(source_frame, segment_start, segment_end, min_piece_fra
     return source_frame
 
 
-def merge_title_scenes(scene_plan, titles, transcript, manifest):
+def merge_title_scenes(scene_plan, titles, transcript, manifest, style=None):
     """Resolves each title's segmentId to a real source-frame position
     (via the transcript/manifest) and splits the presenter scene it falls
     within there, inserting the title card between the two resulting
@@ -255,6 +251,11 @@ def merge_title_scenes(scene_plan, titles, transcript, manifest):
     only source of position, there is no positionless title anymore
     (unlike the old videoId-anchored design, where a title always sat at
     its clip's own start with nothing further to resolve)."""
+
+    if style is None:
+        style = load_style()
+
+    title_duration_frames = style["titles"]["durationFrames"]
 
     fps = scene_plan.get("fps", 30)
 
@@ -349,10 +350,10 @@ def merge_title_scenes(scene_plan, titles, transcript, manifest):
                     "type": "title",
                     "text": split["text"],
                     "timelineStartFrame": timeline_frame,
-                    "durationInFrames": TITLE_DURATION_FRAMES,
+                    "durationInFrames": title_duration_frames,
                 }
             )
-            timeline_frame += TITLE_DURATION_FRAMES
+            timeline_frame += title_duration_frames
 
             cursor = piece_end
 

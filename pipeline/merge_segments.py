@@ -65,14 +65,17 @@ def merge_segments(episode_folder: Path, force: bool):
         data = load_json(segment_path)
 
         for segment in data.get("segments", []):
-            merged_segments.append(
-                {
-                    "source": data["source"],
-                    "start": segment["start"],
-                    "end": segment["end"],
-                    "text": segment["text"]
-                }
-            )
+            merged_segment = {
+                "source": data["source"],
+                "start": segment["start"],
+                "end": segment["end"],
+                "text": segment["text"]
+            }
+
+            if "words" in segment:
+                merged_segment["words"] = segment["words"]
+
+            merged_segments.append(merged_segment)
 
 
     episode_transcript = {

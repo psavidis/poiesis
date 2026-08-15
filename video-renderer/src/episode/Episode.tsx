@@ -12,10 +12,12 @@ import {
 
 import type { EpisodeAsset, EpisodeCodeAsset, EpisodeProps, EpisodeVideo, MomentScene, PresenterLayout, PresenterScene, Scene, TitleScene } from "./types";
 import { AnimatedTitle } from "./AnimatedTitle";
+import { BeatOverlay } from "./BeatOverlay";
 import { CaptionText } from "./CaptionText";
 import { CodeBlock } from "./CodeBlock";
 import { DiagramBlock } from "./DiagramBlock";
 import { EpisodeImage } from "./EpisodeImage";
+import { FullVisualMoment } from "./FullVisualMoment";
 import { BottomCallout, SideImage, SideText } from "./MomentTreatments";
 import { TRANSITION_FRAMES } from "./timing";
 
@@ -60,16 +62,21 @@ export interface LayoutWindow {
     // Frame the slide-back-to-center completes — moment's own end plus
     // TRANSITION_FRAMES, clamped.
     end: number;
-    side: "left" | "right";
+    // "left"/"right": presenter slides to that side, narrowed. "hidden":
+    // presenter fades out entirely (a "full-visual" moment) rather than
+    // moving — AnimatedPresenterFrame handles this as an opacity fade, not
+    // a width/left interpolation, since there's no meaningful "side" to
+    // slide toward when the presenter isn't on screen at all.
+    side: "left" | "right" | "hidden";
 }
 
 export const layoutWindowsForScene = (scene: PresenterScene, moments: MomentScene[]): LayoutWindow[] => {
     const windows = moments
-        .filter((m) => m.parentSceneId === scene.id && m.presenterSide)
+        .filter((m) => m.parentSceneId === scene.id && (m.presenterSide || m.treatment === "full-visual"))
         .map((m) => ({
             start: Math.max(0, m.offsetInParentFrames - TRANSITION_FRAMES),
             end: Math.min(scene.durationInFrames, m.offsetInParentFrames + m.durationInFrames + TRANSITION_FRAMES),
-            side: m.presenterSide as "left" | "right",
+            side: m.treatment === "full-visual" ? "hidden" as const : (m.presenterSide as "left" | "right"),
         }))
         .sort((a, b) => a.start - b.start);
 
@@ -171,11 +178,12 @@ const AnimatedPresenterFrame = ({
     // trailing pad. Frames outside every window stay at dead center — most
     // of a long scene is unaffected, which is the whole point of the fix.
     const activeWindow = layoutWindows.find((w) => sceneFrame >= w.start && sceneFrame < w.end);
+    const isHidden = activeWindow?.side === "hidden";
 
     let widthPct = centerGeo.widthPct;
     let leftPct = centerGeo.leftPct;
 
-    if (activeWindow) {
+    if (activeWindow && activeWindow.side !== "hidden") {
         const sideGeo = LAYOUT_GEOMETRY[activeWindow.side];
         const enterEnd = Math.min(activeWindow.start + TRANSITION_FRAMES, activeWindow.end);
         const exitStart = Math.max(activeWindow.end - TRANSITION_FRAMES, enterEnd);
@@ -191,6 +199,26 @@ const AnimatedPresenterFrame = ({
             sceneFrame,
             [activeWindow.start, enterEnd, exitStart, activeWindow.end],
             [centerGeo.leftPct, sideGeo.leftPct, sideGeo.leftPct, centerGeo.leftPct],
+            { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+        );
+    }
+
+    // "full-visual" fade: the presenter stays at center geometry (no
+    // width/left shift — there's no side to move toward) but fades to
+    // fully transparent for the window's held span, same enter/exit pad as
+    // the side treatments' slide. The video keeps playing underneath
+    // (audio always does, per the Sequence below) — this only hides the
+    // picture, matching "voice continues as narration" from the design.
+    let hiddenOpacity = 1;
+
+    if (isHidden && activeWindow) {
+        const enterEnd = Math.min(activeWindow.start + TRANSITION_FRAMES, activeWindow.end);
+        const exitStart = Math.max(activeWindow.end - TRANSITION_FRAMES, enterEnd);
+
+        hiddenOpacity = interpolate(
+            sceneFrame,
+            [activeWindow.start, enterEnd, exitStart, activeWindow.end],
+            [1, 0, 0, 1],
             { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
         );
     }
@@ -228,13 +256,15 @@ const AnimatedPresenterFrame = ({
     // it rather than cutting. crossfadeInFrames is 0 for every scene that
     // isn't set to "crossfade" or has no previous scene to fade from, so
     // this is a no-op (opacity pinned to 1) for the common case.
-    const opacity =
+    const crossfadeOpacity =
         crossfadeInFrames === 0
             ? 1
             : interpolate(rawFrame, [0, crossfadeInFrames], [0, 1], {
                   extrapolateLeft: "clamp",
                   extrapolateRight: "clamp",
               });
+
+    const opacity = crossfadeOpacity * hiddenOpacity;
 
     return (
         <AbsoluteFill style={{ opacity }}>
@@ -354,6 +384,19 @@ const MomentSequence = ({
             if (!scene.diagram) return null;
             const presenterOnLeft = scene.presenterSide === "left";
             return <DiagramBlock diagram={scene.diagram} presenterOnLeft={presenterOnLeft} />;
+        }
+
+        case "full-visual": {
+            if (!scene.fullVisualKind) return null;
+            return (
+                <FullVisualMoment
+                    kind={scene.fullVisualKind}
+                    text={scene.text}
+                    assetPath={asset?.path}
+                    caption={scene.caption}
+                    diagram={scene.diagram}
+                />
+            );
         }
     }
 };
@@ -526,6 +569,24 @@ export const Episode = ({
                         durationInFrames={scene.durationInFrames}
                     >
                         <CaptionText text={scene.text} />
+                    </Sequence>
+                );
+            }
+
+            case "beat": {
+                const parent = presenterSceneMap.get(scene.parentSceneId);
+
+                if (!parent) {
+                    return null;
+                }
+
+                return (
+                    <Sequence
+                        key={scene.id}
+                        from={parent.timelineStartFrame + scene.offsetInParentFrames}
+                        durationInFrames={scene.durationInFrames}
+                    >
+                        <BeatOverlay kind={scene.kind} text={scene.text} icon={scene.icon} />
                     </Sequence>
                 );
             }

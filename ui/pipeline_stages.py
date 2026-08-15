@@ -100,6 +100,12 @@ PIPELINE_STAGES = [
         "captions.json",
     ),
     Stage(
+        "generate_emphasis",
+        "Propose emphasis beats (AI)",
+        lambda ep: [PYTHON, PIPELINE_DIR / "generate_emphasis.py", ep],
+        "emphasis.json",
+    ),
+    Stage(
         "generate_scene_plan_ts",
         "Generate Remotion codegen",
         lambda ep: [PYTHON, PIPELINE_DIR / "generate_scene_plan_ts.py", ep],

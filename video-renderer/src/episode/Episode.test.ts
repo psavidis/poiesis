@@ -74,6 +74,22 @@ describe("layoutWindowsForScene", () => {
         expect(windows).toEqual([{ start: 0, end: 100, side: "right" }]);
     });
 
+    it("produces a \"hidden\" window for a full-visual moment even though presenterSide is absent", () => {
+        const scene = presenterScene({ durationInFrames: 900 });
+        const moment = sideMoment({
+            treatment: "full-visual",
+            presenterSide: undefined,
+            offsetInParentFrames: 300,
+            durationInFrames: 150,
+        });
+
+        const windows = layoutWindowsForScene(scene, [moment]);
+
+        expect(windows).toEqual([
+            { start: 300 - TRANSITION_FRAMES, end: 300 + 150 + TRANSITION_FRAMES, side: "hidden" },
+        ]);
+    });
+
     it("returns multiple windows sorted by start frame", () => {
         const scene = presenterScene({ durationInFrames: 2000 });
         const late = sideMoment({ id: "m-late", offsetInParentFrames: 1000, durationInFrames: 100, presenterSide: "right" });

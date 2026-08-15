@@ -46,6 +46,9 @@ original_footage/*.mov
  generate_captions.py      -> processing/captions.json + merges "caption" scenes
       |
       v
+ generate_emphasis.py      -> processing/emphasis.json + merges "beat" scenes (kinetic word/phrase accents)
+      |
+      v
  generate_scene_plan_ts.py -> video-renderer/generated/episode/scene-plan.ts  (Remotion reads this)
       |
       v
@@ -61,15 +64,16 @@ original_footage/*.mov
 Run all the stages above `key_footage.py` in one shot with `./create_episode.sh <episode-folder>`.
 `key_footage.py` and the final render/QA are separate, deliberate steps (see below for why).
 
-## The five scene types that exist today
+## The six scene types that exist today
 
 | Type | Who creates it | What it looks like | Position |
 |---|---|---|---|
 | `presenter` | `analyze_scenes.py` (deterministic) | your talking-head footage, silence-trimmed | absolute `timelineStartFrame` |
 | `title` | `generate_title_scenes.py` (AI) | full-screen text card, anchored to the transcript segment where a new topic actually begins — can split a clip mid-recording, not just sit at a clip boundary | absolute `timelineStartFrame` |
-| `moment` | `generate_moments.py` (AI) | `bottom-callout` (short phrase over the full-frame presenter), `side-text` (longer phrase filling one side), `side-image` (an indexed asset filling one side), `side-code` (a real source file from `code/`, syntax-highlighted), or `side-diagram` (a small LLM-authored node/edge diagram) | relative to a parent `presenter` scene |
+| `moment` | `generate_moments.py` (AI) | `bottom-callout` (short phrase over the full-frame presenter), `side-text` (longer phrase filling one side), `side-image` (an indexed asset filling one side), `side-code` (a real source file from `code/`, syntax-highlighted), `side-diagram` (a small LLM-authored node/edge diagram), or `full-visual` (an image, diagram, or headline phrase filling the ENTIRE frame — the presenter is hidden, voice continues) | relative to a parent `presenter` scene |
 | `image` | hand-authored / edit-plan only | inset picture-in-picture overlay from `graphics/` | relative to a parent `presenter` scene |
 | `caption` | `generate_captions.py` (deterministic) | burned-in subtitle text, lower-third | relative to a parent `presenter` scene |
+| `beat` | `generate_emphasis.py` (AI) | `word-pop` (a word/phrase pops into view), `underline` (an accent line draws under it), or `icon-accent` (the word/phrase next to a small icon — arrow/check/warning/gear) — a brief kinetic accent on a single word or short phrase, timed to when it's actually spoken | relative to a parent `presenter` scene |
 
 The AI never places these randomly. Titles are proposed from the whole episode transcript in
 one pass (not per clip), anchored to the transcript segment where a genuinely new topic
@@ -77,15 +81,32 @@ begins — `merge_title_scenes` splits the presenter scene there if needed, so a
 mid-recording rather than only at a clip's own start. Moment scenes only get *offered* to the
 AI for windows that have gone ≥18 seconds without a visual change (computed in code, not left
 to the LLM's judgment) — and even then the AI is told to skip most of them and only act on the
-strongest candidates. Every proposal is validated: `bottom-callout`/`side-text` text must
-actually appear in what was said; `side-image`/`side-code` selections must reference a real,
-indexed asset (never an invented id); `side-diagram` node labels are checked against the
-window's transcript text as a guard against wholesale fabrication (diagrams are the one
-treatment where the LLM constructs new structure rather than selecting from a list — see
-below). `side-text`/`side-image`/`side-code`/`side-diagram` also assign the parent presenter
-scene's `layout` (`"left"`/`"right"`) so the presenter animates to make room — two moments
-can't assign conflicting layouts to the same parent, and a `bottom-callout`'s parent must stay
-`"center"`. Nothing is trusted blindly.
+strongest candidates. Every proposal is validated: `bottom-callout`/`side-text`/`full-visual`
+text must actually appear in what was said; `side-image`/`side-code`/`full-visual` image
+selections must reference a real, indexed asset (never an invented id); `side-diagram`/
+`full-visual` diagram node labels are checked against the window's transcript text as a guard
+against wholesale fabrication (diagrams are the one content type where the LLM constructs new
+structure rather than selecting from a list — see below). `side-text`/`side-image`/`side-code`/
+`side-diagram` require a `presenterSide` (`"left"`/`"right"`) so the presenter animates to that
+side to make room — two moments on the same parent can't claim overlapping on-screen windows.
+`bottom-callout` and `full-visual` never set `presenterSide`: a `bottom-callout` leaves the
+presenter full-frame, while `full-visual` hides the presenter entirely (rather than moving it
+to a side) for its own window — reserved for visuals that need the whole frame, and kept rarer
+than the side treatments (see `config.json`'s `style.moments.fullVisualMaxRatioToSideMoments`).
+Nothing is trusted blindly.
+
+`beat` scenes work differently from `moment`/`title`: they're not monotony-gated, and they're
+not proposed against transcript text — they're proposed against *word-level* transcript
+timestamps (`words[]` on a transcript segment, populated by `transcribe_footage.sh`'s
+`--word_timestamps True` flag; an episode transcribed before that flag was added has no word
+timing and simply gets no beats until re-transcribed). The AI picks *which* words/phrases are
+worth a beat and what kind (`word-pop`/`underline`/`icon-accent`); `generate_emphasis.py`
+computes the beat's exact on-screen timing itself from the matched word's real start time —
+the LLM never states a frame offset directly, the same reasoning/execution split used
+everywhere else in this pipeline. Beats are meant to be a frequent, light rhythm (a spacing
+floor of `style.emphasis.minSecondsBetweenBeats`, not a rare-event density cap like moments),
+and are automatically skipped wherever they'd land on top of an already-placed `moment`/`image`
+overlay on the same parent scene.
 
 ## How to process a new episode end to end
 
@@ -138,6 +159,8 @@ hand-edited:
   side-text) or `assetId`/`caption` (side-image).
 - Delete/edit any `image` scene's `assetId` (must match an id in `processing/assets.json`)
   or `caption`.
+- Delete/edit any `beat` scene's `text`, `offsetInParentFrames`, or `durationInFrames` — its
+  `kind`/`icon` stay AI-owned, same reasoning as a moment's `treatment`.
 - Adjust a `presenter` scene's `sourceStartFrame`/`sourceEndFrame` if the automatic
   silence-trim cut too much or too little.
 - After hand-editing, re-run just the codegen step (`generate_scene_plan_ts.py`) — no need to

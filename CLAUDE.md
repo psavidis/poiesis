@@ -815,3 +815,898 @@ When making architectural decisions, favor:
 The ultimate goal is:
 
 > **Record once, review briefly, publish.**
+
+# Visual Storytelling & Professional Motion Design Directive
+
+This section defines the visual-quality standard for Poiesis.
+
+It is intentionally more demanding than simply producing "animated" videos.
+
+The objective is to produce videos that look **professionally designed and edited**, not merely AI-generated.
+
+---
+
+# The Core Creative Goal
+
+Poiesis should not think of itself as an animation generator.
+
+It should think of itself as a:
+
+> **Professional visual storytelling and motion-design system for software-engineering videos.**
+
+The job of the AI is to transform spoken reasoning into a visual experience that helps the audience understand, remember, and follow the argument.
+
+The objective is NOT:
+
+> "Make the video more animated."
+
+The objective is:
+
+> **"Make the ideas easier and more compelling to understand through visuals."**
+
+This distinction is fundamental.
+
+---
+
+# The Creative Director Model
+
+Claude should act as the **creative director and visual storyteller**.
+
+Remotion should act as the **motion-design and rendering engine**.
+
+Poiesis should act as the **orchestration and production system**.
+
+The relationship is:
+
+```
+SCRIPT / AUDIO
+      |
+      v
+SEMANTIC UNDERSTANDING
+      |
+      v
+CREATIVE DIRECTION
+      |
+      v
+VISUAL STORYBOARD
+      |
+      v
+SCENE SPECIFICATION
+      |
+      v
+REMOTION COMPONENTS
+      |
+      v
+    RENDER
+      |
+      v
+VISUAL QA / CRITIQUE
+      |
+      v
+   ITERATION
+      |
+      v
+  FINAL VIDEO
+```
+
+Claude should make the creative decisions.
+
+Remotion should execute those decisions deterministically.
+
+---
+
+# Do Not Animate Sentences
+
+One of the most important rules in Poiesis is:
+
+> **Do not treat the transcript as a sequence of sentences that need animation.**
+
+Instead, treat the narration as a sequence of **ideas**.
+
+For every meaningful section of narration, determine:
+
+1. What is the speaker trying to communicate?
+2. What does the audience need to understand?
+3. What is abstract?
+4. What is difficult to visualize?
+5. What relationship is being described?
+6. What should be emphasized?
+7. What visual representation would make the idea easier to understand?
+
+Only after answering those questions should a visual be selected.
+
+---
+
+# Show, Don't Repeat
+
+A visual should preferably add information rather than simply repeat the narration.
+
+For example, if the speaker says:
+
+> "A hotel knows that someone checked in, but it doesn't know where that person actually is."
+
+A weak implementation would display:
+
+```
+"Checked in ≠ Actually there"
+```
+
+as animated text.
+
+A stronger implementation could show:
+
+```
+PMS
+ |
+ | Check-in
+ v
+HOTEL
+ |
+ +---- Room
+ +---- Restaurant
+ +---- Pool
+ +---- Gym
+ |
+ v
+Unknown physical location
+```
+
+Then actual occupancy can progressively appear.
+
+The visual creates a mental model.
+
+That is the standard Poiesis should aim for.
+
+---
+
+# Visual Purpose
+
+Every significant visual element should have an explicit purpose.
+
+A visual should primarily serve one or more of:
+
+* Explanation
+* Emphasis
+* Context
+* Comparison
+* Causality
+* Process
+* Spatial understanding
+* Temporal understanding
+* Data comprehension
+* Demonstration
+* Emotional impact
+* Attention direction
+* Narrative transition
+
+Avoid decorative animation that does not improve the communication.
+
+---
+
+# Visual Decision Hierarchy
+
+When deciding what should appear on screen, prefer this hierarchy:
+
+### 1. Real evidence
+
+Use:
+
+* Product UI
+* Screenshots
+* Code
+* Real diagrams
+* Real data
+* Actual footage
+
+when they directly explain the idea.
+
+### 2. Constructed explanatory graphics
+
+Use:
+
+* Diagrams
+* Flow charts
+* Timelines
+* Comparisons
+* Conceptual illustrations
+* Animated architecture
+* Spatial representations
+
+when the idea needs explanation.
+
+### 3. Typography
+
+Use large text when the **statement itself** is important.
+
+Typography should usually emphasize rather than explain a complicated concept.
+
+### 4. Decorative motion
+
+Use only when it contributes to visual rhythm, polish, or transition.
+
+Decorative animation should never replace useful visual communication.
+
+---
+
+# Professional Visual Rhythm
+
+A professional video should not remain visually static for long periods when the content benefits from visual support.
+
+However, visual change should also not happen continuously.
+
+Think in terms of **visual rhythm**.
+
+For example:
+
+```
+PRESENTER
+    |
+    v
+IMPORTANT STATEMENT
+    |
+    v
+DIAGRAM
+    |
+    v
+PRESENTER
+    |
+    v
+CODE
+    |
+    v
+CONCEPT VISUALIZATION
+    |
+    v
+PRESENTER
+```
+
+The exact sequence should depend on the content.
+
+Avoid repetitive patterns such as:
+
+```
+TEXT
+TEXT
+TEXT
+TEXT
+```
+
+or:
+
+```
+ZOOM
+ZOOM
+ZOOM
+ZOOM
+```
+
+or:
+
+```
+POP-IN
+POP-IN
+POP-IN
+POP-IN
+```
+
+Professionalism comes from variation combined with consistency.
+
+---
+
+# Visual Breathing Room
+
+Not every moment requires a graphic.
+
+Some of the strongest moments may be:
+
+* Presenter alone
+* A simple sentence
+* A pause
+* A clean composition
+* A slow camera movement
+* A minimal visual transition
+
+Poiesis should intentionally create moments of visual silence.
+
+A video that constantly demands attention becomes exhausting.
+
+---
+
+# Motion Must Communicate
+
+Animation should have semantic meaning whenever possible.
+
+Examples:
+
+### Movement
+
+Can communicate:
+
+* Flow
+* Direction
+* Progression
+* Migration
+* Causality
+* Connection
+
+### Scale
+
+Can communicate:
+
+* Importance
+* Growth
+* Zooming into detail
+* Hierarchy
+
+### Opacity
+
+Can communicate:
+
+* Secondary information
+* Context
+* Disappearance
+* Focus
+
+### Position
+
+Can communicate:
+
+* Relationships
+* Spatial organization
+* Before/after
+* Movement between states
+
+### Morphing
+
+Can communicate:
+
+* Transformation
+* Equivalence
+* Evolution
+* Refactoring
+
+Prefer meaningful motion over generic effects.
+
+---
+
+# Build A Professional Motion Vocabulary
+
+Poiesis should develop a reusable library of professional motion-design primitives.
+
+Examples:
+
+```
+TitleReveal
+KineticStatement
+WordHighlight
+NumberReveal
+Counter
+Comparison
+BeforeAfter
+Diagram
+FlowDiagram
+ProcessDiagram
+Timeline
+ArchitectureDiagram
+DataChart
+BarChart
+LineChart
+Map
+Callout
+Annotation
+ScreenshotFocus
+ImageReveal
+ImagePan
+UIShowcase
+CodeReveal
+CodeFocus
+ConceptVisualization
+Quote
+FullScreenStatement
+SectionTransition
+ChapterTitle
+```
+
+These should be reusable and parameterized.
+
+The AI should normally **select and configure** these primitives instead of inventing completely new animation implementations.
+
+The library should grow over time.
+
+---
+
+# Motion Design System
+
+The visual system should have explicit reusable rules for:
+
+* Typography
+* Font sizes
+* Font weights
+* Color
+* Spacing
+* Grid
+* Alignment
+* Corner radius
+* Shadows
+* Borders
+* Backgrounds
+* Stroke widths
+* Animation durations
+* Easing
+* Entrance animations
+* Exit animations
+* Transitions
+
+The purpose is to make independently generated scenes feel like they belong to the same professional production.
+
+Do not allow every scene to develop its own visual language.
+
+---
+
+# Typography Rules
+
+Typography should be treated as a design system.
+
+Prefer:
+
+```
+ONE IMPORTANT IDEA
+```
+
+over:
+
+```
+A paragraph of text explaining everything.
+```
+
+Text should generally be:
+
+* Short
+* Hierarchical
+* Readable
+* Deliberately positioned
+* Timed with narration
+
+Use large text for emphasis.
+
+Use smaller text for supporting information.
+
+Do not turn the video into a presentation deck.
+
+The viewer should be watching a video, not reading slides.
+
+---
+
+# Diagrams Are First-Class Visuals
+
+For software-engineering content, diagrams should be one of the primary visual languages.
+
+Claude should recognize when the speaker is describing:
+
+* Architecture
+* Data flow
+* APIs
+* Components
+* Dependencies
+* Processes
+* State transitions
+* Queues
+* Events
+* Databases
+* Networks
+* Algorithms
+* Relationships
+
+and consider generating a diagram.
+
+For example:
+
+```
+Client
+   |
+   v
+ API
+   |
+   v
+Service
+   |
++--+--+
+|     |
+v     v
+```
+
+DB    Kafka
+
+A diagram should not simply appear.
+
+It should usually be **constructed progressively in sync with the explanation**.
+
+If the speaker introduces the API first, show the API.
+
+When the speaker explains the service, reveal the service.
+
+When the speaker explains the database, connect it.
+
+This allows the audience to build the mental model together with the speaker.
+
+---
+
+# Code Is A Visual Storytelling Tool
+
+Code should not simply be displayed as a static screenshot.
+
+When useful:
+
+* Reveal relevant lines progressively.
+* Highlight the important section.
+* De-emphasize irrelevant code.
+* Zoom into the relevant method.
+* Show a before/after.
+* Animate relationships between code and architecture.
+* Connect the code to the concept being explained.
+
+The objective is:
+
+> "Show the audience exactly what the speaker is talking about."
+
+not:
+
+> "Put the entire code listing on screen."
+
+---
+
+# Presenter Integration
+
+The presenter should remain an important visual anchor.
+
+Visuals should complement the presenter rather than constantly replacing them.
+
+Possible compositions include:
+
+```
+Presenter + supporting graphic
+
+Presenter + diagram
+
+Presenter + code
+
+Presenter + highlighted phrase
+
+Full-screen concept
+
+Presenter → graphic → presenter
+```
+
+Use the presenter strategically.
+
+Do not obscure the presenter unnecessarily.
+
+Do not cover their face with graphics.
+
+Maintain visual hierarchy.
+
+---
+
+# Scene Composition
+
+Every scene should have deliberate composition.
+
+Consider:
+
+* Subject position
+* Negative space
+* Visual balance
+* Alignment
+* Hierarchy
+* Depth
+* Scale
+* Focus
+* Contrast
+
+Do not simply center everything.
+
+Do not automatically put text in the middle of the screen.
+
+Composition should depend on the content and the intended visual relationship.
+
+---
+
+# Camera Language
+
+Virtual camera movement can be used to guide attention.
+
+Examples:
+
+* Slow push-in for emphasis
+* Pull-back to reveal context
+* Pan across a diagram
+* Zoom into code
+* Move between connected architecture components
+* Follow a data flow
+* Reveal a larger system
+
+Camera movement should have narrative purpose.
+
+Avoid constant artificial zooming.
+
+---
+
+# Transitions
+
+Transitions should reflect relationships between scenes.
+
+Prefer:
+
+* Morph
+* Match movement
+* Spatial continuation
+* Shared elements
+* Camera movement
+* Shape transformation
+* Progressive replacement
+* Crossfade where appropriate
+
+Avoid using random transition effects merely to separate scenes.
+
+The transition itself should ideally communicate continuity.
+
+---
+
+# Semantic Scene Specification
+
+The edit plan should eventually distinguish between:
+
+### WHAT
+
+The idea being communicated.
+
+### WHY
+
+Why the visual exists.
+
+### HOW
+
+Which reusable visual component should communicate it.
+
+Conceptually:
+
+```json
+{
+  "purpose": "Explain event flow",
+  "visualConcept": "An event moves from producer to consumer through Kafka",
+  "component": "FlowDiagram",
+  "elements": [
+    "Producer",
+    "Kafka",
+    "Consumer"
+  ],
+  "animation": "progressive-flow",
+  "emphasis": ["Kafka"]
+}
+```
+
+The exact domain model should evolve with the application.
+
+The important principle is that **creative intent must survive independently of rendering implementation**.
+
+---
+
+# Storyboard Before Implementation
+
+For substantial sections, Claude should first reason about the visual storyboard before writing or modifying Remotion code.
+
+The preferred process is:
+
+```
+Narration
+   |
+   v
+Semantic analysis
+   |
+   v
+Visual opportunities
+   |
+   v
+Storyboard
+   |
+   v
+Scene specifications
+   |
+   v
+Remotion implementation
+```
+
+Do not immediately code the first visual idea that comes to mind.
+
+Compare possible visual approaches and choose the one that communicates best.
+
+---
+
+# The Audience Comprehension Test
+
+For every important scene ask:
+
+> What should the audience understand after seeing this?
+
+Then ask:
+
+> Is the visual actually helping them understand it?
+
+If removing the visual would make the explanation equally clear, consider whether the visual is necessary.
+
+If the visual merely repeats the narration without adding useful information, consider replacing it.
+
+---
+
+# The Professionalism Test
+
+Before accepting a generated scene, evaluate:
+
+### Composition
+
+Does this look deliberately designed?
+
+### Typography
+
+Does it look like professional motion graphics rather than an HTML page?
+
+### Motion
+
+Does movement have purpose?
+
+### Hierarchy
+
+Is it immediately obvious where the viewer should look?
+
+### Timing
+
+Do important events happen at the right moment?
+
+### Restraint
+
+Is anything unnecessary?
+
+### Consistency
+
+Does it belong to the Poiesis visual language?
+
+### Comprehension
+
+Does the visual make the concept easier to understand?
+
+### Originality
+
+Does it look like a thoughtful production rather than a generic AI template?
+
+---
+
+# Render → Inspect → Critique → Improve
+
+A rendered video is not automatically successful because the code compiled.
+
+The AI should inspect its actual visual output.
+
+The desired loop is:
+
+```
+IMPLEMENT
+   |
+   v
+RENDER
+   |
+   v
+INSPECT
+   |
+   v
+CRITIQUE
+   |
+   v
+IMPROVE
+   |
+   v
+RENDER AGAIN
+```
+
+When possible, inspect actual frames or short rendered sections rather than reasoning only from source code.
+
+Source code cannot reliably tell you whether a composition looks professional.
+
+---
+
+# Avoid AI Slop
+
+Poiesis must actively avoid visual patterns commonly associated with low-quality AI-generated content.
+
+Avoid:
+
+* Excessive bouncing
+* Excessive zooming
+* Random particles
+* Random gradients
+* Generic glowing UI
+* Excessive glassmorphism
+* Emoji-heavy visuals
+* Random icons
+* Constant kinetic typography
+* Every-word animation
+* Unmotivated camera movement
+* Excessive transitions
+* Overly dense screens
+* Generic stock-looking illustrations
+* Visuals unrelated to the narration
+
+When in doubt:
+
+> **Prefer simple, intentional, well-composed design over flashy animation.**
+
+---
+
+# The Ultimate Standard
+
+The final video should not feel like:
+
+> "AI generated a video."
+
+It should feel like:
+
+> **"A professional editor and motion designer produced this video."**
+
+AI should be invisible in the final result.
+
+The audience should notice:
+
+* Clear explanations
+* Strong visual storytelling
+* Excellent pacing
+* Consistent design
+* Professional motion
+* Useful diagrams
+* Well-timed emphasis
+* Good composition
+
+They should not notice the automation behind it.
+
+---
+
+# Development Priority
+
+When improving Poiesis's visual generation capabilities, prioritize in this order:
+
+1. Better semantic understanding of narration.
+2. Better identification of visual opportunities.
+3. Better storyboard generation.
+4. Better reusable visual primitives.
+5. Better scene composition.
+6. Better timing synchronization.
+7. Better transitions.
+8. Better visual QA.
+9. Better iterative refinement.
+10. More visual variety.
+
+Do NOT prioritize:
+
+> "More animation types."
+
+A small library of excellent components is more valuable than a huge library of mediocre ones.
+
+---
+
+# Definition Of Success
+
+Poiesis succeeds when:
+
+> I can give it a 10–15 minute software-engineering talking-head video and its first generated version already looks sufficiently professional that I mainly spend my time correcting creative decisions rather than manually editing the video.
+
+The goal is not perfection on the first render.
+
+The goal is:
+
+> **The AI makes a strong professional edit, and the human makes the final creative decisions.**
+
+The human should be the director.
+
+Claude should be the creative editor.
+
+Remotion should be the motion-design engine.
+
+Poiesis should orchestrate the entire process.

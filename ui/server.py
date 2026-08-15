@@ -217,6 +217,7 @@ class MomentProposal(BaseModel):
     maxDurationInParentFrames: int
     treatment: str
     presenterSide: str | None = None
+    fullVisualKind: str | None = None
     text: str | None = None
     assetId: str | None = None
     codeAssetId: str | None = None

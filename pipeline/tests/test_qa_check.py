@@ -127,6 +127,36 @@ def test_check_scene_plan_asset_ids_ignores_non_side_image_moments():
     assert check_scene_plan_asset_ids(scene_plan, []) == []
 
 
+def test_check_scene_plan_asset_ids_flags_unknown_id_for_full_visual_image_moment():
+    scene_plan = {
+        "scenes": [
+            {
+                "id": "scene-moment-0",
+                "type": "moment",
+                "treatment": "full-visual",
+                "fullVisualKind": "image",
+                "assetId": "img-999",
+            },
+        ]
+    }
+    assets = [{"id": "img-001"}]
+
+    issues = check_scene_plan_asset_ids(scene_plan, assets)
+
+    assert len(issues) == 1
+    assert issues[0]["check"] == "unknown_asset_id"
+
+
+def test_check_scene_plan_asset_ids_ignores_full_visual_non_image_moments():
+    scene_plan = {
+        "scenes": [
+            {"id": "scene-moment-0", "type": "moment", "treatment": "full-visual", "fullVisualKind": "text", "text": "hi"},
+        ]
+    }
+
+    assert check_scene_plan_asset_ids(scene_plan, []) == []
+
+
 def test_check_moment_presenter_side_agreement_passes_for_bottom_callout_without_side():
     scene_plan = {
         "scenes": [
@@ -165,6 +195,55 @@ def test_check_moment_presenter_side_agreement_flags_side_text_without_side():
     scene_plan = {
         "scenes": [
             {"id": "m", "type": "moment", "treatment": "side-text"},
+        ]
+    }
+
+    issues = check_moment_presenter_side_agreement(scene_plan)
+
+    assert len(issues) == 1
+    assert issues[0]["sceneId"] == "m"
+
+
+def test_check_moment_presenter_side_agreement_passes_for_full_visual_without_side():
+    scene_plan = {
+        "scenes": [
+            {"id": "m", "type": "moment", "treatment": "full-visual", "fullVisualKind": "text"},
+        ]
+    }
+
+    assert check_moment_presenter_side_agreement(scene_plan) == []
+
+
+def test_check_moment_presenter_side_agreement_flags_full_visual_with_side():
+    scene_plan = {
+        "scenes": [
+            {"id": "m", "type": "moment", "treatment": "full-visual", "fullVisualKind": "text", "presenterSide": "left"},
+        ]
+    }
+
+    issues = check_moment_presenter_side_agreement(scene_plan)
+
+    assert len(issues) == 1
+    assert issues[0]["sceneId"] == "m"
+
+
+def test_check_moment_presenter_side_agreement_flags_side_code_without_side():
+    scene_plan = {
+        "scenes": [
+            {"id": "m", "type": "moment", "treatment": "side-code"},
+        ]
+    }
+
+    issues = check_moment_presenter_side_agreement(scene_plan)
+
+    assert len(issues) == 1
+    assert issues[0]["sceneId"] == "m"
+
+
+def test_check_moment_presenter_side_agreement_flags_side_diagram_without_side():
+    scene_plan = {
+        "scenes": [
+            {"id": "m", "type": "moment", "treatment": "side-diagram"},
         ]
     }
 

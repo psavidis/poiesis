@@ -1,7 +1,7 @@
-MONOTONY_THRESHOLD_SECONDS = 18.0
+from style import load_style
 
 
-def find_monotony_eligible_windows(scene_plan, threshold_seconds=MONOTONY_THRESHOLD_SECONDS):
+def find_monotony_eligible_windows(scene_plan, threshold_seconds=None):
     """Find timeline windows where too long has passed since the last visual
     change (title/emphasis scene), within presenter scenes only.
 
@@ -13,6 +13,9 @@ def find_monotony_eligible_windows(scene_plan, threshold_seconds=MONOTONY_THRESH
     overlays built from this stay correctly positioned if the parent scene
     later moves — plus sourceStartFrame, sourceEndFrame.
     """
+
+    if threshold_seconds is None:
+        threshold_seconds = load_style()["monotonyThresholdSeconds"]
 
     fps = scene_plan["fps"]
     threshold_frames = threshold_seconds * fps

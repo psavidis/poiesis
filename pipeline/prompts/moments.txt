@@ -40,19 +40,43 @@ For each window, decide ONE of these treatments, or propose nothing:
    related to the topic. Keep it small — at most 6 boxes and 8 arrows, and
    usually far fewer. If the relationship can't be captured simply, don't
    force it — use another treatment or nothing instead.
-6. Nothing.
+6. "full-visual": the visual takes over the ENTIRE frame and the presenter
+   disappears from view for a few seconds while their voice continues as
+   narration. This is a bigger commitment than any "side-*" treatment, so
+   reserve it for moments where the visual is central enough to genuinely
+   replace the presenter's screen time, not merely relevant to the
+   topic — something the viewer needs to actually study closely (a diagram
+   with several parts, a photo/screenshot that needs to fill the frame to
+   be legible, a single strong statement that deserves the whole screen to
+   land). Also decide "fullVisualKind":
+   - "image": pick one of the available images below — same strict
+     relevance requirement as "side-image", raised further: it must be
+     something the viewer needs to see large, not just see.
+   - "diagram": same construction rules as "side-diagram" (boxes/arrows,
+     grounded in what's actually being explained, at most 6 boxes/8
+     arrows), just rendered full-frame instead of to one side.
+   - "text": a short, strong statement taken directly from what is said in
+     the window — same grounding rules as "bottom-callout"/"side-text" —
+     used when the moment's weight comes from the words themselves, not an
+     image or diagram.
+7. Nothing.
 
 Use these sparingly and deliberately — most windows should get NOTHING.
 Reserve "side-text"/"side-image"/"side-code"/"side-diagram" for moments
 that genuinely warrant giving up half the frame; overusing them will feel
 gimmicky rather than engaging. "bottom-callout" is the lighter-weight
 default when a moment deserves emphasis but not a full layout change.
+"full-visual" should be rarer still than the side treatments — most
+episodes will only have one or two moments (if any) that truly deserve the
+whole frame.
 
 For "side-text", "side-image", "side-code", and "side-diagram", also decide
 which side the presenter should move to ("left" or "right") — the content
 fills the opposite side. Prefer "left" for the presenter unless there's a
 specific reason to use "right" (e.g. two consecutive side treatments in the
 same clip alternating sides feels more dynamic than always the same side).
+Do NOT include "presenterSide" for "full-visual" — the presenter isn't
+moved to a side, it's hidden entirely, so there's no side to choose.
 
 Text (for "bottom-callout" and "side-text") must be a short phrase taken
 directly from what is actually said in the window — quote it closely, do
@@ -101,12 +125,13 @@ Schema:
   "moments": [
     {
       "windowId": "string, must match a windowId below",
-      "treatment": "bottom-callout" | "side-text" | "side-image" | "side-code" | "side-diagram",
-      "text": "required for bottom-callout and side-text",
-      "assetId": "required for side-image, must match an assetId below",
+      "treatment": "bottom-callout" | "side-text" | "side-image" | "side-code" | "side-diagram" | "full-visual",
+      "fullVisualKind": "image" | "diagram" | "text" — required for full-visual, omit otherwise",
+      "text": "required for bottom-callout, side-text, and full-visual with fullVisualKind 'text'",
+      "assetId": "required for side-image, and for full-visual with fullVisualKind 'image' — must match an assetId below",
       "codeAssetId": "required for side-code, must match a codeAssetId below",
-      "diagram": "required for side-diagram: { nodes: [{id, label}], edges: [{from, to, label?}], layout: 'horizontal'|'vertical' }",
-      "presenterSide": "left" | "right" — required for side-text, side-image, side-code, and side-diagram, omit for bottom-callout",
+      "diagram": "required for side-diagram, and for full-visual with fullVisualKind 'diagram': { nodes: [{id, label}], edges: [{from, to, label?}], layout: 'horizontal'|'vertical' }",
+      "presenterSide": "left" | "right" — required for side-text, side-image, side-code, and side-diagram, omit for bottom-callout and full-visual",
       "reason": "short justification"
     }
   ]

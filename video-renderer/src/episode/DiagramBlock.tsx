@@ -17,9 +17,15 @@ const NODE_STAGGER_FRAMES = 6;
 export const DiagramBlock = ({
                                   diagram,
                                   presenterOnLeft,
+                                  full = false,
                               }: {
     diagram: DiagramData;
     presenterOnLeft: boolean;
+    // Full-frame variant for "full-visual" moments (see
+    // FullVisualMoment.tsx) — same node/edge data and reveal
+    // choreography, just centered at a larger scale instead of confined
+    // to the side panel a presenter is sharing the frame with.
+    full?: boolean;
 }) => {
     const frame = useCurrentFrame();
     const { durationInFrames } = useVideoConfig();
@@ -35,93 +41,112 @@ export const DiagramBlock = ({
         { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
     );
 
-    const translateX = interpolate(
-        frame,
-        [0, TRANSITION_FRAMES],
-        [presenterOnLeft ? -40 : 40, 0],
-        { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+    const translateX = full
+        ? 0
+        : interpolate(
+              frame,
+              [0, TRANSITION_FRAMES],
+              [presenterOnLeft ? -40 : 40, 0],
+              { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+          );
+
+    const content = (
+        <div
+            style={{
+                opacity: containerOpacity,
+                transform: `translateX(${translateX}px)`,
+                width: "100%",
+                display: "flex",
+                flexDirection: isVertical ? "column" : "row",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: full ? 24 : 8,
+            }}
+        >
+            {diagram.nodes.map((node, index) => {
+                // Sequential reveal: each node fades in slightly
+                // after the previous one, guiding the eye through
+                // the relationship in order — justified here
+                // (unlike code/text) because that's exactly what a
+                // diagram is for.
+                const nodeStart = TRANSITION_FRAMES + index * NODE_STAGGER_FRAMES;
+                const nodeOpacity = interpolate(
+                    frame,
+                    [nodeStart, nodeStart + NODE_STAGGER_FRAMES],
+                    [0, 1],
+                    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+                );
+
+                const outgoingEdges = diagram.edges.filter((edge) => edge.from === node.id);
+
+                return (
+                    <div
+                        key={node.id}
+                        style={{
+                            display: "flex",
+                            flexDirection: isVertical ? "column" : "row",
+                            alignItems: "center",
+                            opacity: nodeOpacity,
+                        }}
+                    >
+                        <div
+                            style={{
+                                backgroundColor: brand.colors.overlayBackground,
+                                border: `2px solid ${brand.colors.accent}`,
+                                borderRadius: brand.radii.frame,
+                                padding: full ? "22px 32px" : "14px 20px",
+                                fontFamily: brand.fonts.family,
+                                fontSize: full ? 34 : 22,
+                                fontWeight: 600,
+                                color: brand.colors.text,
+                                textAlign: "center",
+                                whiteSpace: "nowrap",
+                            }}
+                        >
+                            {node.label}
+                        </div>
+
+                        {outgoingEdges.map((edge) => {
+                            const toIndex = nodePositions.get(edge.to);
+                            if (toIndex === undefined || toIndex <= index) return null;
+
+                            return (
+                                <DiagramArrow
+                                    key={`${edge.from}-${edge.to}`}
+                                    label={edge.label}
+                                    vertical={isVertical}
+                                    scale={full ? 1.6 : 1}
+                                />
+                            );
+                        })}
+                    </div>
+                );
+            })}
+        </div>
     );
+
+    if (full) {
+        return content;
+    }
 
     return (
         <AbsoluteFill style={{ pointerEvents: "none" }}>
-            <div style={sideContentStyle(presenterOnLeft)}>
-                <div
-                    style={{
-                        opacity: containerOpacity,
-                        transform: `translateX(${translateX}px)`,
-                        width: "100%",
-                        display: "flex",
-                        flexDirection: isVertical ? "column" : "row",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        gap: 8,
-                    }}
-                >
-                    {diagram.nodes.map((node, index) => {
-                        // Sequential reveal: each node fades in slightly
-                        // after the previous one, guiding the eye through
-                        // the relationship in order — justified here
-                        // (unlike code/text) because that's exactly what a
-                        // diagram is for.
-                        const nodeStart = TRANSITION_FRAMES + index * NODE_STAGGER_FRAMES;
-                        const nodeOpacity = interpolate(
-                            frame,
-                            [nodeStart, nodeStart + NODE_STAGGER_FRAMES],
-                            [0, 1],
-                            { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
-                        );
-
-                        const outgoingEdges = diagram.edges.filter((edge) => edge.from === node.id);
-
-                        return (
-                            <div
-                                key={node.id}
-                                style={{
-                                    display: "flex",
-                                    flexDirection: isVertical ? "column" : "row",
-                                    alignItems: "center",
-                                    opacity: nodeOpacity,
-                                }}
-                            >
-                                <div
-                                    style={{
-                                        backgroundColor: brand.colors.overlayBackground,
-                                        border: `2px solid ${brand.colors.accent}`,
-                                        borderRadius: brand.radii.frame,
-                                        padding: "14px 20px",
-                                        fontFamily: brand.fonts.family,
-                                        fontSize: 22,
-                                        fontWeight: 600,
-                                        color: brand.colors.text,
-                                        textAlign: "center",
-                                        whiteSpace: "nowrap",
-                                    }}
-                                >
-                                    {node.label}
-                                </div>
-
-                                {outgoingEdges.map((edge) => {
-                                    const toIndex = nodePositions.get(edge.to);
-                                    if (toIndex === undefined || toIndex <= index) return null;
-
-                                    return (
-                                        <DiagramArrow
-                                            key={`${edge.from}-${edge.to}`}
-                                            label={edge.label}
-                                            vertical={isVertical}
-                                        />
-                                    );
-                                })}
-                            </div>
-                        );
-                    })}
-                </div>
-            </div>
+            <div style={sideContentStyle(presenterOnLeft)}>{content}</div>
         </AbsoluteFill>
     );
 };
 
-const DiagramArrow = ({ label, vertical }: { label?: string; vertical: boolean }) => (
+const DiagramArrow = ({
+                           label,
+                           vertical,
+                           scale = 1,
+                       }: {
+    label?: string;
+    vertical: boolean;
+    // Full-frame diagrams (DiagramBlock's full=true) scale arrows up to
+    // match the larger node type — same proportions, just bigger.
+    scale?: number;
+}) => (
     <div
         style={{
             display: "flex",
@@ -136,7 +161,7 @@ const DiagramArrow = ({ label, vertical }: { label?: string; vertical: boolean }
             <div
                 style={{
                     fontFamily: brand.fonts.family,
-                    fontSize: 13,
+                    fontSize: 13 * scale,
                     color: brand.colors.textMuted,
                     whiteSpace: "nowrap",
                 }}
@@ -145,8 +170,8 @@ const DiagramArrow = ({ label, vertical }: { label?: string; vertical: boolean }
             </div>
         )}
         <svg
-            width={vertical ? 20 : 32}
-            height={vertical ? 32 : 20}
+            width={(vertical ? 20 : 32) * scale}
+            height={(vertical ? 32 : 20) * scale}
             viewBox={vertical ? "0 0 20 32" : "0 0 32 20"}
         >
             {vertical ? (

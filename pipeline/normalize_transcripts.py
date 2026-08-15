@@ -32,6 +32,22 @@ def write_json_atomic(path: Path, data):
             temp_path.unlink()
 
 
+def normalize_words(segment):
+    words = segment.get("words")
+
+    if not words:
+        return None
+
+    return [
+        {
+            "word": word["word"].strip(),
+            "start": word["start"],
+            "end": word["end"],
+        }
+        for word in words
+    ]
+
+
 def normalize_transcript(
         source: str,
         transcript_path: Path,
@@ -40,22 +56,31 @@ def normalize_transcript(
     with transcript_path.open("r", encoding="utf-8") as f:
         transcript = json.load(f)
 
+    normalized_segments = []
+
+    for segment in transcript.get("segments", []):
+        normalized_segment = {
+            "start": segment["start"],
+            "end": segment["end"],
+            "text": segment["text"].strip(),
+            "metadata": {
+                "avg_logprob": segment.get("avg_logprob"),
+                "no_speech_prob": segment.get("no_speech_prob"),
+                "compression_ratio": segment.get("compression_ratio"),
+            }
+        }
+
+        words = normalize_words(segment)
+
+        if words is not None:
+            normalized_segment["words"] = words
+
+        normalized_segments.append(normalized_segment)
+
     normalized = {
         "source": source,
         "language": transcript.get("language"),
-        "segments": [
-            {
-                "start": segment["start"],
-                "end": segment["end"],
-                "text": segment["text"].strip(),
-                "metadata": {
-                    "avg_logprob": segment.get("avg_logprob"),
-                    "no_speech_prob": segment.get("no_speech_prob"),
-                    "compression_ratio": segment.get("compression_ratio"),
-                }
-            }
-            for segment in transcript.get("segments", [])
-        ],
+        "segments": normalized_segments,
     }
 
     write_json_atomic(

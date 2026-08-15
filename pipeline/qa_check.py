@@ -86,6 +86,8 @@ def check_scene_plan_asset_ids(scene_plan, assets):
             asset_id = scene["assetId"]
         elif scene["type"] == "moment" and scene["treatment"] == "side-image":
             asset_id = scene["assetId"]
+        elif scene["type"] == "moment" and scene["treatment"] == "full-visual" and scene.get("fullVisualKind") == "image":
+            asset_id = scene["assetId"]
         else:
             continue
 
@@ -112,7 +114,7 @@ def is_overlay_scene(scene):
     if scene["type"] in ("moment", "emphasis"):
         return True
 
-    if scene["type"] == "caption":
+    if scene["type"] in ("caption", "beat"):
         return True
 
     if scene["type"] == "image":
@@ -126,8 +128,11 @@ def is_overlay_scene(scene):
 # render time (Episode.tsx's layoutWindowsForScene), so this is a
 # moment-internal consistency check (treatment vs. its own presenterSide),
 # not a moment-vs-parent one — there's no parent "layout" field anymore.
-MOMENT_REQUIRES_NO_SIDE = {"bottom-callout"}
-MOMENT_REQUIRES_SIDE = {"side-text", "side-image"}
+# "full-visual" hides the presenter entirely rather than moving it to a
+# side, so it belongs with bottom-callout here (no presenterSide), not
+# with the side-* treatments.
+MOMENT_REQUIRES_NO_SIDE = {"bottom-callout", "full-visual"}
+MOMENT_REQUIRES_SIDE = {"side-text", "side-image", "side-code", "side-diagram"}
 
 # Mirrors Episode.tsx's TRANSITION_FRAMES / generate_moments.py's
 # TRANSITION_FRAMES — the presenter's actual on-screen shift window is a

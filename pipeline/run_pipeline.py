@@ -179,6 +179,21 @@ def main():
     run(captions_command)
 
 
+    # 6e. Propose kinetic emphasis ("beat") overlay scenes from word-level
+    # transcript timing — runs after moments/captions so it can see (and
+    # avoid colliding with) whatever they already placed.
+    emphasis_command = [
+        sys.executable,
+        str(pipeline / "generate_emphasis.py"),
+        str(episode)
+    ]
+
+    if args.force:
+        emphasis_command.append("--force")
+
+    run(emphasis_command)
+
+
     # 7. Generate Remotion scene plan
     scene_plan_command = [
         sys.executable,

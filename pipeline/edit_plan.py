@@ -32,6 +32,10 @@ EDITABLE_FIELDS = {
     "moment": {"text", "assetId", "caption", "offsetInParentFrames", "durationInFrames"},
     "caption": {"text", "offsetInParentFrames", "durationInFrames"},
     "image": {"caption", "offsetInParentFrames", "durationInFrames"},
+    # "kind"/"icon" excluded for the same reason as moment's "treatment":
+    # switching word-pop/underline/icon-accent is generate_emphasis.py's
+    # job, not a text edit.
+    "beat": {"text", "offsetInParentFrames", "durationInFrames"},
 }
 
 # Track scenes occupy the timeline sequentially (absolute timelineStartFrame,

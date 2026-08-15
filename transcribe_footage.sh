@@ -82,6 +82,7 @@ for ((i=0; i<VIDEO_COUNT; i++)); do
         "$VIDEO_PATH" \
         --model turbo \
         --language en \
+        --word_timestamps True \
         --output_dir "$TEMP_DIR" \
         --output_format json
     then

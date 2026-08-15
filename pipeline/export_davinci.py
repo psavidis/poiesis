@@ -16,11 +16,11 @@ PROJECT_ROOT = PIPELINE_DIR.parent
 RENDERER_DIR = PROJECT_ROOT / "video-renderer"
 
 # One clip per element of each of these types, each on its own OTIO track —
-# titles/captions/moments/images are never baked into their parent
+# titles/captions/moments/images/beats are never baked into their parent
 # presenter's clip here (contrast render_episode.sh --transparent, which
 # renders one flattened composite). "presenter" is handled separately since
 # it also produces an audio track from the same source.
-OVERLAY_TRACK_TYPES = ["title", "caption", "moment", "image"]
+OVERLAY_TRACK_TYPES = ["title", "caption", "moment", "image", "beat"]
 
 TRACK_NAMES = {
     "presenter": "Video — Presenter",
@@ -29,6 +29,7 @@ TRACK_NAMES = {
     "caption": "Video — Captions",
     "moment": "Video — Moments",
     "image": "Video — Images",
+    "beat": "Video — Beats",
 }
 
 
@@ -191,6 +192,9 @@ def clip_label(scene):
         return scene["text"]
 
     if scene["type"] == "caption":
+        return scene["text"]
+
+    if scene["type"] == "beat":
         return scene["text"]
 
     if scene["type"] == "presenter":

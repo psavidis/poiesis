@@ -8,5 +8,29 @@
     "width": 1920,
     "height": 1080,
     "fps": 30
+  },
+
+  "style": {
+    "monotonyThresholdSeconds": 18.0,
+    "moments": {
+      "maxPer1000Frames": 1,
+      "durationFrames": {
+        "bottomCallout": 90,
+        "sideText": 150,
+        "sideImage": 150,
+        "sideCode": 240,
+        "sideDiagram": 180,
+        "fullVisual": 300
+      },
+      "fullVisualMaxRatioToSideMoments": 0.25
+    },
+    "titles": {
+      "minSpacingSeconds": 20,
+      "durationFrames": 60
+    },
+    "emphasis": {
+      "minSecondsBetweenBeats": 4.0,
+      "defaultDurationFrames": 24
+    }
   }
 }

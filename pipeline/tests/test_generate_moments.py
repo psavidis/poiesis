@@ -1,11 +1,13 @@
 from generate_moments import (
     build_candidate_windows,
+    cap_full_visual_ratio,
     dedupe_overlapping_windows,
     is_diagram_grounded,
     is_grounded,
     merge_moment_scenes,
     propose_moments,
 )
+from style import load_style
 
 
 def test_is_grounded_accepts_verbatim_text():
@@ -824,6 +826,220 @@ def test_propose_moments_rejects_side_diagram_with_fabricated_labels():
     assert proposals == []
 
 
+def test_propose_moments_accepts_valid_full_visual_image():
+    llm = _FakeLLMClient(
+        {
+            "moments": [
+                {
+                    "windowId": "w0",
+                    "treatment": "full-visual",
+                    "fullVisualKind": "image",
+                    "assetId": "img-001",
+                    "reason": "the wiring needs to fill the screen to be legible",
+                }
+            ]
+        }
+    )
+
+    proposals = propose_moments(
+        _scene_plan_with_one_long_scene(),
+        _transcript_with_late_segment(),
+        _manifest_single_video(),
+        _one_asset(),
+        llm,
+        "{windows}{assets}{code_assets}",
+    )
+
+    assert len(proposals) == 1
+    assert proposals[0]["treatment"] == "full-visual"
+    assert proposals[0]["fullVisualKind"] == "image"
+    assert proposals[0]["assetId"] == "img-001"
+    assert proposals[0]["caption"] == "a relevant diagram"
+    assert proposals[0]["presenterSide"] is None
+
+
+def test_propose_moments_rejects_full_visual_image_with_unknown_asset_id():
+    llm = _FakeLLMClient(
+        {
+            "moments": [
+                {
+                    "windowId": "w0",
+                    "treatment": "full-visual",
+                    "fullVisualKind": "image",
+                    "assetId": "img-999",
+                    "reason": "unknown asset",
+                }
+            ]
+        }
+    )
+
+    proposals = propose_moments(
+        _scene_plan_with_one_long_scene(),
+        _transcript_with_late_segment(),
+        _manifest_single_video(),
+        _one_asset(),
+        llm,
+        "{windows}{assets}{code_assets}",
+    )
+
+    assert proposals == []
+
+
+def test_propose_moments_accepts_valid_full_visual_diagram():
+    llm = _FakeLLMClient(
+        {
+            "moments": [
+                {
+                    "windowId": "w0",
+                    "treatment": "full-visual",
+                    "fullVisualKind": "diagram",
+                    "diagram": {
+                        "nodes": [
+                            {"id": "n1", "label": "important idea"},
+                            {"id": "n2", "label": "key idea"},
+                        ],
+                        "edges": [{"from": "n1", "to": "n2", "label": "leads to"}],
+                        "layout": "vertical",
+                    },
+                    "reason": "the relationship needs the whole frame",
+                }
+            ]
+        }
+    )
+
+    proposals = propose_moments(
+        _scene_plan_with_one_long_scene(),
+        _transcript_with_late_segment(),
+        _manifest_single_video(),
+        _no_assets(),
+        llm,
+        "{windows}{assets}{code_assets}",
+    )
+
+    assert len(proposals) == 1
+    assert proposals[0]["treatment"] == "full-visual"
+    assert proposals[0]["fullVisualKind"] == "diagram"
+    assert proposals[0]["presenterSide"] is None
+
+
+def test_propose_moments_rejects_full_visual_diagram_with_fabricated_labels():
+    llm = _FakeLLMClient(
+        {
+            "moments": [
+                {
+                    "windowId": "w0",
+                    "treatment": "full-visual",
+                    "fullVisualKind": "diagram",
+                    "diagram": {
+                        "nodes": [
+                            {"id": "n1", "label": "Kubernetes"},
+                            {"id": "n2", "label": "Istio"},
+                        ],
+                        "edges": [{"from": "n1", "to": "n2"}],
+                        "layout": "horizontal",
+                    },
+                    "reason": "hallucinated infrastructure diagram",
+                }
+            ]
+        }
+    )
+
+    proposals = propose_moments(
+        _scene_plan_with_one_long_scene(),
+        _transcript_with_late_segment(),
+        _manifest_single_video(),
+        _no_assets(),
+        llm,
+        "{windows}{assets}{code_assets}",
+    )
+
+    assert proposals == []
+
+
+def test_propose_moments_accepts_valid_full_visual_text():
+    llm = _FakeLLMClient(
+        {
+            "moments": [
+                {
+                    "windowId": "w0",
+                    "treatment": "full-visual",
+                    "fullVisualKind": "text",
+                    "text": "the important key idea",
+                    "reason": "the claim deserves the whole screen",
+                }
+            ]
+        }
+    )
+
+    proposals = propose_moments(
+        _scene_plan_with_one_long_scene(),
+        _transcript_with_late_segment(),
+        _manifest_single_video(),
+        _no_assets(),
+        llm,
+        "{windows}{assets}{code_assets}",
+    )
+
+    assert len(proposals) == 1
+    assert proposals[0]["treatment"] == "full-visual"
+    assert proposals[0]["fullVisualKind"] == "text"
+    assert proposals[0]["text"] == "the important key idea"
+    assert proposals[0]["presenterSide"] is None
+
+
+def test_propose_moments_rejects_full_visual_text_ungrounded():
+    llm = _FakeLLMClient(
+        {
+            "moments": [
+                {
+                    "windowId": "w0",
+                    "treatment": "full-visual",
+                    "fullVisualKind": "text",
+                    "text": "the moon landing was faked",
+                    "reason": "fabricated claim",
+                }
+            ]
+        }
+    )
+
+    proposals = propose_moments(
+        _scene_plan_with_one_long_scene(),
+        _transcript_with_late_segment(),
+        _manifest_single_video(),
+        _no_assets(),
+        llm,
+        "{windows}{assets}{code_assets}",
+    )
+
+    assert proposals == []
+
+
+def test_propose_moments_rejects_full_visual_missing_kind():
+    llm = _FakeLLMClient(
+        {
+            "moments": [
+                {
+                    "windowId": "w0",
+                    "treatment": "full-visual",
+                    "text": "the important key idea",
+                    "reason": "missing fullVisualKind",
+                }
+            ]
+        }
+    )
+
+    proposals = propose_moments(
+        _scene_plan_with_one_long_scene(),
+        _transcript_with_late_segment(),
+        _manifest_single_video(),
+        _no_assets(),
+        llm,
+        "{windows}{assets}{code_assets}",
+    )
+
+    assert proposals == []
+
+
 def test_propose_moments_ignores_unrecognized_treatment():
     llm = _FakeLLMClient(
         {
@@ -1202,3 +1418,111 @@ def test_merge_moment_scenes_is_idempotent_on_rerun():
     moment_scenes = [s for s in twice["scenes"] if s["type"] == "moment"]
     assert len(moment_scenes) == 1
     assert moment_scenes[0]["presenterSide"] == "left"
+
+
+def test_merge_moment_scenes_full_visual_stores_kind_and_text():
+    scene_plan = {
+        "fps": 30,
+        "scenes": [
+            {
+                "id": "scene-001",
+                "type": "presenter",
+                "videoId": "001",
+                "timelineStartFrame": 0,
+                "durationInFrames": 900,
+            },
+        ],
+    }
+
+    proposals = [
+        {
+            "windowId": "w0",
+            "sceneId": "scene-001",
+            "videoId": "001",
+            "offsetInParentFrames": 500,
+            "maxDurationInParentFrames": 300,
+            "treatment": "full-visual",
+            "fullVisualKind": "text",
+            "text": "a strong claim",
+            "presenterSide": None,
+            "reason": "deserves the whole screen",
+        }
+    ]
+
+    result = merge_moment_scenes(scene_plan, proposals)
+    moment_scene = next(s for s in result["scenes"] if s["type"] == "moment")
+
+    assert moment_scene["fullVisualKind"] == "text"
+    assert moment_scene["text"] == "a strong claim"
+    assert "presenterSide" not in moment_scene
+
+
+def _side_text_proposal(window_id, scene_id="scene-001", offset=0):
+    return {
+        "windowId": window_id,
+        "sceneId": scene_id,
+        "videoId": "001",
+        "offsetInParentFrames": offset,
+        "maxDurationInParentFrames": 150,
+        "treatment": "side-text",
+        "text": "a phrase",
+        "presenterSide": "left",
+        "reason": "central point",
+    }
+
+
+def _full_visual_proposal(window_id, scene_id="scene-001", offset=0):
+    return {
+        "windowId": window_id,
+        "sceneId": scene_id,
+        "videoId": "001",
+        "offsetInParentFrames": offset,
+        "maxDurationInParentFrames": 300,
+        "treatment": "full-visual",
+        "fullVisualKind": "text",
+        "text": "a strong claim",
+        "presenterSide": None,
+        "reason": "deserves the whole screen",
+    }
+
+
+def test_cap_full_visual_ratio_keeps_at_least_one_with_no_side_moments():
+    style = load_style()
+    proposals = [_full_visual_proposal("w0")]
+
+    kept = cap_full_visual_ratio(proposals, style)
+
+    assert len(kept) == 1
+
+
+def test_cap_full_visual_ratio_drops_full_visual_past_the_ratio_cap():
+    style = dict(load_style())
+    style["moments"] = dict(style["moments"])
+    style["moments"]["fullVisualMaxRatioToSideMoments"] = 0.25
+
+    # 4 side moments -> cap is 1 full-visual; a 2nd one should be dropped
+    proposals = [
+        _side_text_proposal("w0", offset=0),
+        _side_text_proposal("w1", offset=200),
+        _side_text_proposal("w2", offset=400),
+        _side_text_proposal("w3", offset=600),
+        _full_visual_proposal("w4", offset=800),
+        _full_visual_proposal("w5", offset=1000),
+    ]
+
+    kept = cap_full_visual_ratio(proposals, style)
+
+    full_visual_kept = [p for p in kept if p["treatment"] == "full-visual"]
+    assert len(full_visual_kept) == 1
+    assert full_visual_kept[0]["windowId"] == "w4"
+    # side moments are untouched by this cap
+    assert sum(1 for p in kept if p["treatment"] == "side-text") == 4
+
+
+def test_cap_full_visual_ratio_leaves_non_full_visual_proposals_untouched():
+    style = load_style()
+    proposals = [_side_text_proposal("w0")]
+
+    kept = cap_full_visual_ratio(proposals, style)
+
+    assert kept == proposals

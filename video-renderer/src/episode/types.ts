@@ -73,9 +73,19 @@ export interface TitleScene {
 // presenterSide ("left" or "right") — the presenter animates to that side
 // only for this moment's own window (plus a short transition pad either
 // side), then animates back to center once the moment ends, rather than
-// for its whole parent scene's duration. Validated in
-// pipeline/generate_moments.py, not just assumed.
-export type MomentTreatment = "bottom-callout" | "side-text" | "side-image" | "side-code" | "side-diagram";
+// for its whole parent scene's duration. "full-visual" hides the presenter
+// entirely for its own window (plus the same transition pad) instead of
+// moving it to a side — presenterSide is absent, same as bottom-callout,
+// but Episode.tsx's layoutWindowsForScene treats it as a fourth ("hidden")
+// state rather than reusing bottom-callout's "stays centered" meaning.
+// Validated in pipeline/generate_moments.py, not just assumed.
+export type MomentTreatment = "bottom-callout" | "side-text" | "side-image" | "side-code" | "side-diagram" | "full-visual";
+
+// What fills the frame for a "full-visual" moment — reuses the same
+// underlying data (assetId/diagram/text) other treatments already carry
+// rather than introducing new fields, since this is a layout/prominence
+// choice (full-frame vs. a side panel), not a new kind of content.
+export type FullVisualKind = "image" | "diagram" | "text";
 
 export interface DiagramNode {
     id: string;
@@ -111,6 +121,10 @@ export interface MomentScene {
     diagram?: DiagramData;
     caption?: string;
     presenterSide?: "left" | "right";
+    // Only meaningful when treatment is "full-visual" — which of text/
+    // assetId/diagram (already-present fields above) the full-frame
+    // content should render from.
+    fullVisualKind?: FullVisualKind;
     parentSceneId: string;
     offsetInParentFrames: number;
     durationInFrames: number;
@@ -136,7 +150,29 @@ export interface CaptionScene {
     durationInFrames: number;
 }
 
-export type Scene = PresenterScene | TitleScene | MomentScene | ImageScene | CaptionScene;
+// A "beat" is a short, frequent kinetic accent on a single word/short
+// phrase, timed to when it's actually spoken (word-level transcript
+// timestamps — see pipeline/generate_emphasis.py) — distinct from
+// captions (which stay verbatim/unabridged) and from moments (which are
+// deliberately rare and claim a side/full frame). Beats are meant to be a
+// constant light rhythm under the presenter, not an event.
+export type BeatKind = "word-pop" | "underline" | "icon-accent";
+
+export interface BeatScene {
+    type: "beat";
+    id: string;
+    kind: BeatKind;
+    text: string;
+    // Only meaningful for kind "icon-accent" — a key into a small static
+    // icon map in BeatOverlay.tsx (e.g. "arrow", "check"), not an
+    // open-ended asset reference.
+    icon?: string;
+    parentSceneId: string;
+    offsetInParentFrames: number;
+    durationInFrames: number;
+}
+
+export type Scene = PresenterScene | TitleScene | MomentScene | ImageScene | CaptionScene | BeatScene;
 
 export interface ScenePlan {
     version: number;

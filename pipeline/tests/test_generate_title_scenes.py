@@ -3,8 +3,10 @@ from generate_title_scenes import (
     indexed_segments,
     merge_title_scenes,
     propose_title_scenes,
-    TITLE_DURATION_FRAMES,
 )
+from style import load_style
+
+TITLE_DURATION_FRAMES = load_style()["titles"]["durationFrames"]
 
 
 def _manifest_two_videos():

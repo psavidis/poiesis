@@ -14,24 +14,13 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from llm.client import LLMClient  # noqa: E402
 from visual_placement import find_monotony_eligible_windows, filter_segments_in_window  # noqa: E402
 from overlay_placement import insert_overlay_scene  # noqa: E402
+from style import load_style  # noqa: E402
 
 
 PROMPT_FILE = PIPELINE_DIR / "prompts" / "moments.txt"
 
-BOTTOM_CALLOUT_DURATION_FRAMES = 90
-SIDE_TEXT_DURATION_FRAMES = 150
-SIDE_IMAGE_DURATION_FRAMES = 150
-# Longer than side-text/side-image — code needs to be read, not glanced
-# at. Tune after watching real output.
-SIDE_CODE_DURATION_FRAMES = 240
-# A diagram is glanced at and explained verbally, not read line-by-line
-# like code — similar duration to side-text.
-SIDE_DIAGRAM_DURATION_FRAMES = 180
-
 MAX_DIAGRAM_NODES = 6
 MAX_DIAGRAM_EDGES = 8
-
-MAX_MOMENTS_PER_1000_FRAMES = 1
 
 # Presenter slides to the side for a moment's own window plus this many
 # frames of transition pad on either side (Episode.tsx uses the same
@@ -244,20 +233,69 @@ def is_diagram_grounded(diagram, source_text):
     return True
 
 
-def duration_for_treatment(treatment):
+def duration_for_treatment(treatment, style=None):
+    if style is None:
+        style = load_style()
+
+    duration_frames = style["moments"]["durationFrames"]
+
     return {
-        "bottom-callout": BOTTOM_CALLOUT_DURATION_FRAMES,
-        "side-text": SIDE_TEXT_DURATION_FRAMES,
-        "side-image": SIDE_IMAGE_DURATION_FRAMES,
-        "side-code": SIDE_CODE_DURATION_FRAMES,
-        "side-diagram": SIDE_DIAGRAM_DURATION_FRAMES,
+        "bottom-callout": duration_frames["bottomCallout"],
+        "side-text": duration_frames["sideText"],
+        "side-image": duration_frames["sideImage"],
+        "side-code": duration_frames["sideCode"],
+        "side-diagram": duration_frames["sideDiagram"],
+        "full-visual": duration_frames["fullVisual"],
     }[treatment]
+
+
+SIDE_TREATMENTS = {"side-text", "side-image", "side-code", "side-diagram"}
+
+
+def cap_full_visual_ratio(proposals, style):
+    """A full-visual moment hides the presenter entirely, so it should stay
+    noticeably rarer than the side treatments — capped as a ratio of
+    already-proposed side moments (style["moments"]["fullVisualMaxRatioToSideMoments"])
+    rather than its own fixed density constant, so the cap scales with
+    however visually busy this particular episode already is. Keeps
+    proposals in their original (LLM response) order and drops full-visual
+    proposals past the cap — the same "keep earliest, drop the rest"
+    convention dedupe_overlapping_windows already uses."""
+
+    side_count = sum(1 for p in proposals if p["treatment"] in SIDE_TREATMENTS)
+
+    # At least 1: the ratio is meant to keep full-visual rarer once side
+    # moments are already common, not to forbid it outright in an episode
+    # that happens to have few/no side moments proposed.
+    max_full_visual = max(
+        1,
+        int(side_count * style["moments"]["fullVisualMaxRatioToSideMoments"])
+    )
+
+    kept = []
+    full_visual_count = 0
+
+    for proposal in proposals:
+
+        if proposal["treatment"] != "full-visual":
+            kept.append(proposal)
+            continue
+
+        if full_visual_count >= max_full_visual:
+            continue
+
+        full_visual_count += 1
+        kept.append(proposal)
+
+    return kept
 
 
 def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, prompt_template: str, code_assets=None):
 
     if code_assets is None:
         code_assets = []
+
+    style = load_style()
 
     candidates = build_candidate_windows(scene_plan, transcript, manifest)
 
@@ -426,7 +464,95 @@ def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, pr
                 }
             )
 
+        elif treatment == "full-visual":
+
+            full_visual_kind = moment.get("fullVisualKind")
+
+            if full_visual_kind == "image":
+
+                asset_id = moment.get("assetId")
+                asset = assets_by_id.get(asset_id)
+
+                if not asset:
+                    continue
+
+                claimed_windows.add(window_id)
+
+                proposals.append(
+                    {
+                        "windowId": window_id,
+                        "sceneId": candidate["sceneId"],
+                        "videoId": candidate["videoId"],
+                        "offsetInParentFrames": candidate["offsetInParentFrames"],
+                        "maxDurationInParentFrames": candidate["maxDurationInParentFrames"],
+                        "treatment": "full-visual",
+                        "fullVisualKind": "image",
+                        "assetId": asset_id,
+                        "caption": asset["caption"],
+                        "presenterSide": None,
+                        "reason": moment.get("reason", ""),
+                    }
+                )
+
+            elif full_visual_kind == "diagram":
+
+                diagram = moment.get("diagram")
+
+                if not isinstance(diagram, dict):
+                    continue
+
+                if diagram.get("layout") not in ("horizontal", "vertical"):
+                    continue
+
+                if not is_diagram_grounded(diagram, candidate["text"]):
+                    continue
+
+                claimed_windows.add(window_id)
+
+                proposals.append(
+                    {
+                        "windowId": window_id,
+                        "sceneId": candidate["sceneId"],
+                        "videoId": candidate["videoId"],
+                        "offsetInParentFrames": candidate["offsetInParentFrames"],
+                        "maxDurationInParentFrames": candidate["maxDurationInParentFrames"],
+                        "treatment": "full-visual",
+                        "fullVisualKind": "diagram",
+                        "diagram": diagram,
+                        "presenterSide": None,
+                        "reason": moment.get("reason", ""),
+                    }
+                )
+
+            elif full_visual_kind == "text":
+
+                text = moment.get("text")
+
+                if not text or not is_grounded(text, candidate["text"]):
+                    continue
+
+                claimed_windows.add(window_id)
+
+                proposals.append(
+                    {
+                        "windowId": window_id,
+                        "sceneId": candidate["sceneId"],
+                        "videoId": candidate["videoId"],
+                        "offsetInParentFrames": candidate["offsetInParentFrames"],
+                        "maxDurationInParentFrames": candidate["maxDurationInParentFrames"],
+                        "treatment": "full-visual",
+                        "fullVisualKind": "text",
+                        "text": text,
+                        "presenterSide": None,
+                        "reason": moment.get("reason", ""),
+                    }
+                )
+
+            # else: missing/unrecognized fullVisualKind — skip, don't guess.
+
         # else: unrecognized/omitted treatment — skip, don't guess.
+
+    proposals = cap_full_visual_ratio(proposals, style)
 
     total_frames = max(
         (
@@ -439,12 +565,12 @@ def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, pr
 
     max_moments = max(
         1,
-        int(total_frames / 1000 * MAX_MOMENTS_PER_1000_FRAMES)
+        int(total_frames / 1000 * style["moments"]["maxPer1000Frames"])
     )
 
     proposals = proposals[:max_moments]
 
-    proposals = dedupe_overlapping_windows(proposals)
+    proposals = dedupe_overlapping_windows(proposals, style)
 
     # Clamp maxDurationInParentFrames down to the real rendered duration
     # (what merge_moment_scenes will actually use) right here, once, before
@@ -463,7 +589,7 @@ def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, pr
 
     for proposal in proposals:
         proposal["maxDurationInParentFrames"] = min(
-            duration_for_treatment(proposal["treatment"]),
+            duration_for_treatment(proposal["treatment"], style),
             proposal["maxDurationInParentFrames"]
         )
 
@@ -493,7 +619,7 @@ def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, pr
     return proposals
 
 
-def dedupe_overlapping_windows(proposals):
+def dedupe_overlapping_windows(proposals, style=None):
     """The presenter's on-screen window for a moment is its own span padded
     by TRANSITION_FRAMES on both sides for the slide animation (see
     Episode.tsx's layoutWindowsForScene) — two moments proposed for the same
@@ -503,13 +629,16 @@ def dedupe_overlapping_windows(proposals):
     drops any later one for the same parent whose padded window overlaps an
     already-kept one, rather than letting them clobber each other visually."""
 
+    if style is None:
+        style = load_style()
+
     kept_windows_by_parent = {}
     kept = []
 
     for proposal in proposals:
 
         duration = min(
-            duration_for_treatment(proposal["treatment"]),
+            duration_for_treatment(proposal["treatment"], style),
             proposal["maxDurationInParentFrames"]
         )
 
@@ -594,6 +723,9 @@ def merge_moment_scenes(scene_plan, proposals):
         # behave the same way.
         if proposal.get("presenterSide"):
             moment_scene["presenterSide"] = proposal["presenterSide"]
+
+        if proposal.get("fullVisualKind"):
+            moment_scene["fullVisualKind"] = proposal["fullVisualKind"]
 
         if proposal.get("text"):
             moment_scene["text"] = proposal["text"]
