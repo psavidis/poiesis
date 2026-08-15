@@ -14,9 +14,21 @@ if [ ! -x "$VENV_PYTHON" ]; then
     exit 1
 fi
 
-cd "$ROOT/ui"
-
 URL="http://127.0.0.1:$PORT"
+
+PREVIEW_APP_DIR="$ROOT/video-renderer/preview-app"
+PREVIEW_PID=""
+
+if [ -d "$PREVIEW_APP_DIR/node_modules" ]; then
+    ( cd "$PREVIEW_APP_DIR" && exec npm run dev ) &
+    PREVIEW_PID=$!
+    trap '[ -n "$PREVIEW_PID" ] && kill "$PREVIEW_PID" 2>/dev/null' EXIT
+else
+    echo "WARNING: preview app dependencies not installed at $PREVIEW_APP_DIR/node_modules"
+    echo "Skipping overlay-timing preview (install with: cd video-renderer/preview-app && npm install)"
+fi
+
+cd "$ROOT/ui"
 
 echo "Starting Poiesis Control Panel at $URL"
 echo "(Ctrl+C to stop)"
@@ -26,4 +38,4 @@ if command -v open >/dev/null 2>&1; then
     ( sleep 1 && open "$URL" ) &
 fi
 
-exec "$VENV_PYTHON" -m uvicorn server:app --port "$PORT"
+"$VENV_PYTHON" -m uvicorn server:app --port "$PORT"
