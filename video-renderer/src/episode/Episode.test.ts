@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { CROSSFADE_TRANSITION_FRAMES, clampedMomentDuration, crossfadeInFramesForScene, layoutWindowsForScene } from "./Episode";
+import { CROSSFADE_TRANSITION_FRAMES, bottomCalloutWindowsForScene, clampedMomentDuration, crossfadeInFramesForScene, layoutWindowsForScene } from "./Episode";
 import { TRANSITION_FRAMES } from "./timing";
 import type { MomentScene, PresenterScene } from "./types";
 
@@ -99,6 +99,76 @@ describe("layoutWindowsForScene", () => {
 
         expect(windows.map((w) => w.side)).toEqual(["left", "right"]);
         expect(windows[0].start).toBeLessThan(windows[1].start);
+    });
+});
+
+describe("bottomCalloutWindowsForScene", () => {
+    it("returns no windows when the scene has no bottom-callout moments", () => {
+        const scene = presenterScene();
+        const moment = sideMoment({ treatment: "side-text", presenterSide: "left" });
+
+        expect(bottomCalloutWindowsForScene(scene, [moment])).toEqual([]);
+    });
+
+    it("ignores moments belonging to a different parent scene", () => {
+        const scene = presenterScene({ id: "scene-001" });
+        const moment = sideMoment({
+            treatment: "bottom-callout",
+            presenterSide: undefined,
+            parentSceneId: "scene-999",
+        });
+
+        expect(bottomCalloutWindowsForScene(scene, [moment])).toEqual([]);
+    });
+
+    it("returns the callout's own on-screen window, unpadded (no transition pad, unlike layoutWindowsForScene)", () => {
+        const scene = presenterScene();
+        const moment = sideMoment({
+            treatment: "bottom-callout",
+            presenterSide: undefined,
+            offsetInParentFrames: 300,
+            durationInFrames: 90,
+        });
+
+        expect(bottomCalloutWindowsForScene(scene, [moment])).toEqual([
+            { start: 300, end: 390 },
+        ]);
+    });
+
+    it("ignores side/full-visual moments — only bottom-callout occupies the caption's space", () => {
+        const scene = presenterScene();
+        const sideText = sideMoment({ treatment: "side-text", presenterSide: "left" });
+        const fullVisual = sideMoment({
+            id: "m-full",
+            treatment: "full-visual",
+            presenterSide: undefined,
+            fullVisualKind: "text",
+        });
+
+        expect(bottomCalloutWindowsForScene(scene, [sideText, fullVisual])).toEqual([]);
+    });
+
+    it("returns multiple windows when several bottom-callouts target the same scene", () => {
+        const scene = presenterScene();
+        const first = sideMoment({
+            id: "m-1",
+            treatment: "bottom-callout",
+            presenterSide: undefined,
+            offsetInParentFrames: 100,
+            durationInFrames: 90,
+        });
+        const second = sideMoment({
+            id: "m-2",
+            treatment: "bottom-callout",
+            presenterSide: undefined,
+            offsetInParentFrames: 500,
+            durationInFrames: 90,
+        });
+
+        expect(bottomCalloutWindowsForScene(scene, [first, second])).toEqual([
+            { start: 100, end: 190 },
+            { start: 500, end: 590 },
+        ]);
     });
 });
 

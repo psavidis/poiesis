@@ -6,7 +6,21 @@ import { brand } from "./brand";
 // (MomentTreatments.tsx) — captions appear on nearly every frame of the
 // episode, so a spring/scale entrance on each one would be exhausting
 // rather than intentional.
-export const CaptionText = ({ text }: { text: string }) => {
+export const CaptionText = ({
+    text,
+    hiddenWindows,
+}: {
+    text: string;
+    // Frame ranges (local to this caption's own Sequence, start inclusive /
+    // end exclusive) during which the caption should be hidden — a
+    // "bottom-callout" moment active on the same parent scene occupies the
+    // same bottom-center space (see Episode.tsx's
+    // bottomCalloutWindowsForScene), and without this a tall two-line
+    // callout can visually overlap the caption sitting just below it.
+    // Optional/omittable so every other caller (tests, Remotion Studio)
+    // doesn't need to pass an empty array just to render a plain caption.
+    hiddenWindows?: { start: number; end: number }[];
+}) => {
     const frame = useCurrentFrame();
     const { durationInFrames } = useVideoConfig();
 
@@ -17,7 +31,7 @@ export const CaptionText = ({ text }: { text: string }) => {
     // opacity instead.
     const fadeFrames = Math.min(4, Math.floor((durationInFrames - 1) / 2));
 
-    const opacity = fadeFrames <= 0
+    const baseOpacity = fadeFrames <= 0
         ? 1
         : interpolate(
             frame,
@@ -28,6 +42,10 @@ export const CaptionText = ({ text }: { text: string }) => {
                 extrapolateRight: "clamp",
             }
         );
+
+    const isHidden = (hiddenWindows ?? []).some((w) => frame >= w.start && frame < w.end);
+
+    const opacity = isHidden ? 0 : baseOpacity;
 
     return (
         <AbsoluteFill

@@ -83,6 +83,29 @@ export const layoutWindowsForScene = (scene: PresenterScene, moments: MomentScen
     return windows;
 };
 
+// A "bottom-callout" moment occupies the same bottom-center real estate as
+// captions — unlike side-*/full-visual treatments, it doesn't move the
+// presenter, so it isn't covered by layoutWindowsForScene. A callout is a
+// short, verbatim quote from the same speech a caption would otherwise show
+// underneath it, so hiding the caption for exactly the callout's own
+// (unpadded — this isn't a slide animation with a transition pad, just an
+// occupancy window) on-screen window doesn't lose information the viewer
+// needs, and avoids the two overlays' independent fade-in/scale animations
+// visually colliding (confirmed against a real render: a two-line callout's
+// box grows tall enough to overlap the caption sitting just below it).
+// Scoped to the same parent scene, frames local to that scene — the same
+// convention layoutWindowsForScene and CaptionText's own offset already use.
+export const bottomCalloutWindowsForScene = (
+    scene: PresenterScene,
+    moments: MomentScene[]
+): { start: number; end: number }[] =>
+    moments
+        .filter((m) => m.parentSceneId === scene.id && m.treatment === "bottom-callout")
+        .map((m) => ({
+            start: m.offsetInParentFrames,
+            end: m.offsetInParentFrames + m.durationInFrames,
+        }));
+
 // Defensive clamp for a moment's rendered duration: generate_moments.py's
 // propose_moments() reserves room for TRANSITION_FRAMES at proposal time
 // (so this is normally a no-op), but this is the last line of defense
@@ -562,13 +585,25 @@ export const Episode = ({
                     return null;
                 }
 
+                // Re-expressed relative to this caption's own Sequence clock
+                // (which starts at 0 at scene.offsetInParentFrames, not at
+                // the parent scene's start) — see
+                // bottomCalloutWindowsForScene for why this suppression
+                // exists at all.
+                const hiddenWindows = bottomCalloutWindowsForScene(parent, momentScenes)
+                    .map((w) => ({
+                        start: w.start - scene.offsetInParentFrames,
+                        end: w.end - scene.offsetInParentFrames,
+                    }))
+                    .filter((w) => w.start < scene.durationInFrames && w.end > 0);
+
                 return (
                     <Sequence
                         key={scene.id}
                         from={parent.timelineStartFrame + scene.offsetInParentFrames}
                         durationInFrames={scene.durationInFrames}
                     >
-                        <CaptionText text={scene.text} />
+                        <CaptionText text={scene.text} hiddenWindows={hiddenWindows} />
                     </Sequence>
                 );
             }
