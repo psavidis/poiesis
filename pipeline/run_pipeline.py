@@ -118,6 +118,25 @@ def main():
     run(merge_command)
 
 
+    # 5a. Analyze episode (whole-episode narrative summary + transcript QA).
+    # Runs here — right after the transcript exists, before any AI stage
+    # that decides what appears on screen — so title/moment/emphasis
+    # proposals can be grounded in the episode's overall topics/key
+    # concepts instead of only ever seeing an isolated local window. It only
+    # needs episode_transcript.json + transcript_validation.json, both
+    # already produced by this point.
+    episode_analysis_command = [
+        sys.executable,
+        str(pipeline / "analyze_episode.py"),
+        str(episode)
+    ]
+
+    if args.force:
+        episode_analysis_command.append("--force")
+
+    run(episode_analysis_command)
+
+
     # 6. Analyze scenes and trim dead air
     scene_analysis_command = [
         sys.executable,
@@ -204,20 +223,7 @@ def main():
     run(scene_plan_command)
 
 
-    # 8. Analyze episode
-    analysis_command = [
-        sys.executable,
-        str(pipeline / "analyze_episode.py"),
-        str(episode)
-    ]
-
-    if args.force:
-        analysis_command.append("--force")
-
-    run(analysis_command)
-
-
-    # 9. Generate episode assets
+    # 8. Generate episode assets
     assets_command = [
         sys.executable,
         str(pipeline / "generate_episode_assets.py"),

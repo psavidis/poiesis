@@ -16,6 +16,7 @@ from generate_moments import group_transcript_by_clip  # noqa: E402
 from generate_title_scenes import load_json, load_prompt, write_json_atomic  # noqa: E402
 from overlay_placement import insert_overlay_scene  # noqa: E402
 from style import load_style  # noqa: E402
+from episode_context import NO_CONTEXT_TEXT, load_episode_narrative_text  # noqa: E402
 
 
 PROMPT_FILE = PIPELINE_DIR / "prompts" / "emphasis.txt"
@@ -248,10 +249,13 @@ def overlaps_existing_overlay(scene_id, offset, duration, scene_plan):
     return False
 
 
-def propose_emphasis(scene_plan, transcript, manifest, llm: LLMClient, prompt_template: str, style=None):
+def propose_emphasis(scene_plan, transcript, manifest, llm: LLMClient, prompt_template: str, style=None, episode_context=None):
 
     if style is None:
         style = load_style()
+
+    if episode_context is None:
+        episode_context = NO_CONTEXT_TEXT
 
     candidates_by_word_id, scenes_by_id = build_candidate_words(scene_plan, transcript, manifest)
 
@@ -261,6 +265,9 @@ def propose_emphasis(scene_plan, transcript, manifest, llm: LLMClient, prompt_te
     prompt = prompt_template.replace(
         "{words}",
         format_words_for_prompt(candidates_by_word_id)
+    ).replace(
+        "{episode_context}",
+        episode_context
     )
 
     response = llm.complete_json(prompt, thinking=False)
@@ -457,7 +464,8 @@ def main():
             transcript,
             manifest,
             llm,
-            prompt_template
+            prompt_template,
+            episode_context=load_episode_narrative_text(episode)
         )
 
         write_json_atomic(output_file, {"beats": proposals})

@@ -1,3 +1,4 @@
+from episode_context import NO_CONTEXT_TEXT
 from generate_title_scenes import (
     format_transcript_for_prompt,
     indexed_segments,
@@ -69,11 +70,53 @@ def test_format_transcript_for_prompt_includes_every_segment_with_its_id():
     assert "[s1] world" in formatted
 
 
+def test_propose_title_scenes_substitutes_episode_context_into_prompt():
+    transcript = {
+        "segments": [
+            {"source": "a.mp4", "start": 0.0, "end": 3.0, "text": "welcome to the show"},
+        ]
+    }
+
+    manifest = {"videos": [{"id": "001", "filename": "a.mp4"}]}
+
+    llm = _FakeLLMClient({"titles": []})
+
+    propose_title_scenes(
+        transcript,
+        manifest,
+        llm,
+        "{segments}{episode_context}",
+        episode_context="Topics covered, in order: Intro; Dependency injection",
+    )
+
+    assert "Topics covered, in order: Intro; Dependency injection" in llm.last_prompt
+    assert "{episode_context}" not in llm.last_prompt
+
+
+def test_propose_title_scenes_defaults_episode_context_when_omitted():
+    transcript = {
+        "segments": [
+            {"source": "a.mp4", "start": 0.0, "end": 3.0, "text": "welcome to the show"},
+        ]
+    }
+
+    manifest = {"videos": [{"id": "001", "filename": "a.mp4"}]}
+
+    llm = _FakeLLMClient({"titles": []})
+
+    propose_title_scenes(transcript, manifest, llm, "{segments}{episode_context}")
+
+    assert "{episode_context}" not in llm.last_prompt
+    assert NO_CONTEXT_TEXT in llm.last_prompt
+
+
 class _FakeLLMClient:
     def __init__(self, response):
         self.response = response
+        self.last_prompt = None
 
     def complete_json(self, prompt, thinking=True):
+        self.last_prompt = prompt
         return self.response
 
 

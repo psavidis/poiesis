@@ -137,6 +137,13 @@ Schema:
   ]
 }
 
+Episode-level context (topics, key concepts, and ideas identified as likely
+to benefit from a diagram/visual, from a whole-episode analysis pass) — use
+this to judge how central a window's content is to the episode as a whole,
+not just to fill in unfamiliar terms:
+
+{episode_context}
+
 Candidate windows:
 
 {windows}

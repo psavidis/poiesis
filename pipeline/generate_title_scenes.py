@@ -12,6 +12,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from llm.client import LLMClient
 from style import load_style
+from episode_context import NO_CONTEXT_TEXT, load_episode_narrative_text
 
 
 PROMPT_FILE = PIPELINE_DIR / "prompts" / "title_scenes.txt"
@@ -108,10 +109,13 @@ def format_transcript_for_prompt(transcript, manifest):
     return "\n".join(lines)
 
 
-def propose_title_scenes(transcript, manifest, llm: LLMClient, prompt_template: str, style=None):
+def propose_title_scenes(transcript, manifest, llm: LLMClient, prompt_template: str, style=None, episode_context=None):
 
     if style is None:
         style = load_style()
+
+    if episode_context is None:
+        episode_context = NO_CONTEXT_TEXT
 
     segments = indexed_segments(transcript, manifest)
 
@@ -121,6 +125,9 @@ def propose_title_scenes(transcript, manifest, llm: LLMClient, prompt_template: 
     prompt = prompt_template.replace(
         "{segments}",
         format_transcript_for_prompt(transcript, manifest)
+    ).replace(
+        "{episode_context}",
+        episode_context
     )
 
     # Unlike the old per-clip design (one small decision per clip),
@@ -434,7 +441,8 @@ def main():
             transcript,
             manifest,
             llm,
-            prompt_template
+            prompt_template,
+            episode_context=load_episode_narrative_text(episode)
         )
 
         write_json_atomic(output_file, {"titles": titles})

@@ -70,6 +70,12 @@ PIPELINE_STAGES = [
         "episode_transcript.json",
     ),
     Stage(
+        "analyze_episode",
+        "Analyze episode (AI narrative summary + transcript QA)",
+        lambda ep: [PYTHON, PIPELINE_DIR / "analyze_episode.py", ep],
+        "episode_analysis.json",
+    ),
+    Stage(
         "analyze_scenes",
         "Analyze scenes (silence trim)",
         lambda ep: [PYTHON, PIPELINE_DIR / "analyze_scenes.py", ep],
@@ -110,12 +116,6 @@ PIPELINE_STAGES = [
         "Generate Remotion codegen",
         lambda ep: [PYTHON, PIPELINE_DIR / "generate_scene_plan_ts.py", ep],
         None,
-    ),
-    Stage(
-        "analyze_episode",
-        "Analyze episode (AI QA pass)",
-        lambda ep: [PYTHON, PIPELINE_DIR / "analyze_episode.py", ep],
-        "episode_analysis.json",
     ),
     Stage(
         "generate_episode_assets",

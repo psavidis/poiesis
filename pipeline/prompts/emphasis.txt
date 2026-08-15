@@ -63,6 +63,13 @@ Schema:
   ]
 }
 
+Episode-level context (key concepts identified from a whole-episode
+analysis pass) — words naming one of these concepts are good beat
+candidates, but this is a hint, not a requirement; most sentences should
+still get no beat at all:
+
+{episode_context}
+
 Transcript (word-level):
 
 {words}

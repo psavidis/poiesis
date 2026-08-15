@@ -1,3 +1,4 @@
+from episode_context import NO_CONTEXT_TEXT
 from generate_emphasis import (
     build_candidate_words,
     join_words,
@@ -258,8 +259,10 @@ def test_overlaps_existing_overlay_false_for_different_parent():
 class _FakeLLMClient:
     def __init__(self, response):
         self.response = response
+        self.last_prompt = None
 
     def complete_json(self, prompt, thinking=True):
+        self.last_prompt = prompt
         return self.response
 
 
@@ -288,6 +291,37 @@ def test_propose_emphasis_accepts_valid_word_pop():
     assert proposals[0]["kind"] == "word-pop"
     assert proposals[0]["text"] == "dependency injection"
     assert proposals[0]["icon"] is None
+
+
+def test_propose_emphasis_substitutes_episode_context_into_prompt():
+    llm = _FakeLLMClient({"beats": []})
+
+    propose_emphasis(
+        {"fps": 30, "scenes": [_presenter_scene()]},
+        _transcript_with_words(),
+        _manifest_single_video(),
+        llm,
+        "{words}{episode_context}",
+        episode_context="Key concepts central to this episode: dependency injection",
+    )
+
+    assert "Key concepts central to this episode: dependency injection" in llm.last_prompt
+    assert "{episode_context}" not in llm.last_prompt
+
+
+def test_propose_emphasis_defaults_episode_context_when_omitted():
+    llm = _FakeLLMClient({"beats": []})
+
+    propose_emphasis(
+        {"fps": 30, "scenes": [_presenter_scene()]},
+        _transcript_with_words(),
+        _manifest_single_video(),
+        llm,
+        "{words}{episode_context}",
+    )
+
+    assert "{episode_context}" not in llm.last_prompt
+    assert NO_CONTEXT_TEXT in llm.last_prompt
 
 
 def test_propose_emphasis_accepts_valid_icon_accent():

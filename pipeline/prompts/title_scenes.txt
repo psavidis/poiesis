@@ -52,6 +52,12 @@ Schema:
   ]
 }
 
+Episode-level context (topics and key concepts identified from a
+whole-episode analysis pass) — use this to sanity-check where the real
+topic boundaries are, not as a substitute for reading the transcript below:
+
+{episode_context}
+
 Transcript:
 
 {segments}

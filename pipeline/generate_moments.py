@@ -15,6 +15,7 @@ from llm.client import LLMClient  # noqa: E402
 from visual_placement import find_monotony_eligible_windows, filter_segments_in_window  # noqa: E402
 from overlay_placement import insert_overlay_scene  # noqa: E402
 from style import load_style  # noqa: E402
+from episode_context import NO_CONTEXT_TEXT, load_episode_narrative_text  # noqa: E402
 
 
 PROMPT_FILE = PIPELINE_DIR / "prompts" / "moments.txt"
@@ -290,10 +291,13 @@ def cap_full_visual_ratio(proposals, style):
     return kept
 
 
-def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, prompt_template: str, code_assets=None):
+def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, prompt_template: str, code_assets=None, episode_context=None):
 
     if code_assets is None:
         code_assets = []
+
+    if episode_context is None:
+        episode_context = NO_CONTEXT_TEXT
 
     style = load_style()
 
@@ -311,6 +315,9 @@ def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, pr
     ).replace(
         "{code_assets}",
         format_code_assets_for_prompt(code_assets)
+    ).replace(
+        "{episode_context}",
+        episode_context
     )
 
     response = llm.complete_json(prompt, thinking=False)
@@ -820,7 +827,8 @@ def main():
             assets,
             llm,
             prompt_template,
-            code_assets=code_assets
+            code_assets=code_assets,
+            episode_context=load_episode_narrative_text(episode)
         )
 
         write_json_atomic(output_file, {"moments": proposals})

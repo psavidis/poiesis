@@ -1,3 +1,4 @@
+from episode_context import NO_CONTEXT_TEXT
 from generate_moments import (
     build_candidate_windows,
     cap_full_visual_ratio,
@@ -121,8 +122,10 @@ def test_build_candidate_windows_produces_text_from_matching_segments():
 class _FakeLLMClient:
     def __init__(self, response):
         self.response = response
+        self.last_prompt = None
 
     def complete_json(self, prompt, thinking=True):
+        self.last_prompt = prompt
         return self.response
 
 
@@ -194,6 +197,39 @@ def test_propose_moments_accepts_grounded_bottom_callout():
     assert proposals[0]["treatment"] == "bottom-callout"
     assert proposals[0]["text"] == "the important key idea"
     assert proposals[0]["presenterSide"] is None
+
+
+def test_propose_moments_substitutes_episode_context_into_prompt():
+    llm = _FakeLLMClient({"moments": []})
+
+    propose_moments(
+        _scene_plan_with_one_long_scene(),
+        _transcript_with_late_segment(),
+        _manifest_single_video(),
+        _no_assets(),
+        llm,
+        "{windows}{assets}{code_assets}{episode_context}",
+        episode_context="Key concepts central to this episode: dependency injection",
+    )
+
+    assert "Key concepts central to this episode: dependency injection" in llm.last_prompt
+    assert "{episode_context}" not in llm.last_prompt
+
+
+def test_propose_moments_defaults_episode_context_when_omitted():
+    llm = _FakeLLMClient({"moments": []})
+
+    propose_moments(
+        _scene_plan_with_one_long_scene(),
+        _transcript_with_late_segment(),
+        _manifest_single_video(),
+        _no_assets(),
+        llm,
+        "{windows}{assets}{code_assets}{episode_context}",
+    )
+
+    assert "{episode_context}" not in llm.last_prompt
+    assert NO_CONTEXT_TEXT in llm.last_prompt
 
 
 def test_propose_moments_clamps_max_duration_to_the_real_rendered_duration():
