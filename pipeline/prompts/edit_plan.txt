@@ -55,6 +55,22 @@ Decide which scene(s) the instruction refers to and what should change. You may:
    paraphrase or invent it. The exact on-screen position/duration is computed automatically
    from where the phrase is actually spoken within that scene — do not propose offset or
    duration values yourself.
+5. Create a new inset image — a small picture-in-picture image in the corner of the frame while
+   the presenter stays fully visible and centered (NOT a side-image moment, which shifts the
+   presenter aside, and NOT full-visual, which hides the presenter — this is the one
+   presentation where the presenter is completely unaffected). Use this ONLY when the
+   instruction explicitly asks to show/pop in/display an existing image/screenshot/picture in
+   the corner while the presenter keeps talking normally:
+   {"op": "create", "type": "image", "sceneId": "...", "assetId": "...", "anchorText": "..."
+   (optional), "reason": "..."}
+   sceneId must be a real "presenter" scene id from the plan above. assetId must be an EXACT id
+   from the available assets list below — never invent an asset id, and never use this for an
+   asset that isn't in that list. anchorText is optional: if the instruction references a
+   specific spoken moment (e.g. "when I mention the config file"), quote that phrase closely
+   from what is actually said in the target scene so the image appears near it; if the
+   instruction has no such reference (e.g. "add this screenshot to this scene"), omit
+   anchorText and the image will appear at the start of the scene. Do not propose offset or
+   duration values yourself — those are computed automatically.
 
 Some instructions describe a creative feeling or intent rather than naming a specific field —
 e.g. "make this more dramatic," "make this pop more," "tone this down," "make this feel
@@ -79,9 +95,9 @@ instruction like this:
   instruction even refers to (see the ambiguity guidance below), not merely because the
   requested feeling has no perfect field to express it in today.
 
-You may NOT create any scene type or moment treatment other than the two above (no side-text,
-side-image, side-code, side-diagram, images, titles, or full screens via this endpoint — those
-require different grounding this endpoint doesn't have).
+You may NOT create any scene type or moment treatment other than the three above (no side-text,
+side-image, side-code, side-diagram, titles, or full screens via this endpoint — those require
+different grounding this endpoint doesn't have).
 You may NOT change "id", "type", "videoId", "parentSceneId", or "assetId" on any scene —
 those identify what a scene fundamentally is, not something an edit instruction changes.
 
@@ -93,6 +109,10 @@ Candidate words available for a beat creation (word-level transcript timing, one
 spoken word, in [wordId] text format):
 
 {candidate_words}
+
+Assets available for an inset image creation (in [assetId] caption format):
+
+{available_assets}
 
 If the instruction is ambiguous about which scene it refers to (e.g. "remove the pause" when
 several scenes could match), pick the single best match based on context — text content,
@@ -119,13 +139,15 @@ Schema:
   "operations": [
     {
       "op": "remove" or "update" or "create",
-      "sceneId": "string, must match an id in the scene plan above — required for remove/update and for create/moment, omit for create/beat",
+      "sceneId": "string, must match an id in the scene plan above — required for remove/update and for create/moment and create/image, omit for create/beat",
       "fields": { "field": newValue, ... },
-      "type": "beat" | "moment" — required for create, omit otherwise",
+      "type": "beat" | "moment" | "image" — required for create, omit otherwise",
       "wordIds": ["string", ...] — required for create/beat, must be exact contiguous ids from the candidate words above",
       "kind": "word-pop" | "underline" | "icon-accent" — required for create/beat, omit otherwise",
       "icon": "arrow" | "check" | "warning" | "gear" — only for create/beat with kind icon-accent",
       "text": "string — required for create/moment, a short phrase quoted from what is actually said in the target scene",
+      "assetId": "string — required for create/image, must be an exact id from the available assets above",
+      "anchorText": "string — optional for create/image, a short phrase quoted from what is actually said near where the image should appear",
       "reason": "short explanation, referencing the scene's actual content"
     }
   ]
@@ -133,5 +155,6 @@ Schema:
 
 "fields" is only present for "update" operations. "type"/"wordIds"/"kind"/"icon" are only
 present for "create"/"beat" operations. "type"/"sceneId"/"text" are only present for
-"create"/"moment" operations. If the instruction doesn't match anything in the current plan,
+"create"/"moment" operations. "type"/"sceneId"/"assetId"/"anchorText" are only present for
+"create"/"image" operations. If the instruction doesn't match anything in the current plan,
 return {"operations": []}.

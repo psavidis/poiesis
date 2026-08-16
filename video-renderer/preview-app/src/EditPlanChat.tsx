@@ -164,7 +164,12 @@ export function EditPlanChat({ episodePath, onApplied, selectedSceneId, scenePla
             setResult(editResult);
             setInstruction("");
 
-            if (editResult.applied.length > 0 || editResult.created.length > 0 || editResult.createdMoments.length > 0) {
+            if (
+                editResult.applied.length > 0 ||
+                editResult.created.length > 0 ||
+                editResult.createdMoments.length > 0 ||
+                editResult.createdImages.length > 0
+            ) {
                 onApplied(editResult.createdSceneIds);
             }
         } catch (e) {
@@ -229,7 +234,8 @@ export function EditPlanChat({ episodePath, onApplied, selectedSceneId, scenePla
                     {result.applied.length === 0 &&
                         result.rejected.length === 0 &&
                         result.created.length === 0 &&
-                        result.createdMoments.length === 0 && (
+                        result.createdMoments.length === 0 &&
+                        result.createdImages.length === 0 && (
                             <div style={styles.hint}>
                                 No matching scene found for that instruction — nothing changed.
                             </div>
@@ -265,6 +271,15 @@ export function EditPlanChat({ episodePath, onApplied, selectedSceneId, scenePla
                         </div>
                     ))}
 
+                    {result.createdImages.map((image, i) => (
+                        <div key={`created-image-${i}`} style={styles.appliedRow}>
+                            <span style={styles.opBadge}>CREATED</span>
+                            <span>
+                                inset image on {image.parentSceneId}: {image.assetId}
+                            </span>
+                        </div>
+                    ))}
+
                     {result.rejected.map((r, i) => (
                         <div key={`rejected-${i}`} style={styles.rejectedRow}>
                             <span style={styles.opBadge}>REJECTED</span>
@@ -272,7 +287,10 @@ export function EditPlanChat({ episodePath, onApplied, selectedSceneId, scenePla
                         </div>
                     ))}
 
-                    {(result.applied.length > 0 || result.created.length > 0 || result.createdMoments.length > 0) && (
+                    {(result.applied.length > 0 ||
+                        result.created.length > 0 ||
+                        result.createdMoments.length > 0 ||
+                        result.createdImages.length > 0) && (
                         <div style={styles.hint}>
                             Applied to scene-plan.json — the next render will pick this up.
                         </div>

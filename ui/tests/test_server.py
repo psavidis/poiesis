@@ -1194,6 +1194,7 @@ def test_edit_scene_plan_applies_validated_operations(tmp_path):
         [],
         [],
         [],
+        [],
     )
 
     with patch("server.edit_plan", return_value=fake_result) as mock_edit_plan:
@@ -1218,7 +1219,7 @@ def test_edit_scene_plan_passes_selected_scene_id_through_to_edit_plan(tmp_path)
     episode = _make_episode(tmp_path)
     _make_scene_plan(episode)
 
-    fake_result = ({"scenes": []}, [], [], [], [])
+    fake_result = ({"scenes": []}, [], [], [], [], [])
 
     with patch("server.edit_plan", return_value=fake_result) as mock_edit_plan:
         response = client.post(
@@ -1236,7 +1237,7 @@ def test_edit_scene_plan_defaults_selected_scene_id_to_none(tmp_path):
     episode = _make_episode(tmp_path)
     _make_scene_plan(episode)
 
-    fake_result = ({"scenes": []}, [], [], [], [])
+    fake_result = ({"scenes": []}, [], [], [], [], [])
 
     with patch("server.edit_plan", return_value=fake_result) as mock_edit_plan:
         response = client.post(
@@ -1295,6 +1296,7 @@ def test_edit_scene_plan_removes_moment_from_moments_json(tmp_path):
             "scenes": [s for s in scene_plan_before["scenes"] if s["id"] != "scene-moment-0"],
         },
         [{"op": "remove", "sceneId": "scene-moment-0", "reason": "instruction said to remove it"}],
+        [],
         [],
         [],
         [],
@@ -1376,6 +1378,7 @@ def test_edit_scene_plan_creates_a_beat_in_emphasis_json_and_scene_plan(tmp_path
             }
         ],
         [],
+        [],
     )
 
     with patch("server.edit_plan", return_value=fake_result) as mock_edit_plan:
@@ -1444,6 +1447,7 @@ def test_edit_scene_plan_appends_created_beat_to_existing_beats(tmp_path):
             }
         ],
         [],
+        [],
     )
 
     with patch("server.edit_plan", return_value=fake_result):
@@ -1480,6 +1484,7 @@ def test_undo_after_edit_plan_chat_creates_beat_restores_emphasis_json(tmp_path)
                 "reason": "the key term",
             }
         ],
+        [],
         [],
     )
 
@@ -1527,6 +1532,7 @@ def test_edit_scene_plan_creates_a_moment_in_moments_json_and_scene_plan(tmp_pat
                 "reason": "the core idea",
             }
         ],
+        [],
     )
 
     with patch("server.edit_plan", return_value=fake_result) as mock_edit_plan:
@@ -1557,6 +1563,60 @@ def test_edit_scene_plan_creates_a_moment_in_moments_json_and_scene_plan(tmp_pat
     # fake_result's "sceneId" field actually means.
     assert body["createdSceneIds"] == [moment_scenes[0]["id"]]
     assert moment_scenes[0]["id"] == "scene-moment-0"
+
+
+def test_edit_scene_plan_creates_an_image_scene_directly_in_scene_plan(tmp_path):
+    # Image scenes have no separate source file (see #60) — unlike beats/
+    # moments, this asserts the created image lands straight in
+    # scene-plan.json, not a merge from some images.json that doesn't
+    # exist.
+    episode = _make_episode(tmp_path)
+    scene_plan_before = _make_scene_plan(episode, video_ids=("001",))
+    (episode / "processing" / "assets.json").write_text(
+        json.dumps({"assets": [{"id": "asset-1", "caption": "the architecture diagram"}]})
+    )
+
+    fake_result = (
+        scene_plan_before,
+        [],
+        [],
+        [],
+        [],
+        [
+            {
+                "type": "image",
+                "assetId": "asset-1",
+                "caption": "the architecture diagram",
+                "display": "inset",
+                "parentSceneId": "scene-001",
+                "offsetInParentFrames": 0,
+                "durationInFrames": 150,
+            }
+        ],
+    )
+
+    with patch("server.edit_plan", return_value=fake_result) as mock_edit_plan:
+        response = client.post(
+            "/api/episode/edit-plan",
+            params={"path": str(episode)},
+            json={"instruction": "show the architecture diagram in the corner"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["createdImages"]) == 1
+    assert body["createdImages"][0]["assetId"] == "asset-1"
+
+    assert mock_edit_plan.call_args.kwargs["assets"] == [{"id": "asset-1", "caption": "the architecture diagram"}]
+
+    scene_plan_on_disk = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    image_scenes = [s for s in scene_plan_on_disk["scenes"] if s["type"] == "image"]
+    assert len(image_scenes) == 1
+    assert image_scenes[0]["assetId"] == "asset-1"
+    assert image_scenes[0]["display"] == "inset"
+    assert image_scenes[0]["id"] == "scene-image-0"
+
+    assert body["createdSceneIds"] == ["scene-image-0"]
 
 
 def test_edit_scene_plan_appends_created_moment_to_existing_moments(tmp_path):
@@ -1593,6 +1653,7 @@ def test_edit_scene_plan_appends_created_moment_to_existing_moments(tmp_path):
                 "reason": "new",
             }
         ],
+        [],
     )
 
     with patch("server.edit_plan", return_value=fake_result):
@@ -1631,6 +1692,7 @@ def test_undo_after_edit_plan_chat_creates_moment_restores_moments_json(tmp_path
                 "reason": "the core idea",
             }
         ],
+        [],
     )
 
     with patch("server.edit_plan", return_value=fake_result):
@@ -1682,6 +1744,7 @@ def test_edit_scene_plan_removes_title_from_title_scenes_json(tmp_path):
             "scenes": [s for s in scene_plan_before["scenes"] if s["id"] != "scene-title-001"],
         },
         [{"op": "remove", "sceneId": "scene-title-001", "reason": "instruction said to remove it"}],
+        [],
         [],
         [],
         [],
@@ -1765,6 +1828,7 @@ def test_edit_scene_plan_regenerates_codegen(tmp_path):
 
     fake_result = (
         {"scenes": [{"id": "scene-001", "type": "presenter", "videoId": "001", "text": "unused"}]},
+        [],
         [],
         [],
         [],
@@ -1982,6 +2046,7 @@ def test_undo_after_edit_plan_chat_restores_removed_title_scene(tmp_path):
         mock_edit_plan.return_value = (
             removed_plan,
             [{"op": "remove", "sceneId": title_scene_id, "reason": "not needed"}],
+            [],
             [],
             [],
             [],

@@ -255,16 +255,36 @@ export interface CreatedMoment {
     reason?: string;
 }
 
+// An inset image scene created via chat — the AI-creation path for
+// ImageScene (previously unreachable by any real workflow: not the
+// pipeline, not the editor UI, not chat — see
+// docs/specs/content-types-and-presentation-editing.md). Unlike
+// CreatedBeat/CreatedMoment, this already carries its own parentSceneId
+// (not a bare "sceneId" meaning the parent) since image scenes have no
+// separate source file to round-trip through — the server appends this
+// straight into scene-plan.json.
+export interface CreatedImage {
+    type: "image";
+    assetId: string;
+    caption?: string;
+    display: "inset";
+    parentSceneId: string;
+    offsetInParentFrames: number;
+    durationInFrames: number;
+}
+
 export interface EditPlanResult {
     applied: EditPlanOperation[];
     rejected: { operation: EditPlanOperation; reason: string }[];
     created: CreatedBeat[];
     createdMoments: CreatedMoment[];
+    createdImages: CreatedImage[];
     // Every scene id this instruction actually touched (#54) — each
     // `applied` op's own sceneId, plus the resolved scene-beat-{N}/
-    // scene-moment-{N} id for each created_beats/createdMoments entry
-    // (those entries' own `sceneId` field means their PARENT scene, not
-    // themselves — see CreatedBeat/CreatedMoment above). Used to
+    // scene-moment-{N}/scene-image-{N} id for each created_beats/
+    // createdMoments/createdImages entry (those entries' own `sceneId`/
+    // `parentSceneId` field means their PARENT scene, not themselves —
+    // see CreatedBeat/CreatedMoment/CreatedImage above). Used to
     // highlight/scroll to what changed on the relevant timeline bar(s).
     createdSceneIds: string[];
 }

@@ -43,6 +43,7 @@ from edit_plan import (  # noqa: E402
     reflow_timeline,
 )
 from llm.client import LLMClient  # noqa: E402
+from overlay_placement import insert_overlay_scene  # noqa: E402
 
 RENDERER_DIR = Path(__file__).resolve().parent.parent / "video-renderer"
 
@@ -752,6 +753,7 @@ def edit_scene_plan(path: str, body: EditPlanRequest):
     manifest_path = processing / "manifest.json"
     beats_path = processing / "emphasis.json"
     moments_path = processing / "moments.json"
+    assets_path = processing / "assets.json"
 
     # Beat/moment creation (#52/#53) needs real word-level transcript
     # timing to ground itself — both optional here (unlike
@@ -759,15 +761,22 @@ def edit_scene_plan(path: str, body: EditPlanRequest):
     # word-level transcript data can still use every other chat
     # operation, it just can't create beats/moments (see edit_plan()'s
     # own docstring — this mirrors generate_emphasis.py's own graceful
-    # no-op for the same case).
+    # no-op for the same case). Image creation is likewise optional on
+    # assets.json existing (an episode with no indexed graphics/ folder
+    # can't ground an inset image either).
     episode_transcript = None
     manifest = None
+    assets = None
 
     if episode_transcript_path.exists() and manifest_path.exists():
         with episode_transcript_path.open("r", encoding="utf-8") as f:
             episode_transcript = json.load(f)
         with manifest_path.open("r", encoding="utf-8") as f:
             manifest = json.load(f)
+
+    if assets_path.exists():
+        with assets_path.open("r", encoding="utf-8") as f:
+            assets = json.load(f).get("assets", [])
 
     try:
         with episode_lock(episode, wait=False):
@@ -778,10 +787,10 @@ def edit_scene_plan(path: str, body: EditPlanRequest):
             prompt_template = load_edit_plan_prompt(EDIT_PLAN_PROMPT_FILE)
 
             try:
-                updated_plan, valid_ops, rejected, created_beats, created_moments = edit_plan(
+                updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
                     scene_plan, body.instruction, llm, prompt_template,
                     selected_scene_id=body.selectedSceneId,
-                    transcript=episode_transcript, manifest=manifest,
+                    transcript=episode_transcript, manifest=manifest, assets=assets,
                 )
             except Exception as e:
                 raise HTTPException(status_code=502, detail=f"Edit request failed: {e}")
@@ -804,6 +813,7 @@ def edit_scene_plan(path: str, body: EditPlanRequest):
             # so overwriting it here would silently break placement.
             resolved_beat_ids: list[str] = []
             resolved_moment_ids: list[str] = []
+            resolved_image_ids: list[str] = []
 
             def do_write():
                 removed_ids = {op["sceneId"] for op in valid_ops if op["op"] == "remove"}
@@ -847,6 +857,43 @@ def edit_scene_plan(path: str, body: EditPlanRequest):
                     plan_to_write = merge_moment_scenes(plan_to_write, all_moments)
                     write_json_atomic(moments_path, {"moments": all_moments})
 
+                if created_images:
+                    # Image scenes have no separate source-of-truth file
+                    # (see #60 — scene-plan.json already IS their only
+                    # representation), so unlike beats/moments there's no
+                    # merge_*_scenes to call: each created image is
+                    # inserted directly via insert_overlay_scene, the same
+                    # helper generate_moments.py/generate_emphasis.py use
+                    # internally. scene-image-{N} numbers only the NEW
+                    # ones sequentially — existing image scenes (however
+                    # rare) may already occupy lower numbers, so this
+                    # counts from however many "scene-image-*" ids are
+                    # already on the plan, not from 0.
+                    existing_image_count = sum(
+                        1 for s in plan_to_write["scenes"]
+                        if s["type"] == "image" and s["id"].startswith("scene-image-")
+                    )
+
+                    scenes_by_id = {s["id"]: s for s in plan_to_write["scenes"]}
+                    merged_scenes = list(plan_to_write["scenes"])
+
+                    for i, image in enumerate(created_images):
+                        image_id = f"scene-image-{existing_image_count + i}"
+                        resolved_image_ids.append(image_id)
+
+                        parent = scenes_by_id[image["parentSceneId"]]
+                        image_scene = {"id": image_id, **image}
+
+                        insert_overlay_scene(
+                            merged_scenes,
+                            scenes_by_id,
+                            image_scene,
+                            parent["timelineStartFrame"] + image["offsetInParentFrames"],
+                        )
+
+                    plan_to_write = dict(plan_to_write)
+                    plan_to_write["scenes"] = merged_scenes
+
                 write_json_atomic(scene_plan_path, plan_to_write)
                 regenerate_codegen(episode)
 
@@ -859,17 +906,21 @@ def edit_scene_plan(path: str, body: EditPlanRequest):
     except EpisodeBusyError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
-    # createdSceneIds (#54) — the resolved scene-beat-{N}/scene-moment-{N}
-    # ids for created_beats/created_moments, in the same order, plus every
-    # remove/update op's own sceneId — everything the frontend needs to
-    # highlight what this instruction actually touched.
-    created_scene_ids = [op["sceneId"] for op in valid_ops] + resolved_beat_ids + resolved_moment_ids
+    # createdSceneIds (#54) — the resolved scene-beat-{N}/scene-moment-{N}/
+    # scene-image-{N} ids for created_beats/created_moments/created_images,
+    # in the same order, plus every remove/update op's own sceneId —
+    # everything the frontend needs to highlight what this instruction
+    # actually touched.
+    created_scene_ids = (
+        [op["sceneId"] for op in valid_ops] + resolved_beat_ids + resolved_moment_ids + resolved_image_ids
+    )
 
     return {
         "applied": valid_ops,
         "rejected": rejected,
         "created": created_beats,
         "createdMoments": created_moments,
+        "createdImages": created_images,
         "createdSceneIds": created_scene_ids,
     }
 

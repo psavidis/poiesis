@@ -23,6 +23,7 @@ from generate_emphasis import (  # noqa: E402
 from generate_moments import (  # noqa: E402
     TRANSITION_FRAMES,
     duration_for_treatment,
+    format_assets_for_prompt,
     group_transcript_by_clip,
     is_grounded,
 )
@@ -410,6 +411,124 @@ def _bottom_callout_overlaps_existing_moment(scene_plan, scene_id, offset, durat
     return False
 
 
+# A chat-created inset image's fixed duration — images have no
+# style["images"] section of their own (only moments do, in
+# style.py's DEFAULTS), and this is the only place that would ever need
+# one, so a plain constant is simpler than adding a whole new style
+# subsection for a single number. Matches style.py's own
+# moments.durationFrames.sideImage (150 frames) — a comparable "glance at
+# an image" read time, just presented as a corner inset instead of a
+# side panel.
+INSET_IMAGE_DURATION_FRAMES = 150
+
+
+def _image_overlaps_existing_overlay(scene_plan, scene_id, offset, duration):
+    """Mirrors _bottom_callout_overlaps_existing_moment's padded-window
+    collision check, but for a chat-created inset image against BOTH
+    existing moment and image scenes on the same parent — an inset image
+    popping in at the same time as a side-* moment's presenter shift (or
+    another image) would read as visual clutter, not a deliberate
+    composition, the same discipline every other overlay-creation path in
+    this file already applies."""
+
+    start = offset - TRANSITION_FRAMES
+    end = offset + duration + TRANSITION_FRAMES
+
+    for scene in scene_plan["scenes"]:
+
+        if scene["type"] not in ("moment", "image") or scene.get("parentSceneId") != scene_id:
+            continue
+
+        other_start = scene["offsetInParentFrames"] - TRANSITION_FRAMES
+        other_end = other_start + scene["durationInFrames"] + 2 * TRANSITION_FRAMES
+
+        if start < other_end and end > other_start:
+            return True
+
+    return False
+
+
+def resolve_image_creation(op, scene_plan, assets, transcript, manifest):
+    """Resolves a single "create"/"image" operation into an image scene
+    ready to append to scene-plan.json directly — image scenes have no
+    separate source-of-truth file the way moments/beats do (see #60:
+    "image scenes are hand-authored / edit-plan only... scene-plan.json
+    already IS their only representation"), so unlike
+    resolve_beat_creation/resolve_bottom_callout_creation, the caller
+    doesn't merge this through a generate_*.py merge function — it's
+    inserted directly via overlay_placement.insert_overlay_scene, same as
+    those functions do internally.
+
+    Grounding here means picking a REAL assetId from the assets index
+    (assets is index_assets.py's output — see format_assets_for_prompt in
+    generate_moments.py, the prompt-formatting this reuses) rather than
+    inventing one — the same "never fabricate, only reference what
+    actually exists" discipline resolve_beat_creation applies to word ids
+    and resolve_bottom_callout_creation applies to spoken text. There is
+    deliberately no text-grounding step: an inset image has no spoken-text
+    requirement the way a bottom-callout does, since its content is the
+    image itself, not a paraphrase of narration."""
+
+    scene_id = op.get("sceneId")
+    asset_id = op.get("assetId")
+
+    if not scene_id or not asset_id:
+        return None
+
+    asset = next((a for a in (assets or []) if a["id"] == asset_id), None)
+
+    if asset is None:
+        return None
+
+    scenes_by_id = {scene["id"]: scene for scene in scene_plan["scenes"]}
+    parent = scenes_by_id.get(scene_id)
+
+    if not parent or parent["type"] != "presenter":
+        return None
+
+    # Placement: right after wherever the instruction's own context
+    # anchors it, resolved the same way resolve_bottom_callout_creation
+    # anchors a callout — the segment whose text best matches whatever the
+    # instruction referenced, defaulting to the start of the scene when no
+    # more specific anchor is available (a plain "show a screenshot of X"
+    # with no spoken-phrase reference to match against).
+    offset = 0
+
+    anchor_text = op.get("anchorText")
+
+    if anchor_text and transcript and manifest:
+        clips = group_transcript_by_clip(transcript, manifest)
+        segments = clips.get(parent["videoId"], [])
+        window = {"sourceStartFrame": parent["sourceStartFrame"], "sourceEndFrame": parent["sourceEndFrame"]}
+        matching_segments = filter_segments_in_window(segments, window, scene_plan["fps"])
+
+        best_segment = next(
+            (segment for segment in matching_segments if is_grounded(anchor_text, segment["text"])),
+            None,
+        )
+
+        if best_segment:
+            offset = max(0, round(best_segment["start"] * scene_plan["fps"] - parent["sourceStartFrame"]))
+
+    duration = min(INSET_IMAGE_DURATION_FRAMES, max(0, parent["durationInFrames"] - offset))
+
+    if duration <= 0:
+        return None
+
+    if _image_overlaps_existing_overlay(scene_plan, scene_id, offset, duration):
+        return None
+
+    return {
+        "type": "image",
+        "assetId": asset_id,
+        "caption": asset.get("caption"),
+        "display": "inset",
+        "parentSceneId": scene_id,
+        "offsetInParentFrames": offset,
+        "durationInFrames": duration,
+    }
+
+
 def resolve_bottom_callout_creation(op, scene_plan, transcript, manifest, style=None):
     """Resolves a single "create"/"moment" (bottom-callout only, see #53)
     operation into a moment proposal ready to append to moments.json — or
@@ -489,7 +608,7 @@ def resolve_bottom_callout_creation(op, scene_plan, transcript, manifest, style=
 
 def edit_plan(
     scene_plan, instruction, llm: LLMClient, prompt_template: str,
-    selected_scene_id=None, transcript=None, manifest=None,
+    selected_scene_id=None, transcript=None, manifest=None, assets=None,
 ):
     """transcript/manifest are optional — only pass them when both are
     available (an episode with no word-level transcript data can't ground
@@ -497,16 +616,25 @@ def edit_plan(
     stage). When present, they enable "create" operations: "beat" (#52,
     resolve_beat_creation, reuses generate_emphasis.py's own word-matching)
     and "moment"/bottom-callout (#53, resolve_bottom_callout_creation,
-    reuses generate_moments.py's own text-grounding). Neither is
-    reimplemented here.
+    reuses generate_moments.py's own text-grounding). assets is likewise
+    optional (an episode with no indexed graphics can't ground an inset
+    image creation) and enables "create"/"image" (resolve_image_creation —
+    the AI-creation path for ImageScene, previously unreachable by any
+    real workflow; see docs/specs/content-types-and-presentation-editing.md).
+    None of these are reimplemented here.
 
     Returns (updated_plan, valid_ops, rejected, created_beats,
-    created_moments) — both created_* lists are separate from
-    updated_plan/valid_ops since each is written to its own source file
-    (emphasis.json / moments.json) + re-merged, a different write path
-    than remove/update's direct scene_plan mutation; see
-    resolve_beat_creation/resolve_bottom_callout_creation's own
-    docstrings."""
+    created_moments, created_images) — the three created_* lists are kept
+    separate from updated_plan/valid_ops for different reasons:
+    created_beats/created_moments are each written to their own source
+    file (emphasis.json / moments.json) + re-merged, a different write
+    path than remove/update's direct scene_plan mutation, while
+    created_images has no separate source file at all (image scenes are
+    "hand-authored / edit-plan only" — see #60) and is instead appended
+    straight into scene_plan's own scenes list by the caller, mirroring
+    how resolve_image_creation's own docstring describes
+    insert_overlay_scene being used elsewhere. See each resolve_*
+    function's own docstring for the full reasoning."""
 
     selected_scene_text = describe_selected_scene(scene_plan, selected_scene_id) or "(nothing selected)"
 
@@ -523,6 +651,8 @@ def edit_plan(
     )
 
     scene_transcripts_text = describe_scene_transcripts(scene_plan, transcript, manifest)
+
+    available_assets_text = format_assets_for_prompt(assets) if assets else "(none available)"
 
     # Substitute the fixed, non-user-authored blocks first, then the
     # free-text instruction last — it's the one value that could plausibly
@@ -542,6 +672,8 @@ def edit_plan(
     ).replace(
         "{scene_transcripts}", scene_transcripts_text
     ).replace(
+        "{available_assets}", available_assets_text
+    ).replace(
         "{instruction}", instruction
     )
 
@@ -554,6 +686,7 @@ def edit_plan(
     remove_update_ops = [op for op in valid_ops if op["op"] != "create"]
     create_beat_ops = [op for op in valid_ops if op["op"] == "create" and op.get("type") == "beat"]
     create_moment_ops = [op for op in valid_ops if op["op"] == "create" and op.get("type") == "moment"]
+    create_image_ops = [op for op in valid_ops if op["op"] == "create" and op.get("type") == "image"]
 
     created_beats = []
 
@@ -577,10 +710,21 @@ def edit_plan(
 
         created_moments.append(moment)
 
+    created_images = []
+
+    for op in create_image_ops:
+        image = resolve_image_creation(op, scene_plan, assets, transcript, manifest)
+
+        if image is None:
+            rejected.append({"operation": op, "reason": "could not ground this image against a real asset id, or it collides with an existing overlay"})
+            continue
+
+        created_images.append(image)
+
     updated_plan = apply_operations(scene_plan, remove_update_ops)
     updated_plan = reflow_timeline(updated_plan)
 
-    return updated_plan, remove_update_ops, rejected, created_beats, created_moments
+    return updated_plan, remove_update_ops, rejected, created_beats, created_moments, created_images
 
 
 def main():
@@ -607,7 +751,7 @@ def main():
     llm = LLMClient(PROJECT_ROOT / "config.json")
     prompt_template = load_prompt(PROMPT_FILE)
 
-    updated_plan, valid_ops, rejected, created_beats, created_moments = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
         scene_plan, args.instruction, llm, prompt_template
     )
 
@@ -617,10 +761,11 @@ def main():
     for op in valid_ops:
         print(f"  {op['op']} {op['sceneId']}: {op.get('reason', '')}")
 
-    # created_beats/created_moments are always empty from this CLI entry
-    # point — no transcript/manifest is loaded/passed here, so creation
-    # can't be grounded (see edit_plan's own docstring). ui/server.py's
-    # edit_scene_plan is the only caller that currently passes both.
+    # created_beats/created_moments/created_images are always empty from
+    # this CLI entry point — no transcript/manifest/assets is loaded/passed
+    # here, so creation can't be grounded (see edit_plan's own docstring).
+    # ui/server.py's edit_scene_plan is the only caller that currently
+    # passes all three.
     if created_beats:
         print(f"\nCreated {len(created_beats)} beat(s):")
         for beat in created_beats:
@@ -630,6 +775,11 @@ def main():
         print(f"\nCreated {len(created_moments)} moment(s):")
         for moment in created_moments:
             print(f"  {moment['treatment']} on {moment['sceneId']}: \"{moment['text']}\"")
+
+    if created_images:
+        print(f"\nCreated {len(created_images)} image(s):")
+        for image in created_images:
+            print(f"  inset image on {image['parentSceneId']}: {image['assetId']}")
 
     if rejected:
         print(f"\nRejected {len(rejected)} operation(s):")
