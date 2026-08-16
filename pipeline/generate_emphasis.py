@@ -358,6 +358,86 @@ def propose_emphasis(scene_plan, transcript, manifest, llm: LLMClient, prompt_te
     return proposals
 
 
+# Fields a human can actually change through the editor (InlineTextEditor's
+# Cmd+E text box, BeatBar's drag-to-resize) — see #58, second slice of #44
+# after generate_moments.py's OVERRIDABLE_MOMENT_FIELDS. "kind"/"icon"/
+# "offsetInParentFrames"/"sceneId"/"reason" have no editing UI today, so
+# they're excluded — a re-save always round-trips them verbatim and
+# including them would risk a spurious override from float/ordering noise,
+# not an actual human edit.
+OVERRIDABLE_BEAT_FIELDS = {"text", "durationInFrames"}
+
+
+def compute_overridden_fields(old_beat, new_beat):
+    """Same positional-diff approach as generate_moments.py's function of
+    the same name (see #57) — a beat has no persistent id of its own
+    either, so a same-array positional comparison against what's currently
+    on disk in emphasis.json is the reliable signal for "did the human
+    actually change this field." Starts from new_beat's own
+    overriddenFields (so a client-side Reset-to-Automatic can actually take
+    effect) and adds anything with a real value change on top."""
+
+    overridden = set(new_beat.get("overriddenFields", old_beat.get("overriddenFields", [])))
+
+    for field in OVERRIDABLE_BEAT_FIELDS:
+        if new_beat.get(field) != old_beat.get(field):
+            overridden.add(field)
+
+    return sorted(overridden)
+
+
+def preserve_overridden_fields(old_beats, new_proposals):
+    """Before a --force regeneration overwrites emphasis.json, copy forward
+    any human-overridden field value from an old beat onto its
+    closest-matching new proposal — mirrors generate_moments.py's function
+    of the same name (see #57/#58). Match key: sceneId (which parent
+    presenter scene), then nearest offsetInParentFrames among same-scene
+    candidates, since a fresh proposal batch has no positional
+    correspondence to the old one. Only engages for beats that actually
+    have overrides to protect."""
+
+    old_by_scene = {}
+    for old_beat in old_beats:
+        if old_beat.get("overriddenFields"):
+            old_by_scene.setdefault(old_beat["sceneId"], []).append(old_beat)
+
+    if not old_by_scene:
+        return new_proposals
+
+    new_by_scene = {}
+    for proposal in new_proposals:
+        new_by_scene.setdefault(proposal["sceneId"], []).append(proposal)
+
+    claimed_new_ids = set()
+
+    for scene_id, old_candidates in old_by_scene.items():
+
+        new_candidates = [p for p in new_by_scene.get(scene_id, []) if id(p) not in claimed_new_ids]
+
+        if not new_candidates:
+            continue
+
+        for old_beat in old_candidates:
+
+            best = min(
+                new_candidates,
+                key=lambda p: abs(p["offsetInParentFrames"] - old_beat["offsetInParentFrames"]),
+            )
+
+            for field in old_beat["overriddenFields"]:
+                if field in old_beat:
+                    best[field] = old_beat[field]
+
+            best["overriddenFields"] = sorted(
+                set(best.get("overriddenFields", [])) | set(old_beat["overriddenFields"])
+            )
+
+            claimed_new_ids.add(id(best))
+            new_candidates.remove(best)
+
+    return new_proposals
+
+
 def merge_beat_scenes(scene_plan, proposals):
     """Rebuilds every beat scene from proposals — safe to call repeatedly,
     same as merge_moment_scenes/merge_title_scenes. Unlike those, this is
@@ -468,6 +548,11 @@ def main():
         print(output_file)
         return
 
+    # Loaded before the fresh proposal overwrites output_file, so a
+    # --force regeneration can carry forward any human-overridden field
+    # from the beats this run is about to replace (see #58).
+    previous_beats = load_json(output_file)["beats"] if output_file.exists() else []
+
     llm = LLMClient(PROJECT_ROOT / "config.json")
     prompt_template = load_prompt(PROMPT_FILE)
 
@@ -487,6 +572,8 @@ def main():
             prompt_template,
             episode_context=load_episode_narrative_text(episode)
         )
+
+        proposals = preserve_overridden_fields(previous_beats, proposals)
 
         write_json_atomic(output_file, {"beats": proposals})
 

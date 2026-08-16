@@ -1,9 +1,11 @@
 from episode_context import NO_CONTEXT_TEXT
 from generate_emphasis import (
     build_candidate_words,
+    compute_overridden_fields,
     join_words,
     merge_beat_scenes,
     overlaps_existing_overlay,
+    preserve_overridden_fields,
     propose_emphasis,
     resolve_phrase,
     strip_edge_punctuation,
@@ -667,3 +669,129 @@ def test_merge_beat_scenes_does_not_clamp_a_duration_that_already_fits():
     beat_scene = next(s for s in result["scenes"] if s["type"] == "beat")
 
     assert beat_scene["durationInFrames"] == 60
+
+
+# compute_overridden_fields / preserve_overridden_fields (#58) — AI-vs-
+# human provenance tracking, second slice of #44 (mirrors #57's moments
+# coverage, scoped to beats' own editable fields: text, durationInFrames).
+def test_compute_overridden_fields_detects_a_changed_field():
+    old = {"sceneId": "scene-001", "kind": "word-pop", "text": "before", "durationInFrames": 30}
+    new = {"sceneId": "scene-001", "kind": "word-pop", "text": "after", "durationInFrames": 30}
+
+    assert compute_overridden_fields(old, new) == ["text"]
+
+
+def test_compute_overridden_fields_ignores_unchanged_fields():
+    old = {"sceneId": "scene-001", "kind": "word-pop", "text": "same", "durationInFrames": 30}
+    new = {"sceneId": "scene-001", "kind": "word-pop", "text": "same", "durationInFrames": 30}
+
+    assert compute_overridden_fields(old, new) == []
+
+
+def test_compute_overridden_fields_ignores_non_editable_fields():
+    # sceneId/kind/icon/offsetInParentFrames/reason have no editing UI
+    # today — a difference here must never appear in overriddenFields.
+    old = {"sceneId": "scene-001", "kind": "word-pop", "icon": None, "offsetInParentFrames": 0, "reason": "a"}
+    new = {"sceneId": "scene-002", "kind": "icon-accent", "icon": "arrow", "offsetInParentFrames": 40, "reason": "b"}
+
+    assert compute_overridden_fields(old, new) == []
+
+
+def test_compute_overridden_fields_accumulates_across_saves():
+    old = {"sceneId": "scene-001", "kind": "word-pop", "text": "same", "overriddenFields": ["durationInFrames"]}
+    new = {
+        "sceneId": "scene-001", "kind": "word-pop", "text": "same",
+        "durationInFrames": old.get("durationInFrames"), "overriddenFields": ["durationInFrames"],
+    }
+
+    assert compute_overridden_fields(old, new) == ["durationInFrames"]
+
+
+def test_compute_overridden_fields_reset_actually_clears_the_marker():
+    old = {"sceneId": "scene-001", "kind": "word-pop", "durationInFrames": 45, "overriddenFields": ["durationInFrames"]}
+    new = {"sceneId": "scene-001", "kind": "word-pop", "durationInFrames": 45, "overriddenFields": []}
+
+    assert compute_overridden_fields(old, new) == []
+
+
+def test_compute_overridden_fields_against_empty_old_beat():
+    new = {"sceneId": "scene-001", "kind": "word-pop", "text": "brand new"}
+
+    assert compute_overridden_fields({}, new) == ["text"]
+
+
+def test_compute_overridden_fields_unchanged_resave_is_a_noop():
+    old = {"sceneId": "scene-001", "kind": "word-pop", "text": "same", "durationInFrames": 30, "overriddenFields": []}
+    new = {"sceneId": "scene-001", "kind": "word-pop", "text": "same", "durationInFrames": 30, "overriddenFields": []}
+
+    assert compute_overridden_fields(old, new) == []
+
+
+def test_preserve_overridden_fields_copies_forward_a_manually_resized_duration():
+    old_beats = [
+        {
+            "sceneId": "scene-001", "kind": "word-pop", "text": "old text",
+            "offsetInParentFrames": 0, "durationInFrames": 90,
+            "overriddenFields": ["durationInFrames"],
+        }
+    ]
+    fresh_proposals = [
+        {
+            "sceneId": "scene-001", "kind": "word-pop", "text": "freshly regenerated text",
+            "offsetInParentFrames": 5, "durationInFrames": 30,
+        }
+    ]
+
+    result = preserve_overridden_fields(old_beats, fresh_proposals)
+
+    assert len(result) == 1
+    assert result[0]["durationInFrames"] == 90
+    assert result[0]["text"] == "freshly regenerated text"
+    assert result[0]["overriddenFields"] == ["durationInFrames"]
+
+
+def test_preserve_overridden_fields_leaves_non_overridden_beats_untouched():
+    old_beats = [
+        {"sceneId": "scene-001", "kind": "word-pop", "text": "old", "offsetInParentFrames": 0},
+    ]
+    fresh_proposals = [
+        {"sceneId": "scene-001", "kind": "word-pop", "text": "new", "offsetInParentFrames": 10},
+    ]
+
+    result = preserve_overridden_fields(old_beats, fresh_proposals)
+
+    assert result[0]["text"] == "new"
+    assert result[0]["offsetInParentFrames"] == 10
+
+
+def test_preserve_overridden_fields_matches_closest_offset_among_same_scene_duplicates():
+    old_beats = [
+        {
+            "sceneId": "scene-001", "kind": "word-pop", "text": "first",
+            "offsetInParentFrames": 0, "overriddenFields": ["text"],
+        },
+        {
+            "sceneId": "scene-001", "kind": "word-pop", "text": "second",
+            "offsetInParentFrames": 500, "overriddenFields": ["text"],
+        },
+    ]
+    fresh_proposals = [
+        {"sceneId": "scene-001", "kind": "word-pop", "text": "regenerated near 500", "offsetInParentFrames": 480},
+        {"sceneId": "scene-001", "kind": "word-pop", "text": "regenerated near 0", "offsetInParentFrames": 20},
+    ]
+
+    result = preserve_overridden_fields(old_beats, fresh_proposals)
+
+    by_offset = {p["offsetInParentFrames"]: p["text"] for p in result}
+    assert by_offset[20] == "first"
+    assert by_offset[480] == "second"
+
+
+def test_preserve_overridden_fields_with_no_prior_overrides_returns_proposals_unchanged():
+    fresh_proposals = [
+        {"sceneId": "scene-001", "kind": "word-pop", "text": "new", "offsetInParentFrames": 0},
+    ]
+
+    result = preserve_overridden_fields([], fresh_proposals)
+
+    assert result is fresh_proposals

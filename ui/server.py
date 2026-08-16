@@ -20,7 +20,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
 
 from generate_title_scenes import merge_title_scenes, write_json_atomic  # noqa: E402
 from generate_moments import compute_overridden_fields, merge_moment_scenes  # noqa: E402
-from generate_emphasis import merge_beat_scenes  # noqa: E402
+from generate_emphasis import (  # noqa: E402
+    compute_overridden_fields as compute_overridden_beat_fields,
+    merge_beat_scenes,
+)
 from generate_scene_plan_ts import generate_scene_plan_ts  # noqa: E402
 from edit_plan import (  # noqa: E402
     edit_plan,
@@ -361,6 +364,11 @@ class BeatProposal(BaseModel):
     offsetInParentFrames: int
     durationInFrames: int
     reason: str = ""
+    # Field names a human has explicitly changed since the AI last proposed
+    # this beat (see #58) — recomputed on every save in update_beats below,
+    # same as moments' overriddenFields (#57); a client only needs to
+    # round-trip whatever getBeats() returned.
+    overriddenFields: list[str] = []
 
 
 class BeatsUpdate(BaseModel):
@@ -390,6 +398,21 @@ def update_beats(path: str, body: BeatsUpdate):
         raise HTTPException(status_code=404, detail="scene-plan.json not found — run the pipeline first")
 
     beats = [b.model_dump() for b in body.beats]
+
+    # overriddenFields (#58) is recomputed here, not trusted from the
+    # request body — same positional diff against what's currently on disk
+    # that update_moments already applies (see compute_overridden_fields'
+    # docstring in generate_emphasis.py). Positions beyond the old array's
+    # length have no old entry to diff against, so they start with an
+    # empty override set.
+    old_beats = []
+    if beats_path.exists():
+        with beats_path.open("r", encoding="utf-8") as f:
+            old_beats = json.load(f).get("beats", [])
+
+    for i, beat in enumerate(beats):
+        old_beat = old_beats[i] if i < len(old_beats) else {}
+        beat["overriddenFields"] = compute_overridden_beat_fields(old_beat, beat)
 
     def do_write():
         with scene_plan_path.open("r", encoding="utf-8") as f:

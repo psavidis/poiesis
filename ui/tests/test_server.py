@@ -647,6 +647,91 @@ def test_update_beats_can_remove_beats_by_omitting_them(tmp_path):
     assert beat_scenes == []
 
 
+def test_update_beats_marks_changed_field_as_overridden(tmp_path):
+    # #58 — mirrors #57's moments coverage: a save that actually changes a
+    # field's value from what's on disk records that field name in
+    # overriddenFields, so a later --force regeneration knows not to
+    # clobber it.
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+    (episode / "processing" / "emphasis.json").write_text(
+        json.dumps({"beats": [_beat_payload(text="AI proposed this")]})
+    )
+
+    response = client.put(
+        "/api/episode/beats",
+        params={"path": str(episode)},
+        json={"beats": [_beat_payload(text="Human edited this")]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["beats"][0]["overriddenFields"] == ["text"]
+
+    beats_on_disk = json.loads((episode / "processing" / "emphasis.json").read_text())
+    assert beats_on_disk["beats"][0]["overriddenFields"] == ["text"]
+
+
+def test_update_beats_unchanged_resave_does_not_add_spurious_overrides(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+    (episode / "processing" / "emphasis.json").write_text(
+        json.dumps({"beats": [_beat_payload(text="AI proposed this")]})
+    )
+
+    response = client.put(
+        "/api/episode/beats",
+        params={"path": str(episode)},
+        json={"beats": [_beat_payload(text="AI proposed this")]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["beats"][0]["overriddenFields"] == []
+
+
+def test_update_beats_preserves_prior_overrides_across_an_unrelated_save(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+    (episode / "processing" / "emphasis.json").write_text(
+        json.dumps({"beats": [_beat_payload(text="edited earlier", overriddenFields=["text"])]})
+    )
+
+    response = client.put(
+        "/api/episode/beats",
+        params={"path": str(episode)},
+        json={
+            "beats": [
+                _beat_payload(text="edited earlier", durationInFrames=90, overriddenFields=["text"])
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert set(response.json()["beats"][0]["overriddenFields"]) == {"text", "durationInFrames"}
+
+
+def test_update_beats_reset_to_automatic_clears_a_prior_override(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+    (episode / "processing" / "emphasis.json").write_text(
+        json.dumps(
+            {"beats": [_beat_payload(durationInFrames=90, overriddenFields=["durationInFrames"])]}
+        )
+    )
+
+    response = client.put(
+        "/api/episode/beats",
+        params={"path": str(episode)},
+        json={"beats": [_beat_payload(durationInFrames=90, overriddenFields=[])]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["beats"][0]["overriddenFields"] == []
+
+    beats_on_disk = json.loads((episode / "processing" / "emphasis.json").read_text())
+    assert beats_on_disk["beats"][0]["overriddenFields"] == []
+
+
 def _make_scene_plan_with_image(episode, video_ids=("001", "002")):
     """Same as _make_scene_plan but with an image scene overlaid on the
     first presenter scene — used by the new direct-field-update endpoint's

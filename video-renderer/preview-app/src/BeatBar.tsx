@@ -104,6 +104,12 @@ export function BeatBar({
     // editor by itself, matching the explicit "should not enter edit mode
     // by default" requirement.
     const [selectedBeatId, setSelectedBeatId] = useState<string | null>(null);
+    // Raw emphasis.json overriddenFields for whichever beat is selected —
+    // not present on scenePlan's own merged BeatScene (see #58, mirrors
+    // #57's provenance tracking for moments), so it's fetched separately
+    // whenever selection changes rather than plumbing a new field through
+    // the whole scene-plan merge just for this reset affordance.
+    const [selectedOverriddenFields, setSelectedOverriddenFields] = useState<string[]>([]);
     const selectedAnchorRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
     const trackRef = useRef<HTMLDivElement>(null);
     const dragRef = useRef<DragState | null>(null);
@@ -223,6 +229,53 @@ export function BeatBar({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [dragBeatId, windowFrames]);
 
+    // Refetches the selected beat's raw overriddenFields (#58) whenever
+    // selection changes — cleared immediately on deselect/reselect so a
+    // stale reset button from a previously-selected beat can't flash
+    // before the new fetch resolves.
+    useEffect(() => {
+        setSelectedOverriddenFields([]);
+        if (!selectedBeatId) return;
+        const match = /^scene-beat-(\d+)$/.exec(selectedBeatId);
+        const index = match ? Number(match[1]) : null;
+        if (index === null) return;
+        let cancelled = false;
+        getBeats(episodePath).then((data) => {
+            if (cancelled) return;
+            const beat = (data.beats ?? [])[index];
+            setSelectedOverriddenFields(beat?.overriddenFields ?? []);
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [selectedBeatId, episodePath]);
+
+    const resetSelectedDuration = async () => {
+        if (!selectedBeatId) return;
+        const match = /^scene-beat-(\d+)$/.exec(selectedBeatId);
+        const index = match ? Number(match[1]) : null;
+        if (index === null) return;
+
+        try {
+            const data = await getBeats(episodePath);
+            const beats = data.beats ?? [];
+            if (!beats[index]) return;
+
+            const nextOverridden = (beats[index].overriddenFields || []).filter(
+                (f: string) => f !== "durationInFrames"
+            );
+            const next = beats.map((b: any, i: number) =>
+                i === index ? { ...b, overriddenFields: nextOverridden } : b
+            );
+
+            await saveBeats(episodePath, next);
+            setSelectedOverriddenFields(nextOverridden);
+            onSaved();
+        } catch (e) {
+            setSaveError(String(e));
+        }
+    };
+
     // Seeds selection from an AI chat edit (#54) and re-centers the view on
     // it — mirrors MomentBar's own highlightedId effect.
     useEffect(() => {
@@ -288,7 +341,10 @@ export function BeatBar({
                 i === index ? { ...b, durationInFrames: newDuration } : b
             );
 
-            await saveBeats(episodePath, next);
+            const saved = await saveBeats(episodePath, next);
+            if (beatId === selectedBeatId) {
+                setSelectedOverriddenFields(saved?.beats?.[index]?.overriddenFields ?? []);
+            }
             onSaved();
         } catch (e) {
             setSaveError(String(e));
@@ -373,12 +429,24 @@ export function BeatBar({
 
             {saveError && <div style={styles.error}>{saveError}</div>}
 
-            <div style={styles.hint}>
-                {selectedBeatId
-                    ? `Selected — press ${MOD_KEY_LABEL}+E to edit its text.`
-                    : zoom > 1
-                    ? "Click a beat to select it, drag its right edge to resize, or click anywhere to seek."
-                    : "Zoom in to drag a beat's duration — at full-episode width a 2s beat is too thin to grab reliably."}
+            <div style={styles.hintRow}>
+                <div style={styles.hint}>
+                    {selectedBeatId
+                        ? `Selected — press ${MOD_KEY_LABEL}+E to edit its text.`
+                        : zoom > 1
+                        ? "Click a beat to select it, drag its right edge to resize, or click anywhere to seek."
+                        : "Zoom in to drag a beat's duration — at full-episode width a 2s beat is too thin to grab reliably."}
+                </div>
+                {selectedBeatId && selectedOverriddenFields.includes("durationInFrames") && (
+                    <button
+                        type="button"
+                        className="secondary small"
+                        onClick={resetSelectedDuration}
+                        title="This duration was manually resized — reset to let the AI decide it again next time"
+                    >
+                        Reset duration to Automatic
+                    </button>
+                )}
             </div>
         </div>
     );
@@ -483,6 +551,12 @@ const styles: Record<string, React.CSSProperties> = {
     error: {
         fontSize: 12,
         color: "#ff8f8f",
+    },
+    hintRow: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 8,
     },
     hint: {
         fontSize: 11,
