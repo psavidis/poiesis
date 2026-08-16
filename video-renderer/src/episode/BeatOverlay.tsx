@@ -3,20 +3,34 @@ import { AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig } fr
 import { brand } from "./brand";
 import type { BeatKind } from "./types";
 
-// Beats sit right at the very top of the frame, away from captions
-// (bottom, ~6% padding) and BottomCallout (bottom, ~12% padding) — a beat
-// firing at the same time as either never visually collides with them.
-// Verified against a real rendered frame: a presenter framed
-// center-and-tall (typical talking-head framing) fills roughly the top
-// 55-60% of the frame, so anything below ~8% risks landing on the
-// forehead/eyes rather than clear background — pushed to the top edge
-// instead of a nominal "upper third" for exactly that reason.
-const BEAT_CONTAINER_STYLE: React.CSSProperties = {
-    justifyContent: "flex-start",
-    alignItems: "center",
-    paddingTop: "5%",
-    pointerEvents: "none",
-};
+// Beats used to sit top-center (justifyContent: flex-start, 5% top
+// padding), on the theory that a presenter framed center-and-tall only
+// fills the top ~55-60% of frame, leaving a clear sliver above the
+// hairline. Pixel-measured against a real rendered frame (see #36) and
+// found that assumption didn't hold: the presenter's head/hair already
+// spans up to ~58% of frame width by 150-200px down — well within where
+// a beat chip's own rendered height reaches — so the chip visibly
+// overlapped his head rather than sitting in clear background.
+//
+// Beats never move the presenter (unlike moments — see
+// layoutWindowsForScene in Episode.tsx, which only reads MomentScene) and
+// shouldn't start doing so: at up to twice the frequency of moments in a
+// typical episode, that would turn a "light rhythm under the presenter"
+// (see BeatScene's own doc comment in types.ts) into constant
+// distracting motion. Instead, beats now sit to one side at roughly mid
+// height — the same clear-space zone moments' own side content already
+// uses (see MomentTreatments.tsx's sideContentStyle), reliably outside
+// the presenter's own footprint (roughly the center 40-60% of frame at
+// this framing) without requiring him to make room.
+function beatContainerStyle(side: "left" | "right"): React.CSSProperties {
+    return {
+        justifyContent: "center",
+        alignItems: side === "left" ? "flex-start" : "flex-end",
+        paddingLeft: side === "left" ? "6%" : 0,
+        paddingRight: side === "right" ? "6%" : 0,
+        pointerEvents: "none",
+    };
+}
 
 // A handful of small bundled icons for "icon-accent" beats — a static map
 // keyed by a short string (BeatScene.icon), not an open-ended asset
@@ -185,9 +199,19 @@ const IconAccent = ({ text, icon }: { text: string; icon?: string }) => {
     );
 };
 
-export const BeatOverlay = ({ kind, text, icon }: { kind: BeatKind; text: string; icon?: string }) => {
+export const BeatOverlay = ({
+    kind,
+    text,
+    icon,
+    side,
+}: {
+    kind: BeatKind;
+    text: string;
+    icon?: string;
+    side: "left" | "right";
+}) => {
     return (
-        <AbsoluteFill style={BEAT_CONTAINER_STYLE}>
+        <AbsoluteFill style={beatContainerStyle(side)}>
             {kind === "word-pop" && <WordPop text={text} />}
             {kind === "underline" && <Underline text={text} />}
             {kind === "icon-accent" && <IconAccent text={text} icon={icon} />}

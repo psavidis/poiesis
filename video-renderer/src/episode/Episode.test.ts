@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { CROSSFADE_TRANSITION_FRAMES, captionHiddenWindowsForScene, clampedMomentDuration, crossfadeInFramesForScene, layoutWindowsForScene } from "./Episode";
+import { CROSSFADE_TRANSITION_FRAMES, beatSideForSceneId, captionHiddenWindowsForScene, clampedMomentDuration, crossfadeInFramesForScene, layoutWindowsForScene } from "./Episode";
 import { TRANSITION_FRAMES } from "./timing";
 import type { MomentScene, PresenterScene } from "./types";
 
@@ -329,5 +329,23 @@ describe("crossfadeInFramesForScene", () => {
         const previous = presenterScene({ id: "scene-000", durationInFrames: 900 });
 
         expect(crossfadeInFramesForScene(scene, previous)).toBe(0);
+    });
+});
+
+describe("beatSideForSceneId", () => {
+    it("alternates left/right by the beat's own index in its id", () => {
+        expect(beatSideForSceneId("scene-beat-0")).toBe("left");
+        expect(beatSideForSceneId("scene-beat-1")).toBe("right");
+        expect(beatSideForSceneId("scene-beat-2")).toBe("left");
+        expect(beatSideForSceneId("scene-beat-3")).toBe("right");
+    });
+
+    it("is deterministic — the same id always resolves to the same side", () => {
+        expect(beatSideForSceneId("scene-beat-4")).toBe(beatSideForSceneId("scene-beat-4"));
+    });
+
+    it("falls back to left for an id that doesn't match the scene-beat-N convention", () => {
+        expect(beatSideForSceneId("scene-moment-4")).toBe("left");
+        expect(beatSideForSceneId("not-a-beat-id")).toBe("left");
     });
 });

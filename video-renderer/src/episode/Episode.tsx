@@ -133,6 +133,22 @@ export const clampedMomentDuration = (scene: MomentScene, parent: PresenterScene
     );
 };
 
+// A stable left/right side per beat, derived from its own id rather than
+// a new data field — generate_emphasis.py's merge step generates ids as
+// exactly f"scene-beat-{index}" (the array index in emphasis.json, same
+// exact-index convention generate_moments.py uses for scene-moment-{N}),
+// so alternating on that index gives a deterministic split with no
+// pipeline/schema change: every beat already has a stable position
+// without needing an AI or human decision about which side it goes on.
+// Falls back to "left" for any id that doesn't match the convention
+// (shouldn't happen for a real pipeline-produced scene, but a component
+// prop still needs a defined value rather than throwing).
+export const beatSideForSceneId = (sceneId: string): "left" | "right" => {
+    const match = /^scene-beat-(\d+)$/.exec(sceneId);
+    if (!match) return "left";
+    return Number(match[1]) % 2 === 0 ? "left" : "right";
+};
+
 // How many frames this scene should crossfade in from its predecessor —
 // 0 means a hard cut (today's only behavior when absent). Borrows real,
 // already-existing footage immediately before this scene's own
@@ -646,7 +662,12 @@ export const Episode = ({
                         from={parent.timelineStartFrame + scene.offsetInParentFrames}
                         durationInFrames={scene.durationInFrames}
                     >
-                        <BeatOverlay kind={scene.kind} text={scene.text} icon={scene.icon} />
+                        <BeatOverlay
+                            kind={scene.kind}
+                            text={scene.text}
+                            icon={scene.icon}
+                            side={beatSideForSceneId(scene.id)}
+                        />
                     </Sequence>
                 );
             }

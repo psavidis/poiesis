@@ -5,6 +5,7 @@ import type { EpisodeProps, Scene, ScenePlan } from "video-renderer-src/episode/
 import { getAssets, getCodeAssets, getManifest, getScenePlan, type EpisodeStatus } from "./api";
 import { ActiveSceneBar } from "./ActiveSceneBar";
 import { AdvancedPanel } from "./AdvancedPanel";
+import { BeatBar } from "./BeatBar";
 import { ChapterStrip } from "./ChapterStrip";
 import { EditPlanChat } from "./EditPlanChat";
 import { EpisodeAnalysisPanel } from "./EpisodeAnalysisPanel";
@@ -366,6 +367,15 @@ export function EpisodeWorkspace() {
                     currentFrame={currentFrame}
                     onSeek={seekToAbsoluteFrame}
                     onSelectMoment={openInlineMomentEditor}
+                />
+            </div>
+
+            <div style={styles.playerWrap}>
+                <BeatBar
+                    scenePlan={episodeProps.scenePlan}
+                    totalFrames={totalFrames}
+                    currentFrame={currentFrame}
+                    onSeek={seekToAbsoluteFrame}
                 />
             </div>
 
