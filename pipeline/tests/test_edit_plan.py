@@ -4,6 +4,7 @@ from edit_plan import (
     edit_plan,
     reflow_timeline,
     resolve_beat_creation,
+    resolve_bottom_callout_creation,
     validate_operations,
 )
 from generate_emphasis import build_candidate_words
@@ -89,6 +90,20 @@ def _scene_plan_with_words_scene():
         "scenes": [
             _presenter("scene-001", 0, 300, 0),
         ],
+    }
+
+
+# Moment-creation fixtures (#53) — segment-level transcript text (not
+# word-level; resolve_bottom_callout_creation grounds against whole
+# segments via generate_moments.py's own is_grounded, reusing
+# group_transcript_by_clip/filter_segments_in_window, not word-level
+# matching the way beats do).
+def _transcript_with_segments():
+    return {
+        "segments": [
+            {"source": "a.mp4", "start": 0.0, "end": 3.0, "text": "dependency injection matters a lot"},
+            {"source": "a.mp4", "start": 3.0, "end": 6.0, "text": "it makes testing much easier"},
+        ]
     }
 
 
@@ -388,7 +403,7 @@ def test_edit_plan_creates_a_beat_grounded_against_real_transcript_words():
         }
     )
 
-    updated_plan, valid_ops, rejected, created_beats = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments = edit_plan(
         scene_plan, "add a beat popping the word injection", llm, PROMPT_TEMPLATE,
         transcript=_transcript_with_words(), manifest=_manifest_single_video(),
     )
@@ -418,7 +433,7 @@ def test_edit_plan_rejects_an_ungroundable_beat_creation():
         }
     )
 
-    updated_plan, valid_ops, rejected, created_beats = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments = edit_plan(
         scene_plan, "add a weird beat", llm, PROMPT_TEMPLATE,
         transcript=_transcript_with_words(), manifest=_manifest_single_video(),
     )
@@ -441,13 +456,183 @@ def test_edit_plan_without_transcript_cannot_create_beats():
         }
     )
 
-    updated_plan, valid_ops, rejected, created_beats = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments = edit_plan(
         scene_plan, "add a beat", llm, PROMPT_TEMPLATE,
     )
 
     assert created_beats == []
     assert len(rejected) == 1
     assert "no word-level transcript data available" in llm.last_prompt
+
+
+def _scene_plan_with_segments_scene():
+    return {
+        "fps": 30,
+        "scenes": [
+            _presenter("scene-001", 0, 300, 0),
+        ],
+    }
+
+
+def test_resolve_bottom_callout_creation_accepts_grounded_text():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    op = {
+        "op": "create", "type": "moment", "sceneId": "scene-001",
+        "text": "dependency injection matters", "reason": "the core idea",
+    }
+
+    moment = resolve_bottom_callout_creation(op, scene_plan, _transcript_with_segments(), _manifest_single_video())
+
+    assert moment["sceneId"] == "scene-001"
+    assert moment["treatment"] == "bottom-callout"
+    assert moment["text"] == "dependency injection matters"
+    assert moment["presenterSide"] is None
+    assert moment["reason"] == "the core idea"
+
+
+def test_resolve_bottom_callout_creation_places_the_moment_near_where_text_is_spoken():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    # "makes testing much easier" is only in the SECOND segment (starts at
+    # 3.0s = frame 90), not the first — placement must follow the actual
+    # spoken position, not always default to the scene's start.
+    op = {
+        "op": "create", "type": "moment", "sceneId": "scene-001",
+        "text": "makes testing much easier", "reason": "x",
+    }
+
+    moment = resolve_bottom_callout_creation(op, scene_plan, _transcript_with_segments(), _manifest_single_video())
+
+    assert moment["offsetInParentFrames"] == 90
+
+
+def test_resolve_bottom_callout_creation_rejects_ungrounded_text():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    op = {
+        "op": "create", "type": "moment", "sceneId": "scene-001",
+        "text": "this was never actually said in the video", "reason": "x",
+    }
+
+    assert resolve_bottom_callout_creation(op, scene_plan, _transcript_with_segments(), _manifest_single_video()) is None
+
+
+def test_resolve_bottom_callout_creation_rejects_a_non_presenter_scene():
+    scene_plan = {
+        "fps": 30,
+        "scenes": [_title("scene-title-0", "Hello", 0)],
+    }
+
+    op = {
+        "op": "create", "type": "moment", "sceneId": "scene-title-0",
+        "text": "dependency injection matters", "reason": "x",
+    }
+
+    assert resolve_bottom_callout_creation(op, scene_plan, _transcript_with_segments(), _manifest_single_video()) is None
+
+
+def test_resolve_bottom_callout_creation_rejects_an_unknown_scene_id():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    op = {
+        "op": "create", "type": "moment", "sceneId": "scene-does-not-exist",
+        "text": "dependency injection matters", "reason": "x",
+    }
+
+    assert resolve_bottom_callout_creation(op, scene_plan, _transcript_with_segments(), _manifest_single_video()) is None
+
+
+def test_resolve_bottom_callout_creation_requires_scene_id_and_text():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    missing_scene_id = {"op": "create", "type": "moment", "text": "dependency injection matters", "reason": "x"}
+    assert resolve_bottom_callout_creation(
+        missing_scene_id, scene_plan, _transcript_with_segments(), _manifest_single_video()
+    ) is None
+
+    missing_text = {"op": "create", "type": "moment", "sceneId": "scene-001", "reason": "x"}
+    assert resolve_bottom_callout_creation(
+        missing_text, scene_plan, _transcript_with_segments(), _manifest_single_video()
+    ) is None
+
+
+def test_resolve_bottom_callout_creation_rejects_overlap_with_an_existing_moment():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    # An existing moment already covers frame 0 through well past the
+    # default bottom-callout duration — the new one (which would also
+    # place at/near frame 0, matching the FIRST segment) must be rejected.
+    scene_plan["scenes"].append(_moment("scene-moment-0", "scene-001", 0, 150, "already here"))
+
+    op = {
+        "op": "create", "type": "moment", "sceneId": "scene-001",
+        "text": "dependency injection matters", "reason": "x",
+    }
+
+    assert resolve_bottom_callout_creation(op, scene_plan, _transcript_with_segments(), _manifest_single_video()) is None
+
+
+def test_resolve_bottom_callout_creation_returns_none_without_transcript_or_manifest():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    op = {
+        "op": "create", "type": "moment", "sceneId": "scene-001",
+        "text": "dependency injection matters", "reason": "x",
+    }
+
+    assert resolve_bottom_callout_creation(op, scene_plan, None, _manifest_single_video()) is None
+    assert resolve_bottom_callout_creation(op, scene_plan, _transcript_with_segments(), None) is None
+
+
+def test_edit_plan_creates_a_bottom_callout_grounded_against_scene_transcript():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    llm = _FakeLLMClient(
+        {
+            "operations": [
+                {
+                    "op": "create", "type": "moment", "sceneId": "scene-001",
+                    "text": "dependency injection matters", "reason": "the core idea",
+                }
+            ]
+        }
+    )
+
+    updated_plan, valid_ops, rejected, created_beats, created_moments = edit_plan(
+        scene_plan, "add a callout saying dependency injection matters", llm, PROMPT_TEMPLATE,
+        transcript=_transcript_with_segments(), manifest=_manifest_single_video(),
+    )
+
+    assert len(created_moments) == 1
+    assert created_moments[0]["text"] == "dependency injection matters"
+    assert created_moments[0]["treatment"] == "bottom-callout"
+    assert rejected == []
+    assert valid_ops == []
+    assert created_beats == []
+
+
+def test_edit_plan_rejects_an_ungroundable_moment_creation():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    llm = _FakeLLMClient(
+        {
+            "operations": [
+                {
+                    "op": "create", "type": "moment", "sceneId": "scene-001",
+                    "text": "this phrase was never said", "reason": "fabricated",
+                }
+            ]
+        }
+    )
+
+    updated_plan, valid_ops, rejected, created_beats, created_moments = edit_plan(
+        scene_plan, "add a weird callout", llm, PROMPT_TEMPLATE,
+        transcript=_transcript_with_segments(), manifest=_manifest_single_video(),
+    )
+
+    assert created_moments == []
+    assert len(rejected) == 1
 
 
 def test_apply_operations_removes_scene():
@@ -568,7 +753,7 @@ def test_edit_plan_end_to_end_applies_valid_operation_and_reflows():
         }
     )
 
-    updated_plan, valid_ops, rejected, created_beats = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments = edit_plan(
         scene_plan, "change the title to New title", llm, PROMPT_TEMPLATE
     )
 
@@ -597,7 +782,7 @@ def test_edit_plan_end_to_end_filters_out_invalid_operations():
         }
     )
 
-    updated_plan, valid_ops, rejected, created_beats = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments = edit_plan(
         scene_plan, "some instruction", llm, PROMPT_TEMPLATE
     )
 
@@ -616,7 +801,7 @@ def test_edit_plan_handles_instruction_containing_template_like_braces():
 
     tricky_instruction = 'remove the scene that says "{scene_plan}" in it'
 
-    updated_plan, valid_ops, rejected, created_beats = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments = edit_plan(
         scene_plan, tricky_instruction, llm, PROMPT_TEMPLATE
     )
 
@@ -693,7 +878,7 @@ def test_edit_plan_degrades_to_nothing_selected_for_a_stale_selection():
 
     llm = _FakeLLMClient({"operations": []})
 
-    updated_plan, valid_ops, rejected, created_beats = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments = edit_plan(
         scene_plan, "make this bigger", llm, PROMPT_TEMPLATE, selected_scene_id="scene-does-not-exist"
     )
 

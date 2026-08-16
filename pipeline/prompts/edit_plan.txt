@@ -38,9 +38,20 @@ Decide which scene(s) the instruction refers to and what should change. You may:
    candidate words below and use its real wordIds — do not guess at timing. If no word-level
    transcript data is available (see below) or the phrase can't be found, do not propose a
    create operation for it.
+4. Create a new bottom-callout moment — a short on-screen phrase overlaid on the still-playing
+   presenter (not a side treatment, no talking-head movement). Use this ONLY when the
+   instruction explicitly asks to show/add/display a phrase on screen — never for a general
+   emphasis request (that's a beat, above):
+   {"op": "create", "type": "moment", "sceneId": "...", "text": "...", "reason": "..."}
+   sceneId must be a real "presenter" scene id from the plan above. text must be a short phrase
+   taken directly from what is actually said in that scene — quote it closely, do not
+   paraphrase or invent it. The exact on-screen position/duration is computed automatically
+   from where the phrase is actually spoken within that scene — do not propose offset or
+   duration values yourself.
 
-You may NOT create any scene type other than a beat (no moments, images, titles, or full
-screens via this endpoint — those require different grounding this endpoint doesn't have).
+You may NOT create any scene type or moment treatment other than the two above (no side-text,
+side-image, side-code, side-diagram, images, titles, or full screens via this endpoint — those
+require different grounding this endpoint doesn't have).
 You may NOT change "id", "type", "videoId", "parentSceneId", or "assetId" on any scene —
 those identify what a scene fundamentally is, not something an edit instruction changes.
 
@@ -77,17 +88,19 @@ Schema:
   "operations": [
     {
       "op": "remove" or "update" or "create",
-      "sceneId": "string, must match an id in the scene plan above — required for remove/update, omit for create",
+      "sceneId": "string, must match an id in the scene plan above — required for remove/update and for create/moment, omit for create/beat",
       "fields": { "field": newValue, ... },
-      "type": "beat" — required for create, omit otherwise",
-      "wordIds": ["string", ...] — required for create, must be exact contiguous ids from the candidate words above",
-      "kind": "word-pop" | "underline" | "icon-accent" — required for create, omit otherwise",
-      "icon": "arrow" | "check" | "warning" | "gear" — only for create with kind icon-accent",
+      "type": "beat" | "moment" — required for create, omit otherwise",
+      "wordIds": ["string", ...] — required for create/beat, must be exact contiguous ids from the candidate words above",
+      "kind": "word-pop" | "underline" | "icon-accent" — required for create/beat, omit otherwise",
+      "icon": "arrow" | "check" | "warning" | "gear" — only for create/beat with kind icon-accent",
+      "text": "string — required for create/moment, a short phrase quoted from what is actually said in the target scene",
       "reason": "short explanation, referencing the scene's actual content"
     }
   ]
 }
 
 "fields" is only present for "update" operations. "type"/"wordIds"/"kind"/"icon" are only
-present for "create" operations. If the instruction doesn't match anything in the current plan,
+present for "create"/"beat" operations. "type"/"sceneId"/"text" are only present for
+"create"/"moment" operations. If the instruction doesn't match anything in the current plan,
 return {"operations": []}.

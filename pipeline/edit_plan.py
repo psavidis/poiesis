@@ -20,6 +20,13 @@ from generate_emphasis import (  # noqa: E402
     overlaps_existing_overlay,
     resolve_phrase,
 )
+from generate_moments import (  # noqa: E402
+    TRANSITION_FRAMES,
+    duration_for_treatment,
+    group_transcript_by_clip,
+    is_grounded,
+)
+from visual_placement import filter_segments_in_window  # noqa: E402
 from style import load_style  # noqa: E402
 
 
@@ -337,22 +344,130 @@ def resolve_beat_creation(op, scene_plan, candidates_by_word_id, scenes_by_id, s
     }
 
 
+def _bottom_callout_overlaps_existing_moment(scene_plan, scene_id, offset, duration):
+    """Mirrors generate_moments.py's dedupe_overlapping_windows — a moment's
+    on-screen window is its own span padded by TRANSITION_FRAMES on both
+    sides for the slide/fade animation, and two moments on the same parent
+    scene must not have overlapping padded windows. dedupe_overlapping_windows
+    itself is shaped for a batch of NEW proposals checked against each
+    other; this checks a single new window against scene_plan's
+    ALREADY-MERGED moment scenes instead, since that's what a chat-created
+    moment needs to avoid colliding with."""
+
+    start = offset - TRANSITION_FRAMES
+    end = offset + duration + TRANSITION_FRAMES
+
+    for scene in scene_plan["scenes"]:
+
+        if scene["type"] != "moment" or scene.get("parentSceneId") != scene_id:
+            continue
+
+        other_start = scene["offsetInParentFrames"] - TRANSITION_FRAMES
+        other_end = scene["offsetInParentFrames"] + scene["durationInFrames"] + TRANSITION_FRAMES
+
+        if start < other_end and end > other_start:
+            return True
+
+    return False
+
+
+def resolve_bottom_callout_creation(op, scene_plan, transcript, manifest, style=None):
+    """Resolves a single "create"/"moment" (bottom-callout only, see #53)
+    operation into a moment proposal ready to append to moments.json — or
+    None if it fails any grounding/placement check. Reuses
+    generate_moments.py's own is_grounded/duration_for_treatment
+    (identical discipline an AI-pipeline-proposed bottom-callout is held
+    to) rather than reimplementing text-fabrication checking or duration
+    math here."""
+
+    if style is None:
+        style = load_style()
+
+    scene_id = op.get("sceneId")
+    text = op.get("text")
+
+    if not scene_id or not text:
+        return None
+
+    scenes_by_id = {scene["id"]: scene for scene in scene_plan["scenes"]}
+    parent = scenes_by_id.get(scene_id)
+
+    if not parent or parent["type"] != "presenter":
+        return None
+
+    if not transcript or not manifest:
+        return None
+
+    clips = group_transcript_by_clip(transcript, manifest)
+    segments = clips.get(parent["videoId"], [])
+
+    window = {"sourceStartFrame": parent["sourceStartFrame"], "sourceEndFrame": parent["sourceEndFrame"]}
+    matching_segments = filter_segments_in_window(segments, window, scene_plan["fps"])
+
+    if not matching_segments:
+        return None
+
+    full_window_text = " ".join(segment["text"] for segment in matching_segments)
+
+    if not is_grounded(text, full_window_text):
+        return None
+
+    # Placement: the segment whose own text best matches the grounded
+    # phrase, so the callout appears near where it's actually said rather
+    # than always defaulting to the scene's start — falls back to the
+    # first segment if no individual one matches (e.g. the phrase spans a
+    # segment boundary), same "don't guess, use the closest real anchor"
+    # reasoning as resolve_phrase's own word-position math for beats.
+    best_segment = next(
+        (segment for segment in matching_segments if is_grounded(text, segment["text"])),
+        matching_segments[0],
+    )
+
+    offset = max(0, round(best_segment["start"] * scene_plan["fps"] - parent["sourceStartFrame"]))
+
+    duration = min(
+        duration_for_treatment("bottom-callout", style),
+        max(0, parent["durationInFrames"] - offset),
+    )
+
+    if duration <= 0:
+        return None
+
+    if _bottom_callout_overlaps_existing_moment(scene_plan, scene_id, offset, duration):
+        return None
+
+    return {
+        "sceneId": scene_id,
+        "videoId": parent["videoId"],
+        "treatment": "bottom-callout",
+        "text": text,
+        "presenterSide": None,
+        "offsetInParentFrames": offset,
+        "maxDurationInParentFrames": duration,
+        "reason": op.get("reason", ""),
+    }
+
+
 def edit_plan(
     scene_plan, instruction, llm: LLMClient, prompt_template: str,
     selected_scene_id=None, transcript=None, manifest=None,
 ):
     """transcript/manifest are optional — only pass them when both are
     available (an episode with no word-level transcript data can't ground
-    a beat creation, same as generate_emphasis.py's own pipeline stage).
-    When present, they enable the "create"/"beat" operation (#52): the LLM
-    can propose a new beat grounded against a real spoken word's exact
-    timestamp, resolved via resolve_beat_creation (imports/reuses
-    generate_emphasis.py's own word-matching, not a reimplementation).
-    Returns (updated_plan, valid_ops, rejected, created_beats) —
-    created_beats is a separate list (not part of updated_plan/valid_ops)
-    since a beat is written to emphasis.json + re-merged via
-    merge_beat_scenes, a different write path than remove/update's direct
-    scene_plan mutation; see resolve_beat_creation's own docstring."""
+    a beat/moment creation, same as generate_emphasis.py's own pipeline
+    stage). When present, they enable "create" operations: "beat" (#52,
+    resolve_beat_creation, reuses generate_emphasis.py's own word-matching)
+    and "moment"/bottom-callout (#53, resolve_bottom_callout_creation,
+    reuses generate_moments.py's own text-grounding). Neither is
+    reimplemented here.
+
+    Returns (updated_plan, valid_ops, rejected, created_beats,
+    created_moments) — both created_* lists are separate from
+    updated_plan/valid_ops since each is written to its own source file
+    (emphasis.json / moments.json) + re-merged, a different write path
+    than remove/update's direct scene_plan mutation; see
+    resolve_beat_creation/resolve_bottom_callout_creation's own
+    docstrings."""
 
     selected_scene_text = describe_selected_scene(scene_plan, selected_scene_id) or "(nothing selected)"
 
@@ -394,11 +509,12 @@ def edit_plan(
     valid_ops, rejected = validate_operations(scene_plan, operations)
 
     remove_update_ops = [op for op in valid_ops if op["op"] != "create"]
-    create_ops = [op for op in valid_ops if op["op"] == "create" and op.get("type") == "beat"]
+    create_beat_ops = [op for op in valid_ops if op["op"] == "create" and op.get("type") == "beat"]
+    create_moment_ops = [op for op in valid_ops if op["op"] == "create" and op.get("type") == "moment"]
 
     created_beats = []
 
-    for op in create_ops:
+    for op in create_beat_ops:
         beat = resolve_beat_creation(op, scene_plan, candidates_by_word_id, scenes_by_id)
 
         if beat is None:
@@ -407,10 +523,21 @@ def edit_plan(
 
         created_beats.append(beat)
 
+    created_moments = []
+
+    for op in create_moment_ops:
+        moment = resolve_bottom_callout_creation(op, scene_plan, transcript, manifest)
+
+        if moment is None:
+            rejected.append({"operation": op, "reason": "could not ground this moment against the target scene's transcript"})
+            continue
+
+        created_moments.append(moment)
+
     updated_plan = apply_operations(scene_plan, remove_update_ops)
     updated_plan = reflow_timeline(updated_plan)
 
-    return updated_plan, remove_update_ops, rejected, created_beats
+    return updated_plan, remove_update_ops, rejected, created_beats, created_moments
 
 
 def main():
@@ -437,7 +564,7 @@ def main():
     llm = LLMClient(PROJECT_ROOT / "config.json")
     prompt_template = load_prompt(PROMPT_FILE)
 
-    updated_plan, valid_ops, rejected, created_beats = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments = edit_plan(
         scene_plan, args.instruction, llm, prompt_template
     )
 
@@ -447,14 +574,19 @@ def main():
     for op in valid_ops:
         print(f"  {op['op']} {op['sceneId']}: {op.get('reason', '')}")
 
-    # created_beats is always empty from this CLI entry point — no
-    # transcript/manifest is loaded/passed here, so beat creation can't be
-    # grounded (see edit_plan's own docstring). ui/server.py's
+    # created_beats/created_moments are always empty from this CLI entry
+    # point — no transcript/manifest is loaded/passed here, so creation
+    # can't be grounded (see edit_plan's own docstring). ui/server.py's
     # edit_scene_plan is the only caller that currently passes both.
     if created_beats:
         print(f"\nCreated {len(created_beats)} beat(s):")
         for beat in created_beats:
             print(f"  {beat['kind']} on {beat['sceneId']}: \"{beat['text']}\"")
+
+    if created_moments:
+        print(f"\nCreated {len(created_moments)} moment(s):")
+        for moment in created_moments:
+            print(f"  {moment['treatment']} on {moment['sceneId']}: \"{moment['text']}\"")
 
     if rejected:
         print(f"\nRejected {len(rejected)} operation(s):")

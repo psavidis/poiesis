@@ -66,7 +66,7 @@ export function EditPlanChat({ episodePath, onApplied, selectedSceneId, scenePla
             setResult(editResult);
             setInstruction("");
 
-            if (editResult.applied.length > 0 || editResult.created.length > 0) {
+            if (editResult.applied.length > 0 || editResult.created.length > 0 || editResult.createdMoments.length > 0) {
                 onApplied();
             }
         } catch (e) {
@@ -116,11 +116,14 @@ export function EditPlanChat({ episodePath, onApplied, selectedSceneId, scenePla
 
             {result && (
                 <div style={styles.resultBox}>
-                    {result.applied.length === 0 && result.rejected.length === 0 && result.created.length === 0 && (
-                        <div style={styles.hint}>
-                            No matching scene found for that instruction — nothing changed.
-                        </div>
-                    )}
+                    {result.applied.length === 0 &&
+                        result.rejected.length === 0 &&
+                        result.created.length === 0 &&
+                        result.createdMoments.length === 0 && (
+                            <div style={styles.hint}>
+                                No matching scene found for that instruction — nothing changed.
+                            </div>
+                        )}
 
                     {result.applied.map((op, i) => (
                         <div key={`applied-${i}`} style={styles.appliedRow}>
@@ -133,11 +136,21 @@ export function EditPlanChat({ episodePath, onApplied, selectedSceneId, scenePla
                     ))}
 
                     {result.created.map((beat, i) => (
-                        <div key={`created-${i}`} style={styles.appliedRow}>
+                        <div key={`created-beat-${i}`} style={styles.appliedRow}>
                             <span style={styles.opBadge}>CREATED</span>
                             <span>
                                 {beat.kind} on {beat.sceneId}: "{beat.text}"
                                 {beat.reason ? ` — ${beat.reason}` : ""}
+                            </span>
+                        </div>
+                    ))}
+
+                    {result.createdMoments.map((moment, i) => (
+                        <div key={`created-moment-${i}`} style={styles.appliedRow}>
+                            <span style={styles.opBadge}>CREATED</span>
+                            <span>
+                                {moment.treatment} on {moment.sceneId}: "{moment.text}"
+                                {moment.reason ? ` — ${moment.reason}` : ""}
                             </span>
                         </div>
                     ))}
@@ -149,7 +162,7 @@ export function EditPlanChat({ episodePath, onApplied, selectedSceneId, scenePla
                         </div>
                     ))}
 
-                    {(result.applied.length > 0 || result.created.length > 0) && (
+                    {(result.applied.length > 0 || result.created.length > 0 || result.createdMoments.length > 0) && (
                         <div style={styles.hint}>
                             Applied to scene-plan.json — the next render will pick this up.
                         </div>

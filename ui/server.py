@@ -561,13 +561,15 @@ def edit_scene_plan(path: str, body: EditPlanRequest):
     episode_transcript_path = processing / "episode_transcript.json"
     manifest_path = processing / "manifest.json"
     beats_path = processing / "emphasis.json"
+    moments_path = processing / "moments.json"
 
-    # Beat creation (#52) needs real word-level transcript timing to
-    # ground itself — both optional here (unlike update_title_scenes,
-    # which 404s without them): an episode with no word-level transcript
-    # data can still use every other chat operation, it just can't create
-    # beats (see edit_plan()'s own docstring — this mirrors
-    # generate_emphasis.py's own graceful no-op for the same case).
+    # Beat/moment creation (#52/#53) needs real word-level transcript
+    # timing to ground itself — both optional here (unlike
+    # update_title_scenes, which 404s without them): an episode with no
+    # word-level transcript data can still use every other chat
+    # operation, it just can't create beats/moments (see edit_plan()'s
+    # own docstring — this mirrors generate_emphasis.py's own graceful
+    # no-op for the same case).
     episode_transcript = None
     manifest = None
 
@@ -586,7 +588,7 @@ def edit_scene_plan(path: str, body: EditPlanRequest):
             prompt_template = load_edit_plan_prompt(EDIT_PLAN_PROMPT_FILE)
 
             try:
-                updated_plan, valid_ops, rejected, created_beats = edit_plan(
+                updated_plan, valid_ops, rejected, created_beats, created_moments = edit_plan(
                     scene_plan, body.instruction, llm, prompt_template,
                     selected_scene_id=body.selectedSceneId,
                     transcript=episode_transcript, manifest=manifest,
@@ -598,10 +600,10 @@ def edit_scene_plan(path: str, body: EditPlanRequest):
             # call never reaches a write, so it shouldn't burn an
             # undo-history slot. moments.json/title_scenes.json/
             # emphasis.json are snapshotted unconditionally alongside
-            # scene-plan.json (not only when removed_ids/created_beats are
-            # non-empty below) since save_checkpoint already only
-            # snapshots files that actually exist — simpler than
-            # predicting exactly which of the three this particular
+            # scene-plan.json (not only when removed_ids/created_beats/
+            # created_moments are non-empty below) since save_checkpoint
+            # already only snapshots files that actually exist — simpler
+            # than predicting exactly which of the four this particular
             # instruction will end up touching.
             def do_write():
                 removed_ids = {op["sceneId"] for op in valid_ops if op["op"] == "remove"}
@@ -621,19 +623,34 @@ def edit_scene_plan(path: str, body: EditPlanRequest):
                     plan_to_write = merge_beat_scenes(plan_to_write, all_beats)
                     write_json_atomic(beats_path, {"beats": all_beats})
 
+                if created_moments:
+                    existing_moments = []
+                    if moments_path.exists():
+                        with moments_path.open("r", encoding="utf-8") as f:
+                            existing_moments = json.load(f).get("moments", [])
+
+                    all_moments = existing_moments + created_moments
+                    plan_to_write = merge_moment_scenes(plan_to_write, all_moments)
+                    write_json_atomic(moments_path, {"moments": all_moments})
+
                 write_json_atomic(scene_plan_path, plan_to_write)
                 regenerate_codegen(episode)
 
             wrap_with_checkpoint(
                 processing,
-                [scene_plan_path, processing / "moments.json", processing / "title_scenes.json", beats_path],
+                [scene_plan_path, moments_path, processing / "title_scenes.json", beats_path],
                 f"chat: {body.instruction}",
                 do_write,
             )
     except EpisodeBusyError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
-    return {"applied": valid_ops, "rejected": rejected, "created": created_beats}
+    return {
+        "applied": valid_ops,
+        "rejected": rejected,
+        "created": created_beats,
+        "createdMoments": created_moments,
+    }
 
 
 @app.post("/api/episode/undo")

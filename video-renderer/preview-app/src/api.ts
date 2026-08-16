@@ -209,10 +209,27 @@ export interface CreatedBeat {
     reason?: string;
 }
 
+// A bottom-callout moment created via chat (#53) — grounded against what's
+// actually said in the target presenter scene's own transcript, the same
+// discipline generate_moments.py's own bottom-callout proposals use.
+// Written to moments.json server-side, same shape as any other moment
+// proposal there.
+export interface CreatedMoment {
+    sceneId: string;
+    videoId: string;
+    treatment: "bottom-callout";
+    text: string;
+    presenterSide: null;
+    offsetInParentFrames: number;
+    maxDurationInParentFrames: number;
+    reason?: string;
+}
+
 export interface EditPlanResult {
     applied: EditPlanOperation[];
     rejected: { operation: EditPlanOperation; reason: string }[];
     created: CreatedBeat[];
+    createdMoments: CreatedMoment[];
 }
 
 // selectedSceneId (#51) — the scene currently selected in the editor when
