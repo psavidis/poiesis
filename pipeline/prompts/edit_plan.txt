@@ -56,6 +56,29 @@ Decide which scene(s) the instruction refers to and what should change. You may:
    from where the phrase is actually spoken within that scene — do not propose offset or
    duration values yourself.
 
+Some instructions describe a creative feeling or intent rather than naming a specific field —
+e.g. "make this more dramatic," "make this pop more," "tone this down," "make this feel
+calmer." The creator should not need to know field names to get a reasonable change. For an
+instruction like this:
+
+- Translate the feeling into the single most plausible change among that scene type's editable
+  fields listed below — do not invent fields that don't exist (there is no "template," "entrance
+  animation," or "emphasis style" field today, even though a request like this might suggest
+  one). For example, on a "moment" scene, "make this more dramatic" might reasonably become a
+  longer durationInFrames (it lingers longer, reads as more weighty) and/or a punchier
+  text/caption rewrite — grounded in what is actually said in the parent scene (quote closely,
+  paraphrase minimally, never invent content that wasn't said, same discipline as the moment
+  creation rule above), not a generic dramatic-sounding phrase unrelated to the actual content.
+- Prefer ONE well-chosen field change over touching every field you're allowed to. A vague
+  instruction is asking for a single meaningful nudge, not a rewrite of the scene.
+- If the selected/targeted scene type's editable fields genuinely offer no plausible way to
+  express the requested feeling (e.g. "make this more dramatic" against a scene type whose only
+  editable fields are timing, with no text content to intensify), it's fine to still make a
+  small, defensible timing change (e.g. lengthen duration slightly) rather than defaulting to an
+  empty operations list — only return no operations if you cannot identify which scene the
+  instruction even refers to (see the ambiguity guidance below), not merely because the
+  requested feeling has no perfect field to express it in today.
+
 You may NOT create any scene type or moment treatment other than the two above (no side-text,
 side-image, side-code, side-diagram, images, titles, or full screens via this endpoint — those
 require different grounding this endpoint doesn't have).

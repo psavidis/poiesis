@@ -1,8 +1,10 @@
 from edit_plan import (
+    PROMPT_FILE,
     apply_operations,
     describe_scene_transcripts,
     describe_selected_scene,
     edit_plan,
+    load_prompt,
     reflow_timeline,
     resolve_beat_creation,
     resolve_bottom_callout_creation,
@@ -50,6 +52,18 @@ def _moment(scene_id, parent_id, offset, duration, text):
         "id": scene_id,
         "type": "moment",
         "treatment": "bottom-callout",
+        "text": text,
+        "parentSceneId": parent_id,
+        "offsetInParentFrames": offset,
+        "durationInFrames": duration,
+    }
+
+
+def _beat(scene_id, parent_id, offset, duration, text, kind="word-pop"):
+    return {
+        "id": scene_id,
+        "type": "beat",
+        "kind": kind,
         "text": text,
         "parentSceneId": parent_id,
         "offsetInParentFrames": offset,
@@ -969,3 +983,125 @@ def test_edit_plan_degrades_scene_transcripts_without_transcript_or_manifest():
     edit_plan(scene_plan, "change the title", llm, PROMPT_TEMPLATE)
 
     assert "no transcript available" in llm.last_prompt
+
+
+# Vague/free-language selection-scoped instruction translation (#61, part
+# of #44) — the actual "what field should change" reasoning happens
+# entirely inside the real LLM prompt (pipeline/prompts/edit_plan.txt),
+# which these tests don't exercise (they use a fake, scripted LLM
+# response, same as every other edit_plan() test in this file). What's
+# tested here is the plumbing: a vague instruction's resulting operation
+# — however the model decided to answer it — validates and applies
+# through the same path a concrete instruction's operation would, and the
+# real prompt template actually contains the new guidance.
+def test_edit_plan_applies_a_vague_instructions_field_change_on_a_moment():
+    scene_plan = {
+        "scenes": [
+            _presenter("scene-001", 0, 300, 0),
+            _moment("scene-moment-0", "scene-001", 10, 60, "some text"),
+        ]
+    }
+
+    llm = _FakeLLMClient(
+        {
+            "operations": [
+                {
+                    "op": "update",
+                    "sceneId": "scene-moment-0",
+                    "fields": {"durationInFrames": 120},
+                    "reason": "lengthened so it lingers longer, reading as more dramatic",
+                }
+            ]
+        }
+    )
+
+    updated_plan, valid_ops, rejected, created_beats, created_moments = edit_plan(
+        scene_plan, "make this more dramatic", llm, PROMPT_TEMPLATE, selected_scene_id="scene-moment-0"
+    )
+
+    assert len(valid_ops) == 1
+    assert rejected == []
+
+    by_id = {s["id"]: s for s in updated_plan["scenes"]}
+    assert by_id["scene-moment-0"]["durationInFrames"] == 120
+
+
+def test_edit_plan_applies_a_vague_instructions_field_change_on_a_beat():
+    scene_plan = {
+        "scenes": [
+            _presenter("scene-001", 0, 300, 0),
+            _beat("scene-beat-0", "scene-001", 10, 30, "async"),
+        ]
+    }
+
+    llm = _FakeLLMClient(
+        {
+            "operations": [
+                {
+                    "op": "update",
+                    "sceneId": "scene-beat-0",
+                    "fields": {"durationInFrames": 45},
+                    "reason": "held slightly longer to pop harder",
+                }
+            ]
+        }
+    )
+
+    updated_plan, valid_ops, rejected, created_beats, created_moments = edit_plan(
+        scene_plan, "make this pop more", llm, PROMPT_TEMPLATE, selected_scene_id="scene-beat-0"
+    )
+
+    assert len(valid_ops) == 1
+    by_id = {s["id"]: s for s in updated_plan["scenes"]}
+    assert by_id["scene-beat-0"]["durationInFrames"] == 45
+
+
+def test_edit_plan_applies_a_vague_instructions_field_change_on_a_title():
+    scene_plan = {"scenes": [_title("scene-title-0", "Encapsulation", 0)]}
+
+    llm = _FakeLLMClient(
+        {
+            "operations": [
+                {
+                    "op": "update",
+                    "sceneId": "scene-title-0",
+                    "fields": {"text": "Why Encapsulation Matters"},
+                    "reason": "a punchier phrasing of the same topic, grounded in the original title",
+                }
+            ]
+        }
+    )
+
+    updated_plan, valid_ops, rejected, created_beats, created_moments = edit_plan(
+        scene_plan, "make this more dramatic", llm, PROMPT_TEMPLATE, selected_scene_id="scene-title-0"
+    )
+
+    assert len(valid_ops) == 1
+    by_id = {s["id"]: s for s in updated_plan["scenes"]}
+    assert by_id["scene-title-0"]["text"] == "Why Encapsulation Matters"
+
+
+def test_edit_plan_vague_instruction_with_no_plausible_field_returns_no_operations():
+    # A genuinely ungroundable vague instruction still degrades to an
+    # empty operations list, same as an unresolvable concrete instruction
+    # — the model (scripted here) chose not to guess.
+    scene_plan = {"scenes": [_title("scene-title-0", "Hello", 0)]}
+
+    llm = _FakeLLMClient({"operations": []})
+
+    updated_plan, valid_ops, rejected, created_beats, created_moments = edit_plan(
+        scene_plan, "make this more dramatic", llm, PROMPT_TEMPLATE
+    )
+
+    assert valid_ops == []
+    assert updated_plan["scenes"][0]["text"] == "Hello"
+
+
+def test_edit_plan_prompt_includes_vague_instruction_guidance():
+    # Loads the REAL prompt template (not the test's minimal PROMPT_TEMPLATE
+    # stand-in) to confirm the actual guidance added for #61 is present —
+    # a regression check that the file on disk still contains it.
+    real_template = load_prompt(PROMPT_FILE)
+
+    assert "dramatic" in real_template
+    assert "editable fields" in real_template.lower()
