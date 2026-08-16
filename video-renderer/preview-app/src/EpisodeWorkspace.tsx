@@ -47,6 +47,22 @@ export function EpisodeWorkspace() {
     // to read it too.
     const [includeCaptions, setIncludeCaptions] = useState(false);
 
+    // Bumped every time an edit-plan chat instruction is applied — passed
+    // to TitleEditorPanel/MomentEditorPanel so their own fetch effects
+    // re-run and pick up whatever the chat just changed. Without this, a
+    // chat edit (e.g. "remove the third title card") only updates the
+    // player (via reloadScenePlan below); those panels each fetch their
+    // own copy of title_scenes.json/moments.json once on mount and have no
+    // other reason to refetch, so they'd keep showing the (now stale)
+    // pre-chat data. A save from a stale panel afterward would silently
+    // resurrect whatever the chat just removed, since PUT
+    // /api/episode/title-scenes and .../moments both rebuild their target
+    // scenes from scratch out of whatever array the panel sends — see #29.
+    // StoryboardPanel isn't included: edit_plan.py only ever writes
+    // scene-plan.json, and chapter storyboard notes aren't scenes, so a
+    // chat instruction can never make storyboard.json stale.
+    const [refreshKey, setRefreshKey] = useState(0);
+
     // Which scene's editor panel is open, if any — set by clicking a
     // title/moment chip in ActiveSceneBar (see #27). Storyboard has no
     // click-to-open equivalent (chapter-keyed, not scene-anchored), so it
@@ -54,6 +70,16 @@ export function EpisodeWorkspace() {
     const [selectedEditor, setSelectedEditor] = useState<
         { kind: "title"; titleText: string } | { kind: "moment"; sceneId: string } | null
     >(null);
+
+    // Prefills EditPlanChat's instruction box when a scene chip is clicked
+    // (see #29) — the same click that opens a structured editor also
+    // primes the chat with "edit <that scene's id>: ", so both correction
+    // paths start from one gesture on one shared plan. prefillKey is
+    // bumped (not just prefillSceneId set) so clicking the same chip twice
+    // in a row still re-applies the prefill even if the box already holds
+    // that exact text.
+    const [prefillSceneId, setPrefillSceneId] = useState<string | undefined>(undefined);
+    const [prefillKey, setPrefillKey] = useState(0);
 
     const playerRef = useRef<PlayerRef>(null);
     const [currentFrame, setCurrentFrame] = useState(0);
@@ -110,12 +136,16 @@ export function EpisodeWorkspace() {
 
     // Re-fetches only scene-plan.json (not manifest/assets, which an edit-plan
     // instruction never changes) and merges it into the existing episodeProps
-    // so the player picks up an applied edit without a full page reload.
+    // so the player picks up an applied edit without a full page reload. Also
+    // bumps refreshKey so any open structured editor re-fetches its own
+    // source artifact — see refreshKey's own comment above for why this
+    // matters, not just for freshness.
     const reloadScenePlan = () => {
         if (!episodePath) return;
         getScenePlan(episodePath).then((scenePlan) => {
             setEpisodeProps((prev) => (prev ? { ...prev, scenePlan: scenePlan as ScenePlan } : prev));
         });
+        setRefreshKey((k) => k + 1);
     };
 
     // Client-side only — never written back to scene-plan.json. Lets you
@@ -271,6 +301,10 @@ export function EpisodeWorkspace() {
                     overlays={activeScenes.overlays}
                     onSelectTitle={(titleText) => setSelectedEditor({ kind: "title", titleText })}
                     onSelectMoment={(momentSceneId) => setSelectedEditor({ kind: "moment", sceneId: momentSceneId })}
+                    onSelectScene={(sceneId) => {
+                        setPrefillSceneId(sceneId);
+                        setPrefillKey((k) => k + 1);
+                    }}
                 />
             </div>
 
@@ -279,6 +313,7 @@ export function EpisodeWorkspace() {
                     <TitleEditorPanel
                         episodePath={episodePath}
                         titleText={selectedEditor.titleText}
+                        refreshKey={refreshKey}
                         onClose={() => setSelectedEditor(null)}
                     />
                 </div>
@@ -292,13 +327,19 @@ export function EpisodeWorkspace() {
                         scenePlan={episodeProps.scenePlan}
                         currentFrame={currentFrame}
                         onSeek={seekToAbsoluteFrame}
+                        refreshKey={refreshKey}
                         onClose={() => setSelectedEditor(null)}
                     />
                 </div>
             )}
 
             <div style={styles.playerWrap}>
-                <EditPlanChat episodePath={episodePath} onApplied={reloadScenePlan} />
+                <EditPlanChat
+                    episodePath={episodePath}
+                    onApplied={reloadScenePlan}
+                    prefillSceneId={prefillSceneId}
+                    prefillKey={prefillKey}
+                />
             </div>
         </div>
     );

@@ -5,23 +5,35 @@ interface Props {
     overlays: Scene[];
     // Clicking a title/moment chip opens that scene's editor (see #27) —
     // other scene types (presenter, caption, image, beat) have no editor
-    // yet, so their chips stay inert.
+    // yet, so their chips stay inert for these.
     onSelectTitle?: (titleText: string) => void;
     onSelectMoment?: (sceneId: string) => void;
+    // Fires alongside onSelectTitle/onSelectMoment on the SAME click (see
+    // #29) — prefills the edit-plan chat with this scene's real id, so one
+    // click both opens the structured editor AND primes the
+    // natural-language correction path for the same scene. Only wired for
+    // clickable (title/moment) chips, same restriction as above.
+    onSelectScene?: (sceneId: string) => void;
 }
 
 // Shows which scene(s) are on screen at the player's current frame, so a
 // scene id is always visible to type straight into an edit-plan
 // instruction ("shorten scene-caption-42") without having to open
 // scene-plan.json separately.
-export function ActiveSceneBar({ track, overlays, onSelectTitle, onSelectMoment }: Props) {
+export function ActiveSceneBar({ track, overlays, onSelectTitle, onSelectMoment, onSelectScene }: Props) {
     if (!track) {
         return <div style={styles.wrap}>No scene at this frame (gap in the timeline).</div>;
     }
 
     return (
         <div style={styles.wrap}>
-            <SceneChip scene={track} kind="track" onSelectTitle={onSelectTitle} onSelectMoment={onSelectMoment} />
+            <SceneChip
+                scene={track}
+                kind="track"
+                onSelectTitle={onSelectTitle}
+                onSelectMoment={onSelectMoment}
+                onSelectScene={onSelectScene}
+            />
             {overlays.map((s) => (
                 <SceneChip
                     key={s.id}
@@ -29,6 +41,7 @@ export function ActiveSceneBar({ track, overlays, onSelectTitle, onSelectMoment 
                     kind="overlay"
                     onSelectTitle={onSelectTitle}
                     onSelectMoment={onSelectMoment}
+                    onSelectScene={onSelectScene}
                 />
             ))}
         </div>
@@ -59,11 +72,13 @@ function SceneChip({
     kind,
     onSelectTitle,
     onSelectMoment,
+    onSelectScene,
 }: {
     scene: Scene;
     kind: "track" | "overlay";
     onSelectTitle?: (titleText: string) => void;
     onSelectMoment?: (sceneId: string) => void;
+    onSelectScene?: (sceneId: string) => void;
 }) {
     const clickable =
         (scene.type === "title" && onSelectTitle) || (scene.type === "moment" && onSelectMoment);
@@ -71,6 +86,7 @@ function SceneChip({
     const handleClick = () => {
         if (scene.type === "title" && onSelectTitle) onSelectTitle(scene.text);
         if (scene.type === "moment" && onSelectMoment) onSelectMoment(scene.id);
+        if (clickable && onSelectScene) onSelectScene(scene.id);
     };
 
     return (

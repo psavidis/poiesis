@@ -48,10 +48,14 @@ interface Props {
     scenePlan: ScenePlan;
     currentFrame: number;
     onSeek: (absoluteFrame: number) => void;
+    // Bumped by EpisodeWorkspace whenever an edit-plan chat instruction is
+    // applied, so this panel re-fetches instead of saving stale data back
+    // over a chat-applied removal — see EpisodeWorkspace's refreshKey.
+    refreshKey: number;
     onClose: () => void;
 }
 
-export function MomentEditorPanel({ episodePath, sceneId, scenePlan, currentFrame, onSeek, onClose }: Props) {
+export function MomentEditorPanel({ episodePath, sceneId, scenePlan, currentFrame, onSeek, refreshKey, onClose }: Props) {
     const [moments, setMoments] = useState<any[] | null>(null);
     const [assetOptions, setAssetOptions] = useState<Asset[]>([]);
     const [status, setStatus] = useState("");
@@ -70,7 +74,7 @@ export function MomentEditorPanel({ episodePath, sceneId, scenePlan, currentFram
         getAssets(episodePath)
             .then(setAssetOptions)
             .catch(() => setAssetOptions([]));
-    }, [episodePath]);
+    }, [episodePath, refreshKey]);
 
     if (!moments) return null;
 

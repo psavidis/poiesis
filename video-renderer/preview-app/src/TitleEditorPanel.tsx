@@ -11,17 +11,21 @@ import { getTitleScenes, saveTitleScenes, type TitleSceneProposal } from "./api"
 interface Props {
     episodePath: string;
     titleText: string;
+    // Bumped by EpisodeWorkspace whenever an edit-plan chat instruction is
+    // applied, so this panel re-fetches instead of saving stale data back
+    // over a chat-applied removal — see EpisodeWorkspace's refreshKey.
+    refreshKey: number;
     onClose: () => void;
 }
 
-export function TitleEditorPanel({ episodePath, titleText, onClose }: Props) {
+export function TitleEditorPanel({ episodePath, titleText, refreshKey, onClose }: Props) {
     const [titles, setTitles] = useState<TitleSceneProposal[] | null>(null);
     const [status, setStatus] = useState("");
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
         getTitleScenes(episodePath).then(setTitles).catch(() => setTitles([]));
-    }, [episodePath]);
+    }, [episodePath, refreshKey]);
 
     if (!titles) return null;
 

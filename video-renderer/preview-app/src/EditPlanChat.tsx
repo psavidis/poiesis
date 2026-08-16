@@ -1,9 +1,19 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { editPlan, type EditPlanResult } from "./api";
 
 interface Props {
     episodePath: string;
     onApplied: () => void;
+    // Set by EpisodeWorkspace when a scene chip in ActiveSceneBar is
+    // clicked (see #29) — prefills the instruction box with "edit
+    // scene-XXX: " so the two correction paths (structured editor,
+    // natural-language chat) both start from the same click on the same
+    // chip, instead of the chat requiring you to already know/type the
+    // scene id yourself. prefillKey changes on every click (even to the
+    // same scene) so re-clicking a chip re-applies the prefill even if the
+    // box currently holds that exact text already.
+    prefillSceneId?: string;
+    prefillKey?: number;
 }
 
 // The in-app natural-language edit loop: type an instruction, the backend
@@ -14,11 +24,18 @@ interface Props {
 // reloads the plan. Each submission is an independent request against
 // whatever the plan currently is — there's no multi-turn conversation state
 // kept here, matching the scope decided for the first version.
-export function EditPlanChat({ episodePath, onApplied }: Props) {
+export function EditPlanChat({ episodePath, onApplied, prefillSceneId, prefillKey }: Props) {
     const [instruction, setInstruction] = useState("");
     const [status, setStatus] = useState<"idle" | "submitting">("idle");
     const [result, setResult] = useState<EditPlanResult | null>(null);
     const [error, setError] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (prefillSceneId) {
+            setInstruction(`edit ${prefillSceneId}: `);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [prefillKey]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
