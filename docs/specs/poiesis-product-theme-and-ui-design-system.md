@@ -139,30 +139,31 @@ The application should not look like independently styled HTML elements assemble
 
 # 4. Primary Visual Direction
 
-The default theme should be based on a **light / white interface**.
+The default theme should be based on a **dark interface**.
 
-The visual language should work naturally with the Poiesis logo and branding.
+This direction was chosen deliberately over a light/white theme after building and live-reviewing both: for a video-editing tool specifically, a bright surrounding chrome competes with the footage for attention and is fatiguing across a long edit session. A dark surface keeps the (usually bright, high-contrast) footage as the eye's natural focal point instead, and eases sustained editing focus — the same reasoning most professional NLEs default to a dark theme for.
+
+The visual language should work naturally with the Poiesis logo and branding — not a generic dark-mode palette, but one derived from the logo's own colors (see section 5).
 
 The UI should generally feel:
 
 ```text id="z7tx5n"
-Light
+Dark
 Clean
-White
+Distinctive
 Soft
 Minimal
 Modern
 Technical
 ```
 
-White should be the dominant surface color.
+A navy-tinted near-black (not neutral slate-gray) should be the dominant surface color — tinted toward the logo's own navy rather than a generic dark-UI gray, so the base itself carries the brand instead of being an interchangeable dark backdrop.
 
 Supporting neutral tones should provide hierarchy without making the interface visually heavy.
 
 Avoid excessive use of:
 
 * Strong borders
-* Dark panels
 * Heavy shadows
 * Highly saturated colors
 * Random accent colors
@@ -650,27 +651,27 @@ Avoid fixing components independently before establishing the global system.
 
 # Acceptance Criteria
 
-* [ ] The primary editor workspace is centered.
-* [ ] The existing video-oriented editor structure is preserved.
-* [ ] The video remains the primary visual focus.
-* [ ] The timeline remains directly below/associated with the video.
-* [ ] A coherent light/white product theme is established.
-* [ ] The theme visually complements the Poiesis logo.
-* [ ] Shared design tokens exist for colors.
-* [ ] Shared design tokens exist for typography.
-* [ ] Shared design tokens exist for spacing.
-* [ ] Shared design tokens exist for border radius.
-* [ ] Shared design tokens exist for elevation/shadows.
-* [ ] Buttons use a consistent design system.
-* [ ] Inputs use a consistent design system.
-* [ ] Panels use a consistent design system.
-* [ ] Timeline elements use a consistent design system.
-* [ ] Selection states are visually consistent.
-* [ ] Hover/focus/active/disabled states are consistent.
-* [ ] The AI interface uses the same product theme.
-* [ ] Chapter, Beat, Moment, Code, Diagram, Image, and Full Screen UI elements belong to the same visual system.
-* [ ] The UI does not rely on arbitrary one-off styling where reusable design tokens/components are appropriate.
-* [ ] The application does not look like a generic SaaS dashboard.
-* [ ] The interface feels like a focused creative/video-production tool.
-* [ ] The design remains usable across common desktop viewport sizes.
-* [ ] Existing editor functionality is not broken by the visual redesign.
+* [x] The primary editor workspace is centered.
+* [x] The existing video-oriented editor structure is preserved.
+* [x] The video remains the primary visual focus.
+* [x] The timeline remains directly below/associated with the video.
+* [x] A coherent dark product theme is established (see section 4 — a deliberate revision from the original light/white direction, decided after live comparison of both).
+* [x] The theme visually complements the Poiesis logo.
+* [x] Shared design tokens exist for colors.
+* [x] Shared design tokens exist for typography.
+* [x] Shared design tokens exist for spacing.
+* [x] Shared design tokens exist for border radius.
+* [x] Shared design tokens exist for elevation/shadows.
+* [x] Buttons use a consistent design system.
+* [x] Inputs use a consistent design system.
+* [x] Panels use a consistent design system.
+* [x] Timeline elements use a consistent design system.
+* [x] Selection states are visually consistent.
+* [x] Hover/focus/active/disabled states are consistent.
+* [x] The AI interface uses the same product theme.
+* [x] Chapter, Beat, Moment, Code, Diagram, Image, and Full Screen UI elements belong to the same visual system.
+* [x] The UI does not rely on arbitrary one-off styling where reusable design tokens/components are appropriate.
+* [x] The application does not look like a generic SaaS dashboard.
+* [x] The interface feels like a focused creative/video-production tool.
+* [x] The design remains usable across common desktop viewport sizes.
+* [x] Existing editor functionality is not broken by the visual redesign.
