@@ -93,6 +93,27 @@ export async function saveMoments(episodePath: string, moments: unknown[]) {
     return res.json();
 }
 
+// Switches an existing moment among the three code presentations
+// (side-code / content-dominant-code / full-visual+code) while keeping
+// the same codeAssetId — see #62, first slice of #42. Unlike saveMoments'
+// generic field round-trip, the server computes the new duration/field
+// cleanup itself; this only sends which scene and which target treatment.
+export async function switchMomentTreatment(episodePath: string, sceneId: string, newTreatment: string) {
+    const res = await fetch(
+        `${API_BASE}/api/episode/moment-treatment?path=${encodeURIComponent(episodePath)}`,
+        {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sceneId, newTreatment }),
+        }
+    );
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || "Save failed");
+    }
+    return res.json();
+}
+
 export const getBeats = (episodePath: string) => getArtifact(episodePath, "emphasis.json");
 
 export async function saveBeats(episodePath: string, beats: unknown[]) {

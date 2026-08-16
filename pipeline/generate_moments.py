@@ -968,15 +968,98 @@ def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, pr
 # "windowId"/"reason" are bookkeeping the AI attaches to its own proposal,
 # never user-facing content — they're excluded so re-saving an untouched
 # moment (which still round-trips these fields verbatim) never produces a
-# spurious override. "sceneId"/"treatment"/"videoId" identify what the
-# moment fundamentally is, the same reasoning edit_plan.py's EDITABLE_FIELDS
+# spurious override. "sceneId"/"videoId" identify what the moment
+# fundamentally is, the same reasoning edit_plan.py's EDITABLE_FIELDS
 # already applies to other scene types — not something a "field edit"
-# changes.
+# changes. "treatment" WAS excluded for the same reason until #62 made one
+# narrow slice of it editable (switching among the three code
+# presentations, same codeAssetId) — see switch_code_treatment below; it's
+# included here so that switch is itself tracked as a human override,
+# same as any other field edit.
 OVERRIDABLE_MOMENT_FIELDS = {
     "offsetInParentFrames", "maxDurationInParentFrames", "presenterSide",
     "fullVisualKind", "text", "assetId", "codeAssetId", "diagram",
-    "comparison", "terms", "sideTextStyle", "caption",
+    "comparison", "terms", "sideTextStyle", "caption", "treatment",
 }
+
+# The three MomentTreatment values that all present the SAME content
+# (codeAssetId) at different prominence — see #62, first slice of #42
+# (content-type-vs-presentation epic). Confirmed structurally compatible
+# by reading Episode.tsx's layoutWindowsForScene, which already resolves
+# all three to compatible presenter-layout states (side-code→presenterSide
+# left/right, content-dominant-code→corner, full-visual→hidden). Any
+# treatment outside this set is out of scope for switch_code_treatment —
+# #42's broader "arbitrary content/presentation" model is a separate,
+# larger future change, not this one.
+CODE_TREATMENTS = {"side-code", "content-dominant-code", "full-visual"}
+
+
+def switch_code_treatment(moment, new_treatment, scene_plan, style=None):
+    """Switches an existing moment among the three code treatments
+    (CODE_TREATMENTS), keeping the same codeAssetId/caption — the content
+    — while recomputing everything that's actually presentation-specific:
+    duration (merge_moment_scenes trusts maxDurationInParentFrames
+    verbatim, it does NOT re-derive it from treatment — see that
+    function's own docstring — so a switch that didn't recompute this
+    would keep rendering at the OLD treatment's duration) and the
+    treatment-specific fields (presenterSide only applies to side-code;
+    fullVisualKind only applies to full-visual). Returns None (reject,
+    don't guess) if either the moment's current treatment or new_treatment
+    isn't one of the three — this function deliberately does not attempt
+    arbitrary treatment switching, only the one proven-compatible trio.
+
+    style is accepted (not just loaded internally) so a caller that
+    already has one loaded (e.g. a request handler serving many switches)
+    doesn't reload style.json per call — same pattern duration_for_treatment
+    itself already uses."""
+
+    if moment.get("treatment") not in CODE_TREATMENTS or new_treatment not in CODE_TREATMENTS:
+        return None
+
+    if style is None:
+        style = load_style()
+
+    switched = dict(moment)
+    switched["treatment"] = new_treatment
+
+    # Clear treatment-specific fields from the OLD treatment before
+    # setting the NEW treatment's own — codeAssetId/caption (the actual
+    # content) are deliberately left untouched below.
+    switched["presenterSide"] = None
+    switched["fullVisualKind"] = None
+
+    if new_treatment == "side-code":
+        # No side preference implied by a fresh switch — same default
+        # (None, meaning "let the layout choose") propose_moments itself
+        # uses when nothing more specific is known; the user can still
+        # change side afterward via whatever presenterSide editing already
+        # exists.
+        switched["presenterSide"] = moment.get("presenterSide")
+    elif new_treatment == "full-visual":
+        switched["fullVisualKind"] = "code"
+
+    # Same clamp propose_moments applies once at proposal time (see its
+    # own comment above): the new treatment's own fixed default, further
+    # capped by whatever room is actually left in the parent scene so a
+    # switch near a scene's end can't produce a duration that overflows
+    # it. Deliberately NOT clamped against the OLD duration — a switch to
+    # a treatment with a smaller default should actually shrink, not
+    # preserve an oversized leftover from the old treatment.
+    new_duration = duration_for_treatment(new_treatment, style)
+
+    parent = next((s for s in scene_plan["scenes"] if s["id"] == moment.get("sceneId")), None)
+
+    if parent:
+        room_for_content = (
+            parent["durationInFrames"]
+            - moment["offsetInParentFrames"]
+            - TRANSITION_FRAMES
+        )
+        new_duration = max(0, min(new_duration, room_for_content))
+
+    switched["maxDurationInParentFrames"] = new_duration
+
+    return switched
 
 
 def compute_overridden_fields(old_moment, new_moment):

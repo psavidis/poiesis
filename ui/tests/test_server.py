@@ -656,6 +656,144 @@ def test_update_moments_can_remove_scenes_by_omitting_them(tmp_path):
     assert overlay_scenes == []
 
 
+def _side_code_payload(**overrides):
+    payload = {
+        "windowId": "w4",
+        "sceneId": "scene-001",
+        "videoId": "001",
+        "offsetInParentFrames": 10,
+        "maxDurationInParentFrames": 60,
+        "treatment": "side-code",
+        "presenterSide": "left",
+        "codeAssetId": "kafka-consumer.java",
+        "caption": "the consumer loop",
+        "reason": "shows the implementation",
+    }
+    payload.update(overrides)
+    return payload
+
+
+# PUT /api/episode/moment-treatment (#62, first slice of #42) — switching
+# an existing moment among the three code presentations.
+def test_update_moment_treatment_switches_side_code_to_full_visual(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    client.put(
+        "/api/episode/moments",
+        params={"path": str(episode)},
+        json={"moments": [_side_code_payload()]},
+    )
+
+    response = client.put(
+        "/api/episode/moment-treatment",
+        params={"path": str(episode)},
+        json={"sceneId": "scene-moment-0", "newTreatment": "full-visual"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["moments"][0]["treatment"] == "full-visual"
+    assert body["moments"][0]["fullVisualKind"] == "code"
+    assert body["moments"][0]["presenterSide"] is None
+    # content preserved
+    assert body["moments"][0]["codeAssetId"] == "kafka-consumer.java"
+    assert body["moments"][0]["caption"] == "the consumer loop"
+
+    moments_on_disk = json.loads((episode / "processing" / "moments.json").read_text())
+    assert moments_on_disk["moments"][0]["treatment"] == "full-visual"
+
+    scene_plan_on_disk = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    moment_scene = next(s for s in scene_plan_on_disk["scenes"] if s["type"] == "moment")
+    assert moment_scene["treatment"] == "full-visual"
+
+
+def test_update_moment_treatment_records_provenance_override(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    client.put(
+        "/api/episode/moments",
+        params={"path": str(episode)},
+        json={"moments": [_side_code_payload()]},
+    )
+
+    response = client.put(
+        "/api/episode/moment-treatment",
+        params={"path": str(episode)},
+        json={"sceneId": "scene-moment-0", "newTreatment": "content-dominant-code"},
+    )
+
+    assert response.status_code == 200
+    overridden = response.json()["moments"][0]["overriddenFields"]
+    assert "treatment" in overridden
+    assert "maxDurationInParentFrames" in overridden
+
+
+def test_update_moment_treatment_rejects_target_outside_code_treatments(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    client.put(
+        "/api/episode/moments",
+        params={"path": str(episode)},
+        json={"moments": [_side_code_payload()]},
+    )
+
+    response = client.put(
+        "/api/episode/moment-treatment",
+        params={"path": str(episode)},
+        json={"sceneId": "scene-moment-0", "newTreatment": "bottom-callout"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_update_moment_treatment_rejects_source_outside_code_treatments(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    client.put(
+        "/api/episode/moments",
+        params={"path": str(episode)},
+        json={"moments": [_bottom_callout_payload()]},
+    )
+
+    response = client.put(
+        "/api/episode/moment-treatment",
+        params={"path": str(episode)},
+        json={"sceneId": "scene-moment-0", "newTreatment": "full-visual"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_update_moment_treatment_returns_404_for_unknown_moment_index(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    response = client.put(
+        "/api/episode/moment-treatment",
+        params={"path": str(episode)},
+        json={"sceneId": "scene-moment-99", "newTreatment": "full-visual"},
+    )
+
+    assert response.status_code == 404
+
+
+def test_update_moment_treatment_returns_422_for_non_moment_scene_id(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    response = client.put(
+        "/api/episode/moment-treatment",
+        params={"path": str(episode)},
+        json={"sceneId": "scene-001", "newTreatment": "full-visual"},
+    )
+
+    assert response.status_code == 422
+
+
 def _beat_payload(**overrides):
     payload = {
         "sceneId": "scene-001",

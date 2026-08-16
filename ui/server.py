@@ -23,7 +23,12 @@ from generate_title_scenes import (  # noqa: E402
     merge_title_scenes,
     write_json_atomic,
 )
-from generate_moments import compute_overridden_fields, merge_moment_scenes  # noqa: E402
+from generate_moments import (  # noqa: E402
+    CODE_TREATMENTS,
+    compute_overridden_fields,
+    merge_moment_scenes,
+    switch_code_treatment,
+)
 from generate_emphasis import (  # noqa: E402
     compute_overridden_fields as compute_overridden_beat_fields,
     merge_beat_scenes,
@@ -320,12 +325,20 @@ class MomentsUpdate(BaseModel):
 
 @app.put("/api/episode/moments")
 def update_moments(path: str, body: MomentsUpdate):
-    """Human edits to AI-proposed moment overlays: treatment, text/assetId,
-    timing (offsetInParentFrames), duration (maxDurationInParentFrames,
-    capped by merge_moment_scenes at duration_for_treatment(...)), and
-    presenterSide. Writes the edited proposals back to moments.json, then
-    deterministically re-merges them into scene-plan.json the same way
-    generate_moments.py does after the LLM call — no LLM involved here.
+    """Human edits to AI-proposed moment overlays: text/assetId, timing
+    (offsetInParentFrames), duration (maxDurationInParentFrames — trusted
+    verbatim by merge_moment_scenes, NOT re-derived from treatment; see
+    that function's own docstring), and presenterSide. This endpoint does
+    NOT compute a correct new duration for a treatment change — a payload
+    that changes "treatment" round-trips whatever maxDurationInParentFrames
+    the client already sent, same as any other field, with no
+    treatment-aware recompute. The one supported way to actually SWITCH a
+    moment's treatment with correct duration/field recomputation is PUT
+    /api/episode/moment-treatment (#62), scoped to the three code
+    treatments only. Writes the edited proposals back to moments.json,
+    then deterministically re-merges them into scene-plan.json the same
+    way generate_moments.py does after the LLM call — no LLM involved
+    here.
     merge_moment_scenes rebuilds all moment scenes from scratch each call
     (never touching their parent presenter scenes — the presenter's
     on-screen position is derived per-frame from each moment's own window
@@ -374,6 +387,106 @@ def update_moments(path: str, body: MomentsUpdate):
     try:
         with episode_lock(episode, wait=False):
             wrap_with_checkpoint(processing, [scene_plan_path, moments_path], "moment edit", do_write)
+    except EpisodeBusyError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    return {"moments": moments}
+
+
+class MomentTreatmentSwitch(BaseModel):
+    sceneId: str
+    newTreatment: str
+
+
+@app.put("/api/episode/moment-treatment")
+def update_moment_treatment(path: str, body: MomentTreatmentSwitch):
+    """Switches an existing moment among the three code presentations
+    (side-code / content-dominant-code / full-visual+code) without
+    replacing its content — see #62, first slice of #42 (content-type-vs-
+    presentation epic). Deliberately a separate endpoint from PUT
+    /api/episode/moments rather than folding this into that endpoint's
+    generic field round-trip: a treatment switch needs real server-side
+    computation (new duration via switch_code_treatment, which
+    merge_moment_scenes will NOT re-derive on its own — see that
+    function's own docstring), not just a value the client already knows
+    to send, the way every other field on that endpoint works today.
+
+    sceneId resolves to a moments.json array index the same way
+    MOMENT_SCENE_ID_PATTERN already does elsewhere in this file (moments
+    have no persistent id of their own — see #57's own docstrings for
+    why every moment endpoint in this file uses this same convention)."""
+
+    episode = resolve_episode(path)
+    processing = episode / "processing"
+
+    scene_plan_path = processing / "scene-plan.json"
+    moments_path = processing / "moments.json"
+
+    if not scene_plan_path.exists():
+        raise HTTPException(status_code=404, detail="scene-plan.json not found — run the pipeline first")
+
+    if body.newTreatment not in CODE_TREATMENTS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"newTreatment must be one of {sorted(CODE_TREATMENTS)} — arbitrary treatment "
+                   "switching is not supported yet (see #62)",
+        )
+
+    match = MOMENT_SCENE_ID_PATTERN.match(body.sceneId)
+
+    if not match:
+        raise HTTPException(status_code=422, detail=f"Not a moment scene id: {body.sceneId}")
+
+    index = int(match.group(1))
+
+    if not moments_path.exists():
+        raise HTTPException(status_code=404, detail="moments.json not found — run the pipeline first")
+
+    with moments_path.open("r", encoding="utf-8") as f:
+        moments = json.load(f).get("moments", [])
+
+    if index >= len(moments):
+        raise HTTPException(status_code=404, detail=f"No moment at index {index}")
+
+    old_moment = moments[index]
+
+    with scene_plan_path.open("r", encoding="utf-8") as f:
+        scene_plan_for_switch = json.load(f)
+
+    switched = switch_code_treatment(old_moment, body.newTreatment, scene_plan_for_switch)
+
+    if switched is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Moment's current treatment ({old_moment.get('treatment')!r}) is not one of "
+                   f"{sorted(CODE_TREATMENTS)} — this endpoint only switches among the three code "
+                   "presentations (see #62)",
+        )
+
+    # A deliberate human override, same as any other field edit (#57) — so
+    # a subsequent --force regeneration doesn't silently revert the user's
+    # chosen presentation. Both treatment and the recomputed duration
+    # count, since the duration change is a direct consequence of the
+    # switch, not independently AI-owned anymore.
+    switched["overriddenFields"] = sorted(
+        set(old_moment.get("overriddenFields", [])) | {"treatment", "maxDurationInParentFrames"}
+    )
+
+    moments[index] = switched
+
+    def do_write():
+        with scene_plan_path.open("r", encoding="utf-8") as f:
+            scene_plan = json.load(f)
+
+        scene_plan = merge_moment_scenes(scene_plan, moments)
+
+        write_json_atomic(moments_path, {"moments": moments})
+        write_json_atomic(scene_plan_path, scene_plan)
+        regenerate_codegen(episode)
+
+    try:
+        with episode_lock(episode, wait=False):
+            wrap_with_checkpoint(processing, [scene_plan_path, moments_path], "moment treatment switch", do_write)
     except EpisodeBusyError as e:
         raise HTTPException(status_code=409, detail=str(e))
 

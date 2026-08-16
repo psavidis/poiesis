@@ -1,11 +1,14 @@
 from episode_context import NO_CONTEXT_TEXT
 from generate_moments import (
+    CODE_TREATMENTS,
+    TRANSITION_FRAMES,
     build_candidate_windows,
     cap_full_visual_ratio,
     chapter_for_absolute_frame,
     chapters_from_scene_plan,
     compute_overridden_fields,
     dedupe_overlapping_windows,
+    duration_for_treatment,
     format_assets_for_prompt,
     format_storyboard_for_prompt,
     format_windows_for_prompt,
@@ -16,6 +19,7 @@ from generate_moments import (
     merge_moment_scenes,
     preserve_overridden_fields,
     propose_moments,
+    switch_code_treatment,
 )
 from style import load_style
 
@@ -1839,12 +1843,15 @@ def test_compute_overridden_fields_ignores_unchanged_fields():
 
 
 def test_compute_overridden_fields_ignores_non_editable_fields():
-    # sceneId/treatment identify what the moment fundamentally is (same
-    # reasoning edit_plan.py's EDITABLE_FIELDS already applies elsewhere)
-    # — not something a "field edit" changes, so a difference here must
-    # never appear in overriddenFields.
+    # sceneId identifies what the moment fundamentally is (same reasoning
+    # edit_plan.py's EDITABLE_FIELDS already applies elsewhere) — not
+    # something a "field edit" changes, so a difference here must never
+    # appear in overriddenFields. windowId/reason are AI bookkeeping, same
+    # reasoning. treatment WAS in this same "identity, not a field" bucket
+    # until #62 made switching among the three code treatments a real,
+    # trackable human edit — see its own OVERRIDABLE_MOMENT_FIELDS comment.
     old = {"sceneId": "scene-001", "treatment": "bottom-callout", "windowId": "w0", "reason": "AI reason"}
-    new = {"sceneId": "scene-002", "treatment": "side-text", "windowId": "w1", "reason": "different"}
+    new = {"sceneId": "scene-002", "treatment": "bottom-callout", "windowId": "w1", "reason": "different"}
 
     assert compute_overridden_fields(old, new) == []
 
@@ -1887,10 +1894,11 @@ def test_compute_overridden_fields_against_empty_old_moment():
     # A position beyond the old array's length (see update_moments in
     # ui/server.py) has nothing to diff against — every present field on
     # new counts as "changed from nothing", which is correct: there's no
-    # AI proposal at this position to have been overridden FROM.
+    # AI proposal at this position to have been overridden FROM. treatment
+    # is included here too (#62) since it's now an overridable field.
     new = {"sceneId": "scene-001", "treatment": "bottom-callout", "text": "brand new"}
 
-    assert compute_overridden_fields({}, new) == ["text"]
+    assert compute_overridden_fields({}, new) == ["text", "treatment"]
 
 
 def test_preserve_overridden_fields_copies_forward_a_manually_set_duration():
@@ -2621,3 +2629,102 @@ def test_cap_full_visual_ratio_also_caps_content_dominant_code():
     assert len(rare_kept) == 1
     assert rare_kept[0]["windowId"] == "w4"
     assert sum(1 for p in kept if p["treatment"] == "side-text") == 4
+
+
+# switch_code_treatment (#62, first slice of #42) — switching an existing
+# moment among the three code presentations while keeping the same
+# codeAssetId.
+def _code_moment(treatment, **overrides):
+    moment = {
+        "sceneId": "scene-001",
+        "treatment": treatment,
+        "offsetInParentFrames": 10,
+        "maxDurationInParentFrames": 60,
+        "codeAssetId": "kafka-consumer.java",
+        "caption": "the consumer loop",
+        "presenterSide": None,
+        "fullVisualKind": None,
+    }
+    moment.update(overrides)
+    return moment
+
+
+def _scene_plan_for_switch(parent_duration=600):
+    return {
+        "scenes": [
+            {"id": "scene-001", "type": "presenter", "durationInFrames": parent_duration},
+        ]
+    }
+
+
+def test_switch_code_treatment_preserves_content():
+    moment = _code_moment("side-code", presenterSide="left")
+
+    switched = switch_code_treatment(moment, "content-dominant-code", _scene_plan_for_switch())
+
+    assert switched["codeAssetId"] == "kafka-consumer.java"
+    assert switched["caption"] == "the consumer loop"
+    assert switched["treatment"] == "content-dominant-code"
+
+
+def test_switch_code_treatment_clears_presenter_side_when_leaving_side_code():
+    moment = _code_moment("side-code", presenterSide="right")
+
+    switched = switch_code_treatment(moment, "full-visual", _scene_plan_for_switch())
+
+    assert switched["presenterSide"] is None
+    assert switched["fullVisualKind"] == "code"
+
+
+def test_switch_code_treatment_clears_full_visual_kind_when_leaving_full_visual():
+    moment = _code_moment("full-visual", fullVisualKind="code")
+
+    switched = switch_code_treatment(moment, "content-dominant-code", _scene_plan_for_switch())
+
+    assert switched["fullVisualKind"] is None
+    assert switched["presenterSide"] is None
+
+
+def test_switch_code_treatment_recomputes_duration_to_new_treatments_default():
+    style = load_style()
+    moment = _code_moment("side-code", maxDurationInParentFrames=60)
+
+    switched = switch_code_treatment(moment, "full-visual", _scene_plan_for_switch(), style)
+
+    assert switched["maxDurationInParentFrames"] == duration_for_treatment("full-visual", style)
+
+
+def test_switch_code_treatment_clamps_duration_to_room_left_in_parent():
+    style = load_style()
+    # Parent scene barely has room for anything past the moment's offset.
+    scene_plan = _scene_plan_for_switch(parent_duration=40)
+    moment = _code_moment("side-code", offsetInParentFrames=10)
+
+    switched = switch_code_treatment(moment, "full-visual", scene_plan, style)
+
+    room = 40 - 10 - TRANSITION_FRAMES
+    assert switched["maxDurationInParentFrames"] == max(0, min(duration_for_treatment("full-visual", style), room))
+
+
+def test_switch_code_treatment_rejects_non_code_source_treatment():
+    moment = _code_moment("bottom-callout")
+
+    assert switch_code_treatment(moment, "full-visual", _scene_plan_for_switch()) is None
+
+
+def test_switch_code_treatment_rejects_non_code_target_treatment():
+    moment = _code_moment("side-code")
+
+    assert switch_code_treatment(moment, "bottom-callout", _scene_plan_for_switch()) is None
+
+
+def test_switch_code_treatment_all_six_directed_pairs_succeed():
+    for source in CODE_TREATMENTS:
+        for target in CODE_TREATMENTS:
+            if source == target:
+                continue
+            moment = _code_moment(source)
+            switched = switch_code_treatment(moment, target, _scene_plan_for_switch())
+            assert switched is not None
+            assert switched["treatment"] == target
+            assert switched["codeAssetId"] == "kafka-consumer.java"

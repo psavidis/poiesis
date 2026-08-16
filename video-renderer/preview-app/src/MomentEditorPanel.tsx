@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { PresenterScene, ScenePlan } from "video-renderer-src/episode/types";
-import { getAssets, getMoments, saveMoments } from "./api";
+import { getAssets, getMoments, saveMoments, switchMomentTreatment } from "./api";
 import { momentIndexFromSceneId, normalizeMoment } from "./momentDuration";
 import { OverlayStrip, type EditableOverlay } from "./OverlayStrip";
 
@@ -19,6 +19,18 @@ const VALID_TERM_LEVELS = ["muted", "primary", "accent"] as const;
 // side-code, just a different presenter layout, so it gets the same
 // treatment here.
 const NO_TEXT_EDIT_TREATMENTS = new Set(["side-diagram", "side-code", "comparison", "content-dominant-code"]);
+
+// The three treatments PUT /api/episode/moment-treatment (#62) knows how
+// to switch between — mirrors generate_moments.py's CODE_TREATMENTS.
+// Human-readable labels for the dropdown, since the raw treatment strings
+// don't read well as UI copy (matches the spec's own presentation-name
+// vocabulary — docs/specs/content-types-and-presentation-editing.md).
+const CODE_TREATMENT_LABELS: Record<string, string> = {
+    "side-code": "Split Screen",
+    "content-dominant-code": "Content Dominant",
+    "full-visual": "Full Screen",
+};
+const CODE_TREATMENTS = Object.keys(CODE_TREATMENT_LABELS);
 
 function summarizeMomentContent(m: any): string {
     if (m.treatment === "comparison" && m.comparison) {
@@ -52,6 +64,7 @@ export function MomentEditorPanel({ episodePath, sceneId, scenePlan, currentFram
     const [status, setStatus] = useState("");
     const [error, setError] = useState<string | null>(null);
     const [timingExpanded, setTimingExpanded] = useState(false);
+    const [switchingTreatment, setSwitchingTreatment] = useState(false);
 
     useEffect(() => {
         getMoments(episodePath)
@@ -125,6 +138,32 @@ export function MomentEditorPanel({ episodePath, sceneId, scenePlan, currentFram
         update({ terms });
     };
 
+    // A code presentation switch (#62) is only offered when the moment is
+    // ACTUALLY one of the three code treatments — "full-visual" also
+    // covers image/diagram/text fullVisualKinds, which this endpoint
+    // rejects, so it's gated on fullVisualKind === "code" specifically,
+    // not just the treatment string.
+    const isCodeMoment =
+        moment.treatment === "side-code" ||
+        moment.treatment === "content-dominant-code" ||
+        (moment.treatment === "full-visual" && moment.fullVisualKind === "code");
+
+    const switchTreatment = async (newTreatment: string) => {
+        if (newTreatment === moment.treatment) return;
+        setSwitchingTreatment(true);
+        setStatus("Switching presentation…");
+        setError(null);
+        try {
+            const result = await switchMomentTreatment(episodePath, sceneId, newTreatment);
+            setMoments((result.moments ?? moments).map(normalizeMoment));
+            setStatus("Presentation switched — the next render will pick this up.");
+        } catch (e) {
+            setError(String(e));
+        } finally {
+            setSwitchingTreatment(false);
+        }
+    };
+
     // "Adjust timing" used to be a separate scene-scoped page reached via a
     // new browser tab (?sceneId=... — see #28), which needed a
     // visibilitychange listener to notice edits made over there and
@@ -188,6 +227,24 @@ export function MomentEditorPanel({ episodePath, sceneId, scenePlan, currentFram
                     Close
                 </button>
             </div>
+
+            {isCodeMoment && (
+                <div style={styles.fieldRow}>
+                    <label style={styles.presentationLabel}>Presentation</label>
+                    <select
+                        value={moment.treatment}
+                        onChange={(e) => switchTreatment(e.target.value)}
+                        disabled={switchingTreatment}
+                        style={{ ...styles.input, flex: 1 }}
+                    >
+                        {CODE_TREATMENTS.map((t) => (
+                            <option key={t} value={t}>
+                                {CODE_TREATMENT_LABELS[t]}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+            )}
 
             {moment.treatment === "side-image" && (
                 <select
@@ -334,6 +391,11 @@ const styles: Record<string, React.CSSProperties> = {
         display: "flex",
         alignItems: "center",
         gap: 8,
+    },
+    presentationLabel: {
+        fontSize: 12,
+        color: "#9aa7b4",
+        flexShrink: 0,
     },
     resetButton: {
         flexShrink: 0,
