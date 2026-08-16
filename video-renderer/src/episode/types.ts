@@ -114,10 +114,12 @@ export interface ComparisonData {
 }
 
 // What fills the frame for a "full-visual" moment — reuses the same
-// underlying data (assetId/diagram/text) other treatments already carry
-// rather than introducing new fields, since this is a layout/prominence
-// choice (full-frame vs. a side panel), not a new kind of content.
-export type FullVisualKind = "image" | "diagram" | "text";
+// underlying data (assetId/diagram/text/codeAssetId) other treatments
+// already carry rather than introducing new fields, since this is a
+// layout/prominence choice (full-frame vs. a side panel), not a new kind
+// of content. "code" reuses codeAssetId, the same field side-code already
+// carries.
+export type FullVisualKind = "image" | "diagram" | "text" | "code";
 
 export interface DiagramNode {
     id: string;

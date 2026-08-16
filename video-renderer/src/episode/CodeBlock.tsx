@@ -43,15 +43,25 @@ async function getHighlighter(language: BundledLanguage) {
 type Token = { content: string; color?: string };
 
 const MAX_VISIBLE_LINES = 14;
+// More lines fit comfortably at full-frame scale than in the side panel —
+// mirrors DiagramBlock's full-mode sizing, which also gets a larger
+// type/box scale rather than just more of the same cramped layout.
+const MAX_VISIBLE_LINES_FULL = 22;
 
 export const CodeBlock = ({
                                path,
                                language,
                                presenterOnLeft,
+                               full = false,
                            }: {
     path: string;
     language: string;
     presenterOnLeft: boolean;
+    // Full-frame variant for "full-visual" moments (see
+    // FullVisualMoment.tsx) — same syntax highlighting, just centered at a
+    // larger scale instead of confined to the side panel a presenter is
+    // sharing the frame with. Mirrors DiagramBlock.tsx's own `full` prop.
+    full?: boolean;
 }) => {
     const frame = useCurrentFrame();
     const { durationInFrames } = useVideoConfig();
@@ -93,19 +103,23 @@ export const CodeBlock = ({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [path, language]);
 
+    const maxVisibleLines = full ? MAX_VISIBLE_LINES_FULL : MAX_VISIBLE_LINES;
+
     const visibleLines = useMemo(() => {
         if (!lines) return [];
-        return lines.slice(0, MAX_VISIBLE_LINES);
-    }, [lines]);
+        return lines.slice(0, maxVisibleLines);
+    }, [lines, maxVisibleLines]);
 
-    const isTruncated = (lines?.length ?? 0) > MAX_VISIBLE_LINES;
+    const isTruncated = (lines?.length ?? 0) > maxVisibleLines;
 
-    const translateX = interpolate(
-        frame,
-        [0, TRANSITION_FRAMES],
-        [presenterOnLeft ? -40 : 40, 0],
-        { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
-    );
+    const translateX = full
+        ? 0
+        : interpolate(
+              frame,
+              [0, TRANSITION_FRAMES],
+              [presenterOnLeft ? -40 : 40, 0],
+              { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+          );
 
     const opacity = interpolate(
         frame,
@@ -118,73 +132,85 @@ export const CodeBlock = ({
         return null;
     }
 
-    return (
-        <AbsoluteFill style={{ pointerEvents: "none" }}>
-            <div style={sideContentStyle(presenterOnLeft)}>
+    const fontSize = full ? 26 : 20;
+
+    const content = (
+        <div
+            style={{
+                opacity,
+                transform: `translateX(${translateX}px)`,
+                width: "100%",
+                maxHeight: "80%",
+                backgroundColor: brand.colors.overlayBackground,
+                border: `2px solid ${brand.colors.accent}`,
+                borderRadius: brand.radii.frame,
+                padding: full ? "28px 36px" : "20px 24px",
+                boxShadow: "0 12px 32px rgba(0, 0, 0, 0.45)",
+                overflow: "hidden",
+                position: "relative",
+            }}
+        >
+            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                {visibleLines.map((lineTokens, lineIndex) => (
+                    <div
+                        key={lineIndex}
+                        style={{
+                            display: "flex",
+                            fontFamily: "'SF Mono', 'Fira Code', Menlo, Consolas, monospace",
+                            fontSize,
+                            lineHeight: 1.6,
+                            whiteSpace: "pre",
+                        }}
+                    >
+                        <span
+                            style={{
+                                color: "rgba(255, 255, 255, 0.3)",
+                                width: 28,
+                                flexShrink: 0,
+                                textAlign: "right",
+                                marginRight: 12,
+                                userSelect: "none",
+                            }}
+                        >
+                            {lineIndex + 1}
+                        </span>
+                        <span>
+                            {lineTokens.map((token, tokenIndex) => (
+                                <span key={tokenIndex} style={{ color: token.color }}>
+                                    {token.content}
+                                </span>
+                            ))}
+                        </span>
+                    </div>
+                ))}
+            </div>
+
+            {isTruncated && (
                 <div
                     style={{
-                        opacity,
-                        transform: `translateX(${translateX}px)`,
-                        width: "100%",
-                        maxHeight: "80%",
-                        backgroundColor: brand.colors.overlayBackground,
-                        border: `2px solid ${brand.colors.accent}`,
-                        borderRadius: brand.radii.frame,
-                        padding: "20px 24px",
-                        boxShadow: "0 12px 32px rgba(0, 0, 0, 0.45)",
-                        overflow: "hidden",
-                        position: "relative",
+                        position: "absolute",
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        height: 48,
+                        background: `linear-gradient(transparent, ${brand.colors.overlayBackground})`,
                     }}
-                >
-                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                        {visibleLines.map((lineTokens, lineIndex) => (
-                            <div
-                                key={lineIndex}
-                                style={{
-                                    display: "flex",
-                                    fontFamily: "'SF Mono', 'Fira Code', Menlo, Consolas, monospace",
-                                    fontSize: 20,
-                                    lineHeight: 1.6,
-                                    whiteSpace: "pre",
-                                }}
-                            >
-                                <span
-                                    style={{
-                                        color: "rgba(255, 255, 255, 0.3)",
-                                        width: 28,
-                                        flexShrink: 0,
-                                        textAlign: "right",
-                                        marginRight: 12,
-                                        userSelect: "none",
-                                    }}
-                                >
-                                    {lineIndex + 1}
-                                </span>
-                                <span>
-                                    {lineTokens.map((token, tokenIndex) => (
-                                        <span key={tokenIndex} style={{ color: token.color }}>
-                                            {token.content}
-                                        </span>
-                                    ))}
-                                </span>
-                            </div>
-                        ))}
-                    </div>
+                />
+            )}
+        </div>
+    );
 
-                    {isTruncated && (
-                        <div
-                            style={{
-                                position: "absolute",
-                                bottom: 0,
-                                left: 0,
-                                right: 0,
-                                height: 48,
-                                background: `linear-gradient(transparent, ${brand.colors.overlayBackground})`,
-                            }}
-                        />
-                    )}
-                </div>
-            </div>
+    if (full) {
+        return (
+            <AbsoluteFill style={{ pointerEvents: "none", alignItems: "center", justifyContent: "center" }}>
+                <div style={{ width: "76%" }}>{content}</div>
+            </AbsoluteFill>
+        );
+    }
+
+    return (
+        <AbsoluteFill style={{ pointerEvents: "none" }}>
+            <div style={sideContentStyle(presenterOnLeft)}>{content}</div>
         </AbsoluteFill>
     );
 };

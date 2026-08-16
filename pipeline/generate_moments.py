@@ -767,6 +767,32 @@ def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, pr
                     }
                 )
 
+            elif full_visual_kind == "code":
+
+                code_asset_id = moment.get("codeAssetId")
+                code_asset = code_assets_by_id.get(code_asset_id)
+
+                if not code_asset:
+                    continue
+
+                claimed_windows.add(window_id)
+
+                proposals.append(
+                    {
+                        "windowId": window_id,
+                        "sceneId": candidate["sceneId"],
+                        "videoId": candidate["videoId"],
+                        "offsetInParentFrames": candidate["offsetInParentFrames"],
+                        "maxDurationInParentFrames": candidate["maxDurationInParentFrames"],
+                        "treatment": "full-visual",
+                        "fullVisualKind": "code",
+                        "codeAssetId": code_asset_id,
+                        "caption": code_asset["description"],
+                        "presenterSide": None,
+                        "reason": moment.get("reason", ""),
+                    }
+                )
+
             elif full_visual_kind == "diagram":
 
                 diagram = moment.get("diagram")

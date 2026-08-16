@@ -459,6 +459,8 @@ const MomentSequence = ({
                     assetPath={asset?.path}
                     caption={scene.caption}
                     diagram={scene.diagram}
+                    codePath={codeAsset?.path}
+                    codeLanguage={codeAsset?.language}
                 />
             );
         }

@@ -1460,6 +1460,67 @@ def test_propose_moments_rejects_full_visual_image_with_unknown_asset_id():
     assert proposals == []
 
 
+def test_propose_moments_accepts_valid_full_visual_code():
+    llm = _FakeLLMClient(
+        {
+            "moments": [
+                {
+                    "windowId": "w0",
+                    "treatment": "full-visual",
+                    "fullVisualKind": "code",
+                    "codeAssetId": "code-001",
+                    "reason": "the constructor needs to fill the screen to be legible",
+                }
+            ]
+        }
+    )
+
+    proposals = propose_moments(
+        _scene_plan_with_one_long_scene(),
+        _transcript_with_late_segment(),
+        _manifest_single_video(),
+        _no_assets(),
+        llm,
+        "{windows}{assets}{code_assets}",
+        code_assets=_one_code_asset(),
+    )
+
+    assert len(proposals) == 1
+    assert proposals[0]["treatment"] == "full-visual"
+    assert proposals[0]["fullVisualKind"] == "code"
+    assert proposals[0]["codeAssetId"] == "code-001"
+    assert proposals[0]["caption"] == "a constructor injection example"
+    assert proposals[0]["presenterSide"] is None
+
+
+def test_propose_moments_rejects_full_visual_code_with_unknown_code_asset_id():
+    llm = _FakeLLMClient(
+        {
+            "moments": [
+                {
+                    "windowId": "w0",
+                    "treatment": "full-visual",
+                    "fullVisualKind": "code",
+                    "codeAssetId": "code-999",
+                    "reason": "hallucinated",
+                }
+            ]
+        }
+    )
+
+    proposals = propose_moments(
+        _scene_plan_with_one_long_scene(),
+        _transcript_with_late_segment(),
+        _manifest_single_video(),
+        _no_assets(),
+        llm,
+        "{windows}{assets}{code_assets}",
+        code_assets=_one_code_asset(),
+    )
+
+    assert proposals == []
+
+
 def test_propose_moments_accepts_valid_full_visual_diagram():
     llm = _FakeLLMClient(
         {
@@ -2140,6 +2201,45 @@ def test_merge_moment_scenes_full_visual_stores_kind_and_text():
 
     assert moment_scene["fullVisualKind"] == "text"
     assert moment_scene["text"] == "a strong claim"
+    assert "presenterSide" not in moment_scene
+
+
+def test_merge_moment_scenes_full_visual_stores_code_asset_and_caption():
+    scene_plan = {
+        "fps": 30,
+        "scenes": [
+            {
+                "id": "scene-001",
+                "type": "presenter",
+                "videoId": "001",
+                "timelineStartFrame": 0,
+                "durationInFrames": 900,
+            },
+        ],
+    }
+
+    proposals = [
+        {
+            "windowId": "w0",
+            "sceneId": "scene-001",
+            "videoId": "001",
+            "offsetInParentFrames": 500,
+            "maxDurationInParentFrames": 300,
+            "treatment": "full-visual",
+            "fullVisualKind": "code",
+            "codeAssetId": "code-001",
+            "caption": "a constructor injection example",
+            "presenterSide": None,
+            "reason": "needs to be read closely",
+        }
+    ]
+
+    result = merge_moment_scenes(scene_plan, proposals)
+    moment_scene = next(s for s in result["scenes"] if s["type"] == "moment")
+
+    assert moment_scene["fullVisualKind"] == "code"
+    assert moment_scene["codeAssetId"] == "code-001"
+    assert moment_scene["caption"] == "a constructor injection example"
     assert "presenterSide" not in moment_scene
 
 

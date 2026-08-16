@@ -111,6 +111,11 @@ as if the window were the only thing that exists:
      the window — same grounding rules as "bottom-callout"/"side-text" —
      used when the moment's weight comes from the words themselves, not an
      image or diagram.
+   - "code": pick one of the available code snippets below — same strict
+     relevance requirement as "side-code", raised further: reserve this
+     for a snippet the viewer genuinely needs to read closely (not just
+     glance at), where showing the presenter alongside it would leave the
+     code too small to actually read.
 9. Nothing.
 
 Use these sparingly and deliberately — most windows should get NOTHING.
@@ -144,7 +149,9 @@ Code snippets must be selected by their exact codeAssetId from the list
 below, using each snippet's description to judge whether it matches what
 is actually being said in that specific window. Do not invent a
 codeAssetId. If no available snippet is a good fit for that window, do not
-propose "side-code" — use another treatment or nothing instead.
+propose "side-code" or a full-visual with fullVisualKind "code" — use
+another treatment or nothing instead. This same codeAssetId requirement
+applies to full-visual with fullVisualKind "code".
 
 Diagrams ("side-diagram") use this structure:
 - "nodes": a list of small boxes, each with a short "id" and a short
@@ -182,11 +189,11 @@ Schema:
     {
       "windowId": "string, must match a windowId below",
       "treatment": "bottom-callout" | "side-text" | "side-image" | "side-code" | "side-diagram" | "side-terms" | "comparison" | "full-visual",
-      "fullVisualKind": "image" | "diagram" | "text" — required for full-visual, omit otherwise",
+      "fullVisualKind": "image" | "diagram" | "text" | "code" — required for full-visual, omit otherwise",
       "text": "required for bottom-callout, side-text, and full-visual with fullVisualKind 'text'",
       "sideTextStyle": "quote" | "title" — optional for side-text, defaults to 'quote' if omitted, not used otherwise",
       "assetId": "required for side-image, and for full-visual with fullVisualKind 'image' — must match an assetId below",
-      "codeAssetId": "required for side-code, must match a codeAssetId below",
+      "codeAssetId": "required for side-code, and for full-visual with fullVisualKind 'code' — must match a codeAssetId below",
       "diagram": "required for side-diagram, and for full-visual with fullVisualKind 'diagram': { nodes: [{id, label}], edges: [{from, to, label?}], layout: 'horizontal'|'vertical' }",
       "terms": "required for side-terms: [{ text, level: 'muted'|'primary'|'accent' }], at most 4 terms",
       "comparison": "required for comparison: { left, right }, both short phrases",

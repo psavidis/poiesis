@@ -1,6 +1,7 @@
 import { AbsoluteFill, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
 
 import { BackgroundGrid, brand } from "./brand";
+import { CodeBlock } from "./CodeBlock";
 import { DiagramBlock } from "./DiagramBlock";
 import { EpisodeImage } from "./EpisodeImage";
 import { TRANSITION_FRAMES } from "./timing";
@@ -86,12 +87,16 @@ export const FullVisualMoment = ({
                                       assetPath,
                                       caption,
                                       diagram,
+                                      codePath,
+                                      codeLanguage,
                                   }: {
-    kind: "image" | "diagram" | "text";
+    kind: "image" | "diagram" | "text" | "code";
     text?: string;
     assetPath?: string;
     caption?: string;
     diagram?: DiagramData;
+    codePath?: string;
+    codeLanguage?: string;
 }) => {
     if (kind === "image" && assetPath) {
         return <EpisodeImage path={assetPath} caption={caption} display="full" />;
@@ -103,6 +108,10 @@ export const FullVisualMoment = ({
 
     if (kind === "text" && text) {
         return <FullText text={text} />;
+    }
+
+    if (kind === "code" && codePath && codeLanguage) {
+        return <CodeBlock path={codePath} language={codeLanguage} presenterOnLeft={false} full />;
     }
 
     return null;
