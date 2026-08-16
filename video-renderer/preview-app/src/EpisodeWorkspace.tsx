@@ -111,6 +111,33 @@ export function EpisodeWorkspace() {
         setInlineEditTarget({ kind: "moment", sceneId, treatment: scene.treatment });
     };
 
+    const openInlineBeatEditor = (sceneId: string, anchor: { x: number; y: number }) => {
+        setSelectedEditor(null);
+        setInlineEditAnchor(anchor);
+        setInlineEditTarget({ kind: "beat", sceneId });
+    };
+
+    // Patches the selected beat's text directly in local episodeProps state
+    // on every keystroke — playerProps (below) re-derives from this, so the
+    // Player picks up the edit immediately, before the real save commits
+    // (see #39). The real save (InlineTextEditor's onSaved) still calls
+    // reloadScenePlan afterward, which re-fetches from disk and overwrites
+    // this local patch with the authoritative value.
+    const applyLiveBeatText = (sceneId: string, text: string) => {
+        setEpisodeProps((prev) => {
+            if (!prev) return prev;
+            return {
+                ...prev,
+                scenePlan: {
+                    ...prev.scenePlan,
+                    scenes: prev.scenePlan.scenes.map((s) =>
+                        s.type === "beat" && s.id === sceneId ? { ...s, text } : s
+                    ),
+                },
+            };
+        });
+    };
+
     const playerRef = useRef<PlayerRef>(null);
     const [currentFrame, setCurrentFrame] = useState(0);
 
@@ -378,6 +405,7 @@ export function EpisodeWorkspace() {
                     onSeek={seekToAbsoluteFrame}
                     episodePath={episodePath}
                     onSaved={reloadScenePlan}
+                    onEditRequested={openInlineBeatEditor}
                 />
             </div>
 
@@ -388,6 +416,11 @@ export function EpisodeWorkspace() {
                     anchor={inlineEditAnchor}
                     onSaved={reloadScenePlan}
                     onClose={() => setInlineEditTarget(null)}
+                    onLiveChange={
+                        inlineEditTarget.kind === "beat"
+                            ? (text) => applyLiveBeatText(inlineEditTarget.sceneId, text)
+                            : undefined
+                    }
                 />
             )}
 

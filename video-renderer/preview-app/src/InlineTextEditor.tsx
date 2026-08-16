@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { getMoments, getTitleScenes, saveMoments, saveTitleScenes } from "./api";
+import { getBeats, getMoments, getTitleScenes, saveBeats, saveMoments, saveTitleScenes } from "./api";
 import { momentIndexFromSceneId } from "./momentDuration";
 
 // Moment treatments with a single plain-text field — matches
@@ -11,13 +11,22 @@ import { momentIndexFromSceneId } from "./momentDuration";
 const TEXT_ELIGIBLE_TREATMENTS = new Set(["bottom-callout", "side-text", "full-visual"]);
 
 export function isTextEligible(target: EditTarget): boolean {
-    if (target.kind === "title") return true;
+    if (target.kind === "title" || target.kind === "beat") return true;
     return TEXT_ELIGIBLE_TREATMENTS.has(target.treatment);
+}
+
+// scene-beat-{N} is exactly the array index of emphasis.json's beats list
+// (see generate_emphasis.py's merge_beat_scenes) — same exact-index
+// convention momentIndexFromSceneId already relies on for moments.
+function beatIndexFromSceneId(sceneId: string): number | null {
+    const match = /^scene-beat-(\d+)$/.exec(sceneId);
+    return match ? Number(match[1]) : null;
 }
 
 export type EditTarget =
     | { kind: "title"; titleText: string }
-    | { kind: "moment"; sceneId: string; treatment: string };
+    | { kind: "moment"; sceneId: string; treatment: string }
+    | { kind: "beat"; sceneId: string };
 
 interface Props {
     episodePath: string;
@@ -30,6 +39,11 @@ interface Props {
     anchor: { x: number; y: number };
     onSaved: () => void;
     onClose: () => void;
+    // Fires on every keystroke (before the real save) so the caller can
+    // patch its own local player state and show the edit in the preview
+    // immediately, not just after the real save commits (see #39). Optional
+    // — title/moment editing has no live-preview requirement, only beats do.
+    onLiveChange?: (text: string) => void;
 }
 
 // A lightweight, text-only sibling to TitleEditorPanel/MomentEditorPanel —
@@ -38,13 +52,18 @@ interface Props {
 // exact same deterministic endpoints those panels already use
 // (saveTitleScenes/saveMoments), so there's still only one write path per
 // artifact, just a faster way to reach it for the single-text-field case.
-export function InlineTextEditor({ episodePath, target, anchor, onSaved, onClose }: Props) {
+export function InlineTextEditor({ episodePath, target, anchor, onSaved, onClose, onLiveChange }: Props) {
     const [text, setText] = useState("");
     const [loaded, setLoaded] = useState(false);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const boxRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
+    // The text as originally loaded, so cancelling (Escape / outside-click)
+    // can revert onLiveChange's mid-typing preview patch back to what it
+    // was before this editor opened, not leave the player showing
+    // whatever was last typed but never actually saved.
+    const originalTextRef = useRef("");
 
     useEffect(() => {
         setLoaded(false);
@@ -54,7 +73,21 @@ export function InlineTextEditor({ episodePath, target, anchor, onSaved, onClose
             getTitleScenes(episodePath)
                 .then((titles) => {
                     const found = titles.find((t) => t.text === target.titleText);
-                    setText(found?.text ?? target.titleText);
+                    const initial = found?.text ?? target.titleText;
+                    setText(initial);
+                    originalTextRef.current = initial;
+                    setLoaded(true);
+                })
+                .catch((e) => setError(String(e)));
+        } else if (target.kind === "beat") {
+            const index = beatIndexFromSceneId(target.sceneId);
+            getBeats(episodePath)
+                .then((data) => {
+                    const beats = data.beats ?? [];
+                    const beat = index !== null ? beats[index] : undefined;
+                    const initial = beat?.text ?? "";
+                    setText(initial);
+                    originalTextRef.current = initial;
                     setLoaded(true);
                 })
                 .catch((e) => setError(String(e)));
@@ -64,7 +97,9 @@ export function InlineTextEditor({ episodePath, target, anchor, onSaved, onClose
                 .then((data) => {
                     const moments = data.moments ?? [];
                     const moment = index !== null ? moments[index] : undefined;
-                    setText(moment?.text ?? "");
+                    const initial = moment?.text ?? "";
+                    setText(initial);
+                    originalTextRef.current = initial;
                     setLoaded(true);
                 })
                 .catch((e) => setError(String(e)));
@@ -76,9 +111,18 @@ export function InlineTextEditor({ episodePath, target, anchor, onSaved, onClose
         if (loaded) inputRef.current?.focus();
     }, [loaded]);
 
+    // Reverts onLiveChange's mid-typing preview patch back to the
+    // originally-loaded text before closing — without this, cancelling
+    // (Escape or clicking away) would leave the player showing whatever
+    // was last typed even though nothing was actually saved.
+    const handleCancel = () => {
+        onLiveChange?.(originalTextRef.current);
+        onClose();
+    };
+
     useEffect(() => {
         const onOutsideClick = (e: MouseEvent) => {
-            if (boxRef.current && !boxRef.current.contains(e.target as Node)) onClose();
+            if (boxRef.current && !boxRef.current.contains(e.target as Node)) handleCancel();
         };
         document.addEventListener("mousedown", onOutsideClick);
         return () => document.removeEventListener("mousedown", onOutsideClick);
@@ -95,6 +139,15 @@ export function InlineTextEditor({ episodePath, target, anchor, onSaved, onClose
                 if (index === -1) throw new Error("This title no longer exists — it may have been edited elsewhere.");
                 const next = titles.map((t, i) => (i === index ? { ...t, text } : t));
                 await saveTitleScenes(episodePath, next);
+            } else if (target.kind === "beat") {
+                const index = beatIndexFromSceneId(target.sceneId);
+                const data = await getBeats(episodePath);
+                const beats = data.beats ?? [];
+                if (index === null || !beats[index]) {
+                    throw new Error("This beat no longer exists — it may have been edited elsewhere.");
+                }
+                const next = beats.map((b: any, i: number) => (i === index ? { ...b, text } : b));
+                await saveBeats(episodePath, next);
             } else {
                 const index = momentIndexFromSceneId(target.sceneId);
                 const data = await getMoments(episodePath);
@@ -119,7 +172,7 @@ export function InlineTextEditor({ episodePath, target, anchor, onSaved, onClose
             handleSave();
         } else if (e.key === "Escape") {
             e.preventDefault();
-            onClose();
+            handleCancel();
         }
     };
 
@@ -139,7 +192,10 @@ export function InlineTextEditor({ episodePath, target, anchor, onSaved, onClose
                         ref={inputRef}
                         type="text"
                         value={text}
-                        onChange={(e) => setText(e.target.value)}
+                        onChange={(e) => {
+                            setText(e.target.value);
+                            onLiveChange?.(e.target.value);
+                        }}
                         onKeyDown={handleKeyDown}
                         disabled={saving}
                         style={styles.input}
@@ -148,7 +204,7 @@ export function InlineTextEditor({ episodePath, target, anchor, onSaved, onClose
                         <button onClick={handleSave} disabled={saving} style={styles.saveBtn}>
                             {saving ? "Saving…" : "Save"}
                         </button>
-                        <button className="secondary small" onClick={onClose} disabled={saving}>
+                        <button className="secondary small" onClick={handleCancel} disabled={saving}>
                             Cancel
                         </button>
                     </div>

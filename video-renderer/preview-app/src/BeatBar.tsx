@@ -17,6 +17,11 @@ const ZOOM_STEP = 1.6;
 const MAX_ZOOM = 20;
 const MIN_ZOOM = 1;
 
+// Display-only label for the edit shortcut's hint text — the actual
+// keydown check accepts either metaKey or ctrlKey regardless of platform,
+// this only affects what the tooltip/hint says to press.
+const MOD_KEY_LABEL = navigator.platform.toLowerCase().includes("mac") ? "Cmd" : "Ctrl";
+
 interface Props {
     scenePlan: ScenePlan;
     totalFrames: number;
@@ -24,6 +29,12 @@ interface Props {
     onSeek: (absoluteFrame: number) => void;
     episodePath: string;
     onSaved: () => void;
+    // Fired only when the user presses the edit shortcut (Cmd+E / Ctrl+E)
+    // while a beat is selected — NOT on click. Selecting (clicking) a beat
+    // highlights it and seeks the player there, same as before, but no
+    // longer opens anything by itself; editing is a deliberate second step
+    // (see #39 — explicitly not "click opens edit mode").
+    onEditRequested: (sceneId: string, anchor: { x: number; y: number }) => void;
 }
 
 type DragState = {
@@ -63,7 +74,15 @@ type DragState = {
 // comfortable drag target. Saves live on drag-end, matching
 // OverlayStrip's moment-timing-adjustment interaction — no separate
 // "Save changes" step.
-export function BeatBar({ scenePlan, totalFrames, currentFrame, onSeek, episodePath, onSaved }: Props) {
+export function BeatBar({
+    scenePlan,
+    totalFrames,
+    currentFrame,
+    onSeek,
+    episodePath,
+    onSaved,
+    onEditRequested,
+}: Props) {
     const [zoom, setZoom] = useState(1);
     // Fraction of totalFrames where the visible window starts — 0 at full
     // zoom-out (whole episode), clamped so the window never extends past
@@ -76,6 +95,12 @@ export function BeatBar({ scenePlan, totalFrames, currentFrame, onSeek, episodeP
     const [dragBeatId, setDragBeatId] = useState<string | null>(null);
     const [liveDuration, setLiveDuration] = useState(0);
     const [saveError, setSaveError] = useState<string | null>(null);
+    // The clicked-but-not-editing beat — highlighted, and the target of
+    // Cmd+E/Ctrl+E (see #39). Click selects only; it never opens the
+    // editor by itself, matching the explicit "should not enter edit mode
+    // by default" requirement.
+    const [selectedBeatId, setSelectedBeatId] = useState<string | null>(null);
+    const selectedAnchorRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
     const trackRef = useRef<HTMLDivElement>(null);
     const dragRef = useRef<DragState | null>(null);
 
@@ -132,6 +157,11 @@ export function BeatBar({ scenePlan, totalFrames, currentFrame, onSeek, episodeP
 
     const onTrackClick = (e: React.MouseEvent<HTMLDivElement>) => {
         if (dragBeatId) return;
+        // A click that reaches here (not a segment — those stopPropagation)
+        // is on empty track space, so it deselects rather than leaving a
+        // stale selection highlighted after the user's attention has moved
+        // elsewhere on the timeline.
+        setSelectedBeatId(null);
         const rect = e.currentTarget.getBoundingClientRect();
         const pct = clamp((e.clientX - rect.left) / rect.width, 0, 1);
         onSeek(Math.round(windowStartFrame + pct * windowFrames));
@@ -188,6 +218,33 @@ export function BeatBar({ scenePlan, totalFrames, currentFrame, onSeek, episodeP
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [dragBeatId, windowFrames]);
+
+    // Cmd+E (Mac) / Ctrl+E (elsewhere) opens the text editor for whichever
+    // beat is currently selected — only while something IS selected, and
+    // only via this explicit shortcut, never on the click that selects it
+    // (see #39's explicit "should not enter edit mode by default").
+    // Global, not scoped to the track element, since a beat can be
+    // selected and then the shortcut pressed with focus anywhere on the
+    // page — the same way a text editor's own keyboard shortcuts aren't
+    // scoped to a specific DOM node either.
+    useEffect(() => {
+        if (!selectedBeatId) return;
+
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key.toLowerCase() !== "e" || !(e.metaKey || e.ctrlKey)) return;
+            // Don't hijack Cmd+E while focus is already inside a text
+            // field (e.g. the edit-plan chat box) — that keystroke belongs
+            // to whatever the user is actually typing into.
+            const target = e.target as HTMLElement | null;
+            if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+
+            e.preventDefault();
+            onEditRequested(selectedBeatId, selectedAnchorRef.current);
+        };
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [selectedBeatId, onEditRequested]);
 
     // Writes the FULL beats array back (matching saveMoments/
     // saveTitleScenes's own "rewrite the whole file" contract) — fetches
@@ -254,6 +311,8 @@ export function BeatBar({ scenePlan, totalFrames, currentFrame, onSeek, episodeP
                     const widthPct = Math.max(rawWidthPct, 0.4);
                     const maxDuration = Math.max(1, parent.durationInFrames - beat.offsetInParentFrames);
 
+                    const isSelected = selectedBeatId === beat.id;
+
                     return (
                         <div
                             key={beat.id}
@@ -261,11 +320,18 @@ export function BeatBar({ scenePlan, totalFrames, currentFrame, onSeek, episodeP
                                 ...styles.segment,
                                 left: `${leftPct}%`,
                                 width: `${widthPct}%`,
+                                ...(isSelected ? styles.segmentSelected : {}),
                             }}
-                            title={`${beat.id} — ${beat.kind}: ${beat.text} (${duration}f)`}
+                            title={
+                                isSelected
+                                    ? `${beat.id} — ${beat.kind}: ${beat.text} (${duration}f) — press ${MOD_KEY_LABEL}+E to edit`
+                                    : `${beat.id} — ${beat.kind}: ${beat.text} (${duration}f)`
+                            }
                             onClick={(e) => {
                                 if (isDragging) return;
                                 e.stopPropagation();
+                                selectedAnchorRef.current = { x: e.clientX, y: e.clientY };
+                                setSelectedBeatId(beat.id);
                                 onSeek(startFrame);
                             }}
                         >
@@ -288,8 +354,10 @@ export function BeatBar({ scenePlan, totalFrames, currentFrame, onSeek, episodeP
             {saveError && <div style={styles.error}>{saveError}</div>}
 
             <div style={styles.hint}>
-                {zoom > 1
-                    ? "Drag a beat's right edge to change how long it shows. Click anywhere to seek."
+                {selectedBeatId
+                    ? `Selected — press ${MOD_KEY_LABEL}+E to edit its text.`
+                    : zoom > 1
+                    ? "Click a beat to select it, drag its right edge to resize, or click anywhere to seek."
                     : "Zoom in to drag a beat's duration — at full-episode width a 2s beat is too thin to grab reliably."}
             </div>
         </div>
@@ -341,6 +409,15 @@ const styles: Record<string, React.CSSProperties> = {
         alignItems: "center",
         overflow: "visible",
         cursor: "pointer",
+        boxShadow: "0 0 0 0px transparent",
+    },
+    // Whole-segment highlight for the selected beat — a visibly thicker,
+    // brighter outline (not just a subtle tint) so "this beat is selected,
+    // press Cmd+E to edit" reads as a distinct state from the normal
+    // resting/hover appearance.
+    segmentSelected: {
+        boxShadow: "0 0 0 2px #ffffff, 0 0 8px rgba(255,255,255,0.5)",
+        zIndex: 1,
     },
     segmentLabel: {
         padding: "0 5px",
