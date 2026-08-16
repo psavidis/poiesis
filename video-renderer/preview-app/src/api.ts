@@ -195,9 +195,24 @@ export interface EditPlanOperation {
     reason?: string;
 }
 
+// A beat created via chat (#52) — grounded against real word-level
+// transcript timing the same way an AI-pipeline-proposed beat is, not a
+// free-floating LLM-guessed offset. Written to emphasis.json server-side,
+// same shape as any other beat proposal there.
+export interface CreatedBeat {
+    sceneId: string;
+    kind: "word-pop" | "underline" | "icon-accent";
+    text: string;
+    icon: string | null;
+    offsetInParentFrames: number;
+    durationInFrames: number;
+    reason?: string;
+}
+
 export interface EditPlanResult {
     applied: EditPlanOperation[];
     rejected: { operation: EditPlanOperation; reason: string }[];
+    created: CreatedBeat[];
 }
 
 // selectedSceneId (#51) — the scene currently selected in the editor when

@@ -11,6 +11,16 @@ PROJECT_ROOT = PIPELINE_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from llm.client import LLMClient  # noqa: E402
+from generate_emphasis import (  # noqa: E402
+    MAX_BEAT_WORDS,
+    VALID_ICONS,
+    VALID_KINDS,
+    build_candidate_words,
+    format_words_for_prompt,
+    overlaps_existing_overlay,
+    resolve_phrase,
+)
+from style import load_style  # noqa: E402
 
 
 PROMPT_FILE = PIPELINE_DIR / "prompts" / "edit_plan.txt"
@@ -83,7 +93,14 @@ def validate_operations(scene_plan, operations):
     field outside that scene type's editable allowlist — the LLM's output is
     never trusted blindly, same discipline generate_moments.py already
     applies to moment proposals. Returns (valid_ops, rejected) where
-    rejected is a list of {operation, reason} for transparency."""
+    rejected is a list of {operation, reason} for transparency.
+
+    "create" is handled separately from remove/update below — it doesn't
+    reference an EXISTING sceneId (there's nothing to look up yet), and its
+    own grounding validation (real, contiguous transcript words; no overlay
+    collision) is a different concern from EDITABLE_FIELDS's per-type field
+    allowlist, so it's delegated to resolve_beat_creation (see below)
+    rather than folded into this function's scene-lookup-first shape."""
 
     scenes_by_id = {scene["id"]: scene for scene in scene_plan["scenes"]}
 
@@ -91,6 +108,10 @@ def validate_operations(scene_plan, operations):
     rejected = []
 
     for op in operations:
+
+        if op.get("op") == "create":
+            valid_ops.append(op)
+            continue
 
         scene_id = op.get("sceneId")
         scene = scenes_by_id.get(scene_id)
@@ -131,11 +152,22 @@ def validate_operations(scene_plan, operations):
 
 
 def apply_operations(scene_plan, operations):
-    """Applies already-validated operations to the scene plan. Removing a
-    scene doesn't cascade to overlays anchored to it (parentSceneId pointing
-    at a now-missing scene) — Episode.tsx already no-ops an overlay whose
-    parent lookup fails, and qa_check.py's overlay-bounds check will flag the
-    dangling reference so it's visible rather than silently cleaned up."""
+    """Applies already-validated remove/update operations to the scene
+    plan. "create" operations are deliberately NOT applied here — a
+    created beat is resolved (resolve_beat_creation) and written to
+    emphasis.json + re-merged via merge_beat_scenes, the same two-step
+    write PUT /api/episode/beats already performs, not a direct
+    scene_plan["scenes"] mutation the way remove/update are. Keeping that
+    write path out of this function preserves apply_operations' existing
+    scope (pure scene-plan transform, no other file's concerns) — see
+    resolve_beat_creation's own docstring for where "create" actually gets
+    handled.
+
+    Removing a scene doesn't cascade to overlays anchored to it
+    (parentSceneId pointing at a now-missing scene) — Episode.tsx already
+    no-ops an overlay whose parent lookup fails, and qa_check.py's
+    overlay-bounds check will flag the dangling reference so it's visible
+    rather than silently cleaned up."""
 
     scenes_by_id = {scene["id"]: scene for scene in scene_plan["scenes"]}
 
@@ -144,6 +176,10 @@ def apply_operations(scene_plan, operations):
     updates_by_id = {
         op["sceneId"]: op["fields"] for op in operations if op["op"] == "update"
     }
+
+    # "create" ops pass through this function untouched (see docstring) —
+    # explicitly excluded from remove_ids/updates_by_id above via the
+    # op-type filters already in place, nothing further needed here.
 
     new_scenes = []
 
@@ -239,9 +275,98 @@ def describe_selected_scene(scene_plan, selected_scene_id):
     return "\n".join(lines)
 
 
-def edit_plan(scene_plan, instruction, llm: LLMClient, prompt_template: str, selected_scene_id=None):
+def resolve_beat_creation(op, scene_plan, candidates_by_word_id, scenes_by_id, style=None):
+    """Resolves a single "create"/"beat" operation into a beat proposal
+    ready to append to emphasis.json — or None if it fails any of the same
+    grounding checks generate_emphasis.py's own automated pipeline stage
+    already applies to AI-proposed beats (imported and reused here, not
+    reimplemented, so a chat-created beat is held to the identical
+    standard: real/contiguous transcript words, a recognized kind/icon, a
+    short phrase, no collision with an existing moment/image, and enough
+    room in the parent scene). A chat instruction creating a beat is a
+    single request, not a batch of proposals, so this only does Pass 1's
+    per-candidate checks from propose_emphasis — the minimum-spacing-
+    between-beats Pass 2 there is about multiple simultaneous NEW proposals
+    competing with each other, which doesn't apply to inserting one beat
+    among already-committed ones."""
+
+    if style is None:
+        style = load_style()
+
+    kind = op.get("kind")
+
+    if kind not in VALID_KINDS:
+        return None
+
+    icon = op.get("icon")
+
+    if kind == "icon-accent":
+        if icon not in VALID_ICONS:
+            return None
+    else:
+        icon = None
+
+    phrase = resolve_phrase(op.get("wordIds"), candidates_by_word_id)
+
+    if phrase is None:
+        return None
+
+    if len(phrase["text"].split()) > MAX_BEAT_WORDS:
+        return None
+
+    scene_id = phrase["sceneId"]
+    offset = phrase["offsetInParentFrames"]
+    duration = style["emphasis"]["defaultDurationFrames"]
+
+    if overlaps_existing_overlay(scene_id, offset, duration, scene_plan):
+        return None
+
+    parent = scenes_by_id.get(scene_id)
+
+    if not parent or offset + duration > parent["durationInFrames"]:
+        return None
+
+    return {
+        "sceneId": scene_id,
+        "kind": kind,
+        "text": phrase["text"],
+        "icon": icon,
+        "offsetInParentFrames": offset,
+        "durationInFrames": duration,
+        "reason": op.get("reason", ""),
+    }
+
+
+def edit_plan(
+    scene_plan, instruction, llm: LLMClient, prompt_template: str,
+    selected_scene_id=None, transcript=None, manifest=None,
+):
+    """transcript/manifest are optional — only pass them when both are
+    available (an episode with no word-level transcript data can't ground
+    a beat creation, same as generate_emphasis.py's own pipeline stage).
+    When present, they enable the "create"/"beat" operation (#52): the LLM
+    can propose a new beat grounded against a real spoken word's exact
+    timestamp, resolved via resolve_beat_creation (imports/reuses
+    generate_emphasis.py's own word-matching, not a reimplementation).
+    Returns (updated_plan, valid_ops, rejected, created_beats) —
+    created_beats is a separate list (not part of updated_plan/valid_ops)
+    since a beat is written to emphasis.json + re-merged via
+    merge_beat_scenes, a different write path than remove/update's direct
+    scene_plan mutation; see resolve_beat_creation's own docstring."""
 
     selected_scene_text = describe_selected_scene(scene_plan, selected_scene_id) or "(nothing selected)"
+
+    candidates_by_word_id, scenes_by_id = (
+        build_candidate_words(scene_plan, transcript, manifest)
+        if transcript and manifest
+        else ({}, {})
+    )
+
+    candidate_words_text = (
+        format_words_for_prompt(candidates_by_word_id)
+        if candidates_by_word_id
+        else "(no word-level transcript data available — beat creation is not possible for this episode)"
+    )
 
     # Substitute the fixed, non-user-authored blocks first, then the
     # free-text instruction last — it's the one value that could plausibly
@@ -257,6 +382,8 @@ def edit_plan(scene_plan, instruction, llm: LLMClient, prompt_template: str, sel
     ).replace(
         "{selected_scene}", selected_scene_text
     ).replace(
+        "{candidate_words}", candidate_words_text
+    ).replace(
         "{instruction}", instruction
     )
 
@@ -266,10 +393,24 @@ def edit_plan(scene_plan, instruction, llm: LLMClient, prompt_template: str, sel
 
     valid_ops, rejected = validate_operations(scene_plan, operations)
 
-    updated_plan = apply_operations(scene_plan, valid_ops)
+    remove_update_ops = [op for op in valid_ops if op["op"] != "create"]
+    create_ops = [op for op in valid_ops if op["op"] == "create" and op.get("type") == "beat"]
+
+    created_beats = []
+
+    for op in create_ops:
+        beat = resolve_beat_creation(op, scene_plan, candidates_by_word_id, scenes_by_id)
+
+        if beat is None:
+            rejected.append({"operation": op, "reason": "could not ground this beat against real transcript words"})
+            continue
+
+        created_beats.append(beat)
+
+    updated_plan = apply_operations(scene_plan, remove_update_ops)
     updated_plan = reflow_timeline(updated_plan)
 
-    return updated_plan, valid_ops, rejected
+    return updated_plan, remove_update_ops, rejected, created_beats
 
 
 def main():
@@ -296,7 +437,7 @@ def main():
     llm = LLMClient(PROJECT_ROOT / "config.json")
     prompt_template = load_prompt(PROMPT_FILE)
 
-    updated_plan, valid_ops, rejected = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats = edit_plan(
         scene_plan, args.instruction, llm, prompt_template
     )
 
@@ -305,6 +446,15 @@ def main():
     print(f"Applied {len(valid_ops)} operation(s):")
     for op in valid_ops:
         print(f"  {op['op']} {op['sceneId']}: {op.get('reason', '')}")
+
+    # created_beats is always empty from this CLI entry point — no
+    # transcript/manifest is loaded/passed here, so beat creation can't be
+    # grounded (see edit_plan's own docstring). ui/server.py's
+    # edit_scene_plan is the only caller that currently passes both.
+    if created_beats:
+        print(f"\nCreated {len(created_beats)} beat(s):")
+        for beat in created_beats:
+            print(f"  {beat['kind']} on {beat['sceneId']}: \"{beat['text']}\"")
 
     if rejected:
         print(f"\nRejected {len(rejected)} operation(s):")

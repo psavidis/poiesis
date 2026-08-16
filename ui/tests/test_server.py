@@ -682,6 +682,7 @@ def test_edit_scene_plan_applies_validated_operations(tmp_path):
         {"scenes": [{"id": "scene-001", "type": "presenter", "videoId": "001", "text": "unused"}]},
         [{"op": "remove", "sceneId": "scene-002", "reason": "instruction said to remove it"}],
         [],
+        [],
     )
 
     with patch("server.edit_plan", return_value=fake_result) as mock_edit_plan:
@@ -702,7 +703,7 @@ def test_edit_scene_plan_passes_selected_scene_id_through_to_edit_plan(tmp_path)
     episode = _make_episode(tmp_path)
     _make_scene_plan(episode)
 
-    fake_result = ({"scenes": []}, [], [])
+    fake_result = ({"scenes": []}, [], [], [])
 
     with patch("server.edit_plan", return_value=fake_result) as mock_edit_plan:
         response = client.post(
@@ -720,7 +721,7 @@ def test_edit_scene_plan_defaults_selected_scene_id_to_none(tmp_path):
     episode = _make_episode(tmp_path)
     _make_scene_plan(episode)
 
-    fake_result = ({"scenes": []}, [], [])
+    fake_result = ({"scenes": []}, [], [], [])
 
     with patch("server.edit_plan", return_value=fake_result) as mock_edit_plan:
         response = client.post(
@@ -780,6 +781,7 @@ def test_edit_scene_plan_removes_moment_from_moments_json(tmp_path):
         },
         [{"op": "remove", "sceneId": "scene-moment-0", "reason": "instruction said to remove it"}],
         [],
+        [],
     )
 
     with patch("server.edit_plan", return_value=fake_result):
@@ -811,6 +813,173 @@ def test_edit_scene_plan_removes_moment_from_moments_json(tmp_path):
     assert moment_scenes[0]["treatment"] == "side-image"
 
 
+def _make_word_level_transcript_fixtures(episode, video_ids=("001",)):
+    """Like _make_title_scene_fixtures, but with word-level timing data —
+    needed for #52's beat-creation grounding (build_candidate_words reads
+    each segment's "words" array)."""
+    manifest = {"videos": [{"id": vid, "filename": f"{vid}.mp4"} for vid in video_ids]}
+    (episode / "processing" / "manifest.json").write_text(json.dumps(manifest))
+
+    episode_transcript = {
+        "segments": [
+            {
+                "source": f"{vid}.mp4",
+                "start": 0.0,
+                "end": 2.0,
+                "text": "dependency injection matters",
+                "words": [
+                    {"word": "dependency", "start": 0.0, "end": 0.5},
+                    {"word": "injection", "start": 0.5, "end": 1.0},
+                    {"word": "matters", "start": 1.0, "end": 1.5},
+                ],
+            }
+            for vid in video_ids
+        ]
+    }
+    (episode / "processing" / "episode_transcript.json").write_text(json.dumps(episode_transcript))
+
+
+def test_edit_scene_plan_creates_a_beat_in_emphasis_json_and_scene_plan(tmp_path):
+    episode = _make_episode(tmp_path)
+    scene_plan_before = _make_scene_plan(episode, video_ids=("001",))
+    _make_word_level_transcript_fixtures(episode, video_ids=("001",))
+
+    fake_result = (
+        scene_plan_before,
+        [],
+        [],
+        [
+            {
+                "sceneId": "scene-001",
+                "kind": "word-pop",
+                "text": "injection",
+                "icon": None,
+                "offsetInParentFrames": 15,
+                "durationInFrames": 60,
+                "reason": "the key term",
+            }
+        ],
+    )
+
+    with patch("server.edit_plan", return_value=fake_result) as mock_edit_plan:
+        response = client.post(
+            "/api/episode/edit-plan",
+            params={"path": str(episode)},
+            json={"instruction": "pop the word injection"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["created"]) == 1
+    assert body["created"][0]["text"] == "injection"
+
+    # edit_plan() was called WITH the transcript/manifest it needs to
+    # ground a beat — confirms the endpoint actually loaded and passed
+    # them through, not just that the mocked return value round-trips.
+    assert mock_edit_plan.call_args.kwargs["transcript"] is not None
+    assert mock_edit_plan.call_args.kwargs["manifest"] is not None
+
+    beats_on_disk = json.loads((episode / "processing" / "emphasis.json").read_text())
+    assert len(beats_on_disk["beats"]) == 1
+    assert beats_on_disk["beats"][0]["text"] == "injection"
+
+    scene_plan_on_disk = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    beat_scenes = [s for s in scene_plan_on_disk["scenes"] if s["type"] == "beat"]
+    assert len(beat_scenes) == 1
+    assert beat_scenes[0]["text"] == "injection"
+
+
+def test_edit_scene_plan_appends_created_beat_to_existing_beats(tmp_path):
+    episode = _make_episode(tmp_path)
+    scene_plan_before = _make_scene_plan(episode, video_ids=("001",))
+    _make_word_level_transcript_fixtures(episode, video_ids=("001",))
+
+    existing_beat = {
+        "sceneId": "scene-001",
+        "kind": "underline",
+        "text": "dependency",
+        "icon": None,
+        "offsetInParentFrames": 0,
+        "durationInFrames": 60,
+        "reason": "already there",
+    }
+    (episode / "processing" / "emphasis.json").write_text(json.dumps({"beats": [existing_beat]}))
+
+    fake_result = (
+        scene_plan_before,
+        [],
+        [],
+        [
+            {
+                "sceneId": "scene-001",
+                "kind": "word-pop",
+                "text": "matters",
+                "icon": None,
+                "offsetInParentFrames": 30,
+                "durationInFrames": 60,
+                "reason": "new one",
+            }
+        ],
+    )
+
+    with patch("server.edit_plan", return_value=fake_result):
+        response = client.post(
+            "/api/episode/edit-plan",
+            params={"path": str(episode)},
+            json={"instruction": "pop the word matters too"},
+        )
+
+    assert response.status_code == 200
+
+    beats_on_disk = json.loads((episode / "processing" / "emphasis.json").read_text())
+    texts = {b["text"] for b in beats_on_disk["beats"]}
+    assert texts == {"dependency", "matters"}
+
+
+def test_undo_after_edit_plan_chat_creates_beat_restores_emphasis_json(tmp_path):
+    episode = _make_episode(tmp_path)
+    scene_plan_before = _make_scene_plan(episode, video_ids=("001",))
+    _make_word_level_transcript_fixtures(episode, video_ids=("001",))
+
+    fake_result = (
+        scene_plan_before,
+        [],
+        [],
+        [
+            {
+                "sceneId": "scene-001",
+                "kind": "word-pop",
+                "text": "injection",
+                "icon": None,
+                "offsetInParentFrames": 15,
+                "durationInFrames": 60,
+                "reason": "the key term",
+            }
+        ],
+    )
+
+    with patch("server.edit_plan", return_value=fake_result):
+        response = client.post(
+            "/api/episode/edit-plan",
+            params={"path": str(episode)},
+            json={"instruction": "pop the word injection"},
+        )
+    assert response.status_code == 200
+    assert (episode / "processing" / "emphasis.json").exists()
+
+    undo_response = client.post("/api/episode/undo", params={"path": str(episode)})
+    assert undo_response.status_code == 200
+    assert undo_response.json()["restored"] is not None
+
+    # emphasis.json didn't exist before the create — undo must delete it
+    # again (see #50's own existed:False handling), not leave a stray file
+    # a later beat save could silently build on top of.
+    assert not (episode / "processing" / "emphasis.json").exists()
+
+    scene_plan_restored = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    assert scene_plan_restored == scene_plan_before
+
+
 def test_edit_scene_plan_removes_title_from_title_scenes_json(tmp_path):
     # Same resurrection risk as moments, for titles — text-matched since
     # title_scenes.json entries have no id shared with the merged
@@ -839,6 +1008,7 @@ def test_edit_scene_plan_removes_title_from_title_scenes_json(tmp_path):
             "scenes": [s for s in scene_plan_before["scenes"] if s["id"] != "scene-title-001"],
         },
         [{"op": "remove", "sceneId": "scene-title-001", "reason": "instruction said to remove it"}],
+        [],
         [],
     )
 
@@ -920,6 +1090,7 @@ def test_edit_scene_plan_regenerates_codegen(tmp_path):
 
     fake_result = (
         {"scenes": [{"id": "scene-001", "type": "presenter", "videoId": "001", "text": "unused"}]},
+        [],
         [],
         [],
     )
@@ -1135,6 +1306,7 @@ def test_undo_after_edit_plan_chat_restores_removed_title_scene(tmp_path):
         mock_edit_plan.return_value = (
             removed_plan,
             [{"op": "remove", "sceneId": title_scene_id, "reason": "not needed"}],
+            [],
             [],
         )
 

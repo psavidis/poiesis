@@ -3,8 +3,11 @@ from edit_plan import (
     describe_selected_scene,
     edit_plan,
     reflow_timeline,
+    resolve_beat_creation,
     validate_operations,
 )
+from generate_emphasis import build_candidate_words
+from style import load_style
 
 
 class _FakeLLMClient:
@@ -49,6 +52,43 @@ def _moment(scene_id, parent_id, offset, duration, text):
         "parentSceneId": parent_id,
         "offsetInParentFrames": offset,
         "durationInFrames": duration,
+    }
+
+
+# Beat-creation fixtures (#52) — same shape as
+# test_generate_emphasis.py's own _manifest_single_video/
+# _transcript_with_words, since resolve_beat_creation/build_candidate_words
+# are imported from that module, not reimplemented here.
+def _manifest_single_video():
+    return {"videos": [{"id": "001", "filename": "a.mp4"}]}
+
+
+def _transcript_with_words():
+    return {
+        "segments": [
+            {
+                "source": "a.mp4",
+                "start": 0.0,
+                "end": 3.0,
+                "text": "dependency injection matters a lot",
+                "words": [
+                    {"word": "dependency", "start": 0.0, "end": 0.5},
+                    {"word": "injection", "start": 0.5, "end": 1.0},
+                    {"word": "matters", "start": 1.0, "end": 1.5},
+                    {"word": "a", "start": 1.5, "end": 1.6},
+                    {"word": "lot", "start": 1.6, "end": 2.0},
+                ],
+            }
+        ]
+    }
+
+
+def _scene_plan_with_words_scene():
+    return {
+        "fps": 30,
+        "scenes": [
+            _presenter("scene-001", 0, 300, 0),
+        ],
     }
 
 
@@ -174,6 +214,242 @@ def test_validate_operations_rejects_unknown_op():
     assert "unknown op" in rejected[0]["reason"]
 
 
+def test_validate_operations_accepts_create_without_requiring_an_existing_scene_id():
+    # A "create" op has no sceneId to look up yet — must not be rejected
+    # via the same "no scene with id" path remove/update use.
+    scene_plan = {"scenes": [_title("scene-title-0", "Hello", 0)]}
+
+    ops = [{"op": "create", "type": "beat", "wordIds": ["scene-001-w0"], "kind": "word-pop", "reason": "x"}]
+
+    valid, rejected = validate_operations(scene_plan, ops)
+
+    assert valid == ops
+    assert rejected == []
+
+
+def test_apply_operations_leaves_create_ops_untouched():
+    # apply_operations only mutates scene_plan["scenes"] for remove/update
+    # — a "create" op is resolved into a beat proposal and routed to
+    # emphasis.json separately (see edit_plan()), so it must pass through
+    # apply_operations as a complete no-op rather than erroring on the
+    # missing sceneId.
+    scene_plan = {"scenes": [_title("scene-title-0", "Hello", 0)]}
+
+    ops = [{"op": "create", "type": "beat", "wordIds": ["scene-001-w0"], "kind": "word-pop", "reason": "x"}]
+
+    result = apply_operations(scene_plan, ops)
+
+    assert result["scenes"] == scene_plan["scenes"]
+
+
+def test_resolve_beat_creation_accepts_a_valid_single_word():
+    scene_plan = _scene_plan_with_words_scene()
+    candidates, scenes_by_id = build_candidate_words(
+        scene_plan, _transcript_with_words(), _manifest_single_video()
+    )
+
+    op = {"op": "create", "type": "beat", "wordIds": ["scene-001-w1"], "kind": "word-pop", "reason": "the key term"}
+
+    beat = resolve_beat_creation(op, scene_plan, candidates, scenes_by_id)
+
+    assert beat["sceneId"] == "scene-001"
+    assert beat["text"] == "injection"
+    assert beat["kind"] == "word-pop"
+    assert beat["offsetInParentFrames"] == 15
+    assert beat["reason"] == "the key term"
+
+
+def test_resolve_beat_creation_accepts_a_contiguous_phrase():
+    scene_plan = _scene_plan_with_words_scene()
+    candidates, scenes_by_id = build_candidate_words(
+        scene_plan, _transcript_with_words(), _manifest_single_video()
+    )
+
+    op = {
+        "op": "create", "type": "beat",
+        "wordIds": ["scene-001-w0", "scene-001-w1"], "kind": "underline", "reason": "the whole term",
+    }
+
+    beat = resolve_beat_creation(op, scene_plan, candidates, scenes_by_id)
+
+    assert beat["text"] == "dependency injection"
+
+
+def test_resolve_beat_creation_rejects_non_contiguous_words():
+    scene_plan = _scene_plan_with_words_scene()
+    candidates, scenes_by_id = build_candidate_words(
+        scene_plan, _transcript_with_words(), _manifest_single_video()
+    )
+
+    op = {
+        "op": "create", "type": "beat",
+        "wordIds": ["scene-001-w0", "scene-001-w2"], "kind": "word-pop", "reason": "x",
+    }
+
+    assert resolve_beat_creation(op, scene_plan, candidates, scenes_by_id) is None
+
+
+def test_resolve_beat_creation_rejects_an_unknown_word_id():
+    scene_plan = _scene_plan_with_words_scene()
+    candidates, scenes_by_id = build_candidate_words(
+        scene_plan, _transcript_with_words(), _manifest_single_video()
+    )
+
+    op = {"op": "create", "type": "beat", "wordIds": ["scene-001-w99"], "kind": "word-pop", "reason": "x"}
+
+    assert resolve_beat_creation(op, scene_plan, candidates, scenes_by_id) is None
+
+
+def test_resolve_beat_creation_rejects_an_invalid_kind():
+    scene_plan = _scene_plan_with_words_scene()
+    candidates, scenes_by_id = build_candidate_words(
+        scene_plan, _transcript_with_words(), _manifest_single_video()
+    )
+
+    op = {"op": "create", "type": "beat", "wordIds": ["scene-001-w0"], "kind": "spin", "reason": "x"}
+
+    assert resolve_beat_creation(op, scene_plan, candidates, scenes_by_id) is None
+
+
+def test_resolve_beat_creation_requires_a_valid_icon_for_icon_accent():
+    scene_plan = _scene_plan_with_words_scene()
+    candidates, scenes_by_id = build_candidate_words(
+        scene_plan, _transcript_with_words(), _manifest_single_video()
+    )
+
+    missing_icon = {"op": "create", "type": "beat", "wordIds": ["scene-001-w0"], "kind": "icon-accent", "reason": "x"}
+    assert resolve_beat_creation(missing_icon, scene_plan, candidates, scenes_by_id) is None
+
+    valid_icon = {
+        "op": "create", "type": "beat",
+        "wordIds": ["scene-001-w0"], "kind": "icon-accent", "icon": "arrow", "reason": "x",
+    }
+    beat = resolve_beat_creation(valid_icon, scene_plan, candidates, scenes_by_id)
+    assert beat["icon"] == "arrow"
+
+
+def test_resolve_beat_creation_rejects_a_phrase_over_the_word_cap():
+    scene_plan = _scene_plan_with_words_scene()
+    candidates, scenes_by_id = build_candidate_words(
+        scene_plan, _transcript_with_words(), _manifest_single_video()
+    )
+
+    # All 5 words — well past MAX_BEAT_WORDS (3).
+    op = {
+        "op": "create", "type": "beat",
+        "wordIds": ["scene-001-w0", "scene-001-w1", "scene-001-w2", "scene-001-w3", "scene-001-w4"],
+        "kind": "word-pop", "reason": "x",
+    }
+
+    assert resolve_beat_creation(op, scene_plan, candidates, scenes_by_id) is None
+
+
+def test_resolve_beat_creation_rejects_overlap_with_an_existing_moment():
+    scene_plan = _scene_plan_with_words_scene()
+    style = load_style()
+    beat_duration = style["emphasis"]["defaultDurationFrames"]
+
+    # "injection" starts at offset 15 (see fixture) — place a moment
+    # covering that exact window so the new beat collides with it.
+    scene_plan["scenes"].append(_moment("scene-moment-0", "scene-001", 0, beat_duration + 20, "existing moment"))
+
+    candidates, scenes_by_id = build_candidate_words(
+        scene_plan, _transcript_with_words(), _manifest_single_video()
+    )
+
+    op = {"op": "create", "type": "beat", "wordIds": ["scene-001-w1"], "kind": "word-pop", "reason": "x"}
+
+    assert resolve_beat_creation(op, scene_plan, candidates, scenes_by_id, style) is None
+
+
+def test_resolve_beat_creation_rejects_when_word_id_is_missing():
+    scene_plan = _scene_plan_with_words_scene()
+    candidates, scenes_by_id = build_candidate_words(
+        scene_plan, _transcript_with_words(), _manifest_single_video()
+    )
+
+    op = {"op": "create", "type": "beat", "kind": "word-pop", "reason": "x"}
+
+    assert resolve_beat_creation(op, scene_plan, candidates, scenes_by_id) is None
+
+
+def test_edit_plan_creates_a_beat_grounded_against_real_transcript_words():
+    scene_plan = _scene_plan_with_words_scene()
+
+    llm = _FakeLLMClient(
+        {
+            "operations": [
+                {
+                    "op": "create", "type": "beat",
+                    "wordIds": ["scene-001-w1"], "kind": "word-pop",
+                    "reason": "the key term",
+                }
+            ]
+        }
+    )
+
+    updated_plan, valid_ops, rejected, created_beats = edit_plan(
+        scene_plan, "add a beat popping the word injection", llm, PROMPT_TEMPLATE,
+        transcript=_transcript_with_words(), manifest=_manifest_single_video(),
+    )
+
+    assert len(created_beats) == 1
+    assert created_beats[0]["text"] == "injection"
+    assert created_beats[0]["sceneId"] == "scene-001"
+    assert rejected == []
+    # remove/update ops list is separate from created_beats — a create op
+    # doesn't show up there since it never touches scene_plan directly.
+    assert valid_ops == []
+    assert "scene-001-w1" in llm.last_prompt
+
+
+def test_edit_plan_rejects_an_ungroundable_beat_creation():
+    scene_plan = _scene_plan_with_words_scene()
+
+    llm = _FakeLLMClient(
+        {
+            "operations": [
+                {
+                    "op": "create", "type": "beat",
+                    "wordIds": ["scene-001-w0", "scene-001-w2"], "kind": "word-pop",
+                    "reason": "non-contiguous, should be rejected",
+                }
+            ]
+        }
+    )
+
+    updated_plan, valid_ops, rejected, created_beats = edit_plan(
+        scene_plan, "add a weird beat", llm, PROMPT_TEMPLATE,
+        transcript=_transcript_with_words(), manifest=_manifest_single_video(),
+    )
+
+    assert created_beats == []
+    assert len(rejected) == 1
+
+
+def test_edit_plan_without_transcript_cannot_create_beats():
+    scene_plan = _scene_plan_with_words_scene()
+
+    llm = _FakeLLMClient(
+        {
+            "operations": [
+                {
+                    "op": "create", "type": "beat",
+                    "wordIds": ["scene-001-w1"], "kind": "word-pop", "reason": "x",
+                }
+            ]
+        }
+    )
+
+    updated_plan, valid_ops, rejected, created_beats = edit_plan(
+        scene_plan, "add a beat", llm, PROMPT_TEMPLATE,
+    )
+
+    assert created_beats == []
+    assert len(rejected) == 1
+    assert "no word-level transcript data available" in llm.last_prompt
+
+
 def test_apply_operations_removes_scene():
     scene_plan = {
         "scenes": [
@@ -267,6 +543,7 @@ PROMPT_TEMPLATE = (
     "plan: {scene_plan}\n"
     "fields: {editable_fields}\n"
     "selected: {selected_scene}\n"
+    "words: {candidate_words}\n"
 )
 
 
@@ -291,7 +568,7 @@ def test_edit_plan_end_to_end_applies_valid_operation_and_reflows():
         }
     )
 
-    updated_plan, valid_ops, rejected = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats = edit_plan(
         scene_plan, "change the title to New title", llm, PROMPT_TEMPLATE
     )
 
@@ -320,7 +597,7 @@ def test_edit_plan_end_to_end_filters_out_invalid_operations():
         }
     )
 
-    updated_plan, valid_ops, rejected = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats = edit_plan(
         scene_plan, "some instruction", llm, PROMPT_TEMPLATE
     )
 
@@ -339,7 +616,7 @@ def test_edit_plan_handles_instruction_containing_template_like_braces():
 
     tricky_instruction = 'remove the scene that says "{scene_plan}" in it'
 
-    updated_plan, valid_ops, rejected = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats = edit_plan(
         scene_plan, tricky_instruction, llm, PROMPT_TEMPLATE
     )
 
@@ -416,7 +693,7 @@ def test_edit_plan_degrades_to_nothing_selected_for_a_stale_selection():
 
     llm = _FakeLLMClient({"operations": []})
 
-    updated_plan, valid_ops, rejected = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats = edit_plan(
         scene_plan, "make this bigger", llm, PROMPT_TEMPLATE, selected_scene_id="scene-does-not-exist"
     )
 

@@ -19,19 +19,39 @@ The current scene plan:
 
 {scene_plan}
 
-Decide which scene(s) the instruction refers to and what should change. You may only:
+Decide which scene(s) the instruction refers to and what should change. You may:
 
 1. Remove a scene entirely: {"op": "remove", "sceneId": "...", "reason": "..."}
 2. Update specific fields on a scene:
    {"op": "update", "sceneId": "...", "fields": {"field": newValue, ...}, "reason": "..."}
+3. Create a new beat — a brief kinetic accent (word/phrase pop, underline, or icon) timed to a
+   word actually being spoken. Use this ONLY when the instruction explicitly asks to add,
+   create, emphasize, pop, highlight, or accent something — never as a way to satisfy an
+   instruction that's actually asking for a different kind of change:
+   {"op": "create", "type": "beat", "wordIds": ["...", "..."], "kind": "word-pop" | "underline"
+   | "icon-accent", "icon": "arrow" | "check" | "warning" | "gear" (only for icon-accent),
+   "reason": "..."}
+   wordIds must be exact, contiguous ids from the candidate word list below — never invent
+   text, and never reference a word that isn't in that list. At most 3 words. If the
+   instruction names a phrase to emphasize (e.g. "pop the word 'breaking' when I say 25 tests
+   that are breaking", "add emphasis on the word async"), find that exact phrase in the
+   candidate words below and use its real wordIds — do not guess at timing. If no word-level
+   transcript data is available (see below) or the phrase can't be found, do not propose a
+   create operation for it.
 
-You may NOT create a new scene that doesn't already exist in the plan above.
+You may NOT create any scene type other than a beat (no moments, images, titles, or full
+screens via this endpoint — those require different grounding this endpoint doesn't have).
 You may NOT change "id", "type", "videoId", "parentSceneId", or "assetId" on any scene —
 those identify what a scene fundamentally is, not something an edit instruction changes.
 
 Only these fields may be updated, per scene type:
 
 {editable_fields}
+
+Candidate words available for a beat creation (word-level transcript timing, one entry per
+spoken word, in [wordId] text format):
+
+{candidate_words}
 
 If the instruction is ambiguous about which scene it refers to (e.g. "remove the pause" when
 several scenes could match), pick the single best match based on context — text content,
@@ -56,13 +76,18 @@ Schema:
 {
   "operations": [
     {
-      "op": "remove" or "update",
-      "sceneId": "string, must match an id in the scene plan above",
+      "op": "remove" or "update" or "create",
+      "sceneId": "string, must match an id in the scene plan above — required for remove/update, omit for create",
       "fields": { "field": newValue, ... },
+      "type": "beat" — required for create, omit otherwise",
+      "wordIds": ["string", ...] — required for create, must be exact contiguous ids from the candidate words above",
+      "kind": "word-pop" | "underline" | "icon-accent" — required for create, omit otherwise",
+      "icon": "arrow" | "check" | "warning" | "gear" — only for create with kind icon-accent",
       "reason": "short explanation, referencing the scene's actual content"
     }
   ]
 }
 
-"fields" is only present for "update" operations. If the instruction doesn't match anything in
-the current plan, return {"operations": []}.
+"fields" is only present for "update" operations. "type"/"wordIds"/"kind"/"icon" are only
+present for "create" operations. If the instruction doesn't match anything in the current plan,
+return {"operations": []}.

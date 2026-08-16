@@ -558,6 +558,25 @@ def edit_scene_plan(path: str, body: EditPlanRequest):
     if not scene_plan_path.exists():
         raise HTTPException(status_code=404, detail="scene-plan.json not found — run the pipeline first")
 
+    episode_transcript_path = processing / "episode_transcript.json"
+    manifest_path = processing / "manifest.json"
+    beats_path = processing / "emphasis.json"
+
+    # Beat creation (#52) needs real word-level transcript timing to
+    # ground itself — both optional here (unlike update_title_scenes,
+    # which 404s without them): an episode with no word-level transcript
+    # data can still use every other chat operation, it just can't create
+    # beats (see edit_plan()'s own docstring — this mirrors
+    # generate_emphasis.py's own graceful no-op for the same case).
+    episode_transcript = None
+    manifest = None
+
+    if episode_transcript_path.exists() and manifest_path.exists():
+        with episode_transcript_path.open("r", encoding="utf-8") as f:
+            episode_transcript = json.load(f)
+        with manifest_path.open("r", encoding="utf-8") as f:
+            manifest = json.load(f)
+
     try:
         with episode_lock(episode, wait=False):
             with scene_plan_path.open("r", encoding="utf-8") as f:
@@ -567,40 +586,54 @@ def edit_scene_plan(path: str, body: EditPlanRequest):
             prompt_template = load_edit_plan_prompt(EDIT_PLAN_PROMPT_FILE)
 
             try:
-                updated_plan, valid_ops, rejected = edit_plan(
+                updated_plan, valid_ops, rejected, created_beats = edit_plan(
                     scene_plan, body.instruction, llm, prompt_template,
                     selected_scene_id=body.selectedSceneId,
+                    transcript=episode_transcript, manifest=manifest,
                 )
             except Exception as e:
                 raise HTTPException(status_code=502, detail=f"Edit request failed: {e}")
 
             # Checkpoint only after the LLM call succeeds — a failed LLM
             # call never reaches a write, so it shouldn't burn an
-            # undo-history slot. moments.json/title_scenes.json are
-            # snapshotted unconditionally alongside scene-plan.json (not
-            # only when removed_ids is non-empty below) since
-            # save_checkpoint already only snapshots files that actually
-            # exist — simpler than predicting exactly which of the two
-            # this particular instruction will end up touching.
+            # undo-history slot. moments.json/title_scenes.json/
+            # emphasis.json are snapshotted unconditionally alongside
+            # scene-plan.json (not only when removed_ids/created_beats are
+            # non-empty below) since save_checkpoint already only
+            # snapshots files that actually exist — simpler than
+            # predicting exactly which of the three this particular
+            # instruction will end up touching.
             def do_write():
                 removed_ids = {op["sceneId"] for op in valid_ops if op["op"] == "remove"}
                 if removed_ids:
                     _sync_removed_moments(processing, scene_plan, removed_ids)
                     _sync_removed_titles(processing, scene_plan, removed_ids)
 
-                write_json_atomic(scene_plan_path, updated_plan)
+                plan_to_write = updated_plan
+
+                if created_beats:
+                    existing_beats = []
+                    if beats_path.exists():
+                        with beats_path.open("r", encoding="utf-8") as f:
+                            existing_beats = json.load(f).get("beats", [])
+
+                    all_beats = existing_beats + created_beats
+                    plan_to_write = merge_beat_scenes(plan_to_write, all_beats)
+                    write_json_atomic(beats_path, {"beats": all_beats})
+
+                write_json_atomic(scene_plan_path, plan_to_write)
                 regenerate_codegen(episode)
 
             wrap_with_checkpoint(
                 processing,
-                [scene_plan_path, processing / "moments.json", processing / "title_scenes.json"],
+                [scene_plan_path, processing / "moments.json", processing / "title_scenes.json", beats_path],
                 f"chat: {body.instruction}",
                 do_write,
             )
     except EpisodeBusyError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
-    return {"applied": valid_ops, "rejected": rejected}
+    return {"applied": valid_ops, "rejected": rejected, "created": created_beats}
 
 
 @app.post("/api/episode/undo")
