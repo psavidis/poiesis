@@ -5,6 +5,7 @@ from generate_moments import (
     chapter_for_absolute_frame,
     chapters_from_scene_plan,
     dedupe_overlapping_windows,
+    format_assets_for_prompt,
     format_storyboard_for_prompt,
     format_windows_for_prompt,
     is_comparison_grounded,
@@ -337,6 +338,30 @@ def _one_asset():
 
 def _one_code_asset():
     return [{"id": "code-001", "filename": "Repository.java", "language": "java", "description": "a constructor injection example"}]
+
+
+def test_format_assets_for_prompt_annotates_full_screen_hinted_assets():
+    assets = [
+        {"id": "img-001", "filename": "logo.png", "caption": "spring boot logo"},
+        {"id": "img-002", "filename": "wiring.png", "caption": "a wiring diagram", "defaultDisplay": "full"},
+    ]
+
+    text = format_assets_for_prompt(assets)
+
+    assert "[img-001] spring boot logo\n" in text + "\n"
+    assert "[img-002] a wiring diagram (suggested: full screen)" in text
+    assert "(suggested: full screen)" not in text.split("\n")[0]
+
+
+def test_format_assets_for_prompt_ignores_other_default_display_values():
+    # Only "full" is a recognized hint today (see EpisodeAsset.defaultDisplay
+    # in types.ts) — anything else should be treated the same as no hint at
+    # all rather than silently annotating an unrecognized value.
+    assets = [{"id": "img-001", "filename": "x.png", "caption": "a photo", "defaultDisplay": "inset"}]
+
+    text = format_assets_for_prompt(assets)
+
+    assert text == "[img-001] a photo"
 
 
 def test_propose_moments_accepts_grounded_bottom_callout():

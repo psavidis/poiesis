@@ -161,6 +161,15 @@ invent an assetId. If no available image is a good fit, do not propose a
 "side-image" for that window — use "bottom-callout", "side-text", or
 nothing instead.
 
+Some images are marked "(suggested: full screen)" — this comes from how the
+user organized their own asset folders, and is a hint about their intent
+for that specific image, not an instruction to always use it as full-visual.
+Still judge each window on its own merits using full-visual's own criteria
+above (central enough to genuinely replace the presenter's screen time) —
+a hinted image can still be the right fit for "side-image" instead if the
+window itself only calls for a supporting glance, and an unhinted image can
+still be proposed as full-visual if the window genuinely warrants it.
+
 Code snippets must be selected by their exact codeAssetId from the list
 below, using each snippet's description to judge whether it matches what
 is actually being said in that specific window. Do not invent a

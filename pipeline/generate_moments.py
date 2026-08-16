@@ -236,7 +236,14 @@ def format_assets_for_prompt(assets):
     lines = []
 
     for asset in assets:
-        lines.append(f"[{asset['id']}] {asset['caption']}")
+        # The suggestion annotation comes from the user's own folder
+        # organization (see index_assets.py's default_display_hint) — a
+        # nudge for the prompt to weigh, not a rule; the surrounding
+        # prompt text (moments.txt) is explicit that the AI should still
+        # judge relevance/centrality per its existing full-visual criteria
+        # rather than treating a hinted asset as a guaranteed full-visual.
+        suggestion = " (suggested: full screen)" if asset.get("defaultDisplay") == "full" else ""
+        lines.append(f"[{asset['id']}] {asset['caption']}{suggestion}")
 
     return "\n".join(lines)
 

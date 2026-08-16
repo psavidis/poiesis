@@ -24,6 +24,40 @@ IGNORED_FILES = {
     "Thumbs.db",
 }
 
+# Folder-as-authoring-hint (see docs/specs/content-types-and-presentation-
+# editing.md's "Asset Folders as Authoring Metadata"): an image placed
+# directly under one of these subfolder names hints that its initial
+# presentation should default to Full Screen — a suggestion the AI
+# (generate_moments.py) and the user can both override, never a permanent
+# constraint. Kept as a small, explicit set (not a fuzzy match) rather than
+# inferring intent from arbitrary folder names — an unrecognized subfolder
+# name is just organizational to the user (no different from images nested
+# for any other reason) and gets no hint, same as the flat-root case.
+FULL_SCREEN_HINT_FOLDERS = {"full-screen", "full"}
+
+
+def default_display_hint(file: Path, graphics_dir: Path) -> str | None:
+    """The hint is read from the file's immediate parent folder name,
+    relative to graphics/ — graphics/full-screen/x.png hints "full",
+    graphics/full-screen/nested/x.png does NOT (nested is the immediate
+    parent, not full-screen), and graphics/x.png (flat root, today's only
+    existing convention) hints nothing. Only one level deep is
+    intentional: this is meant to read as "this image lives in the
+    full-screen bucket," not to walk an arbitrary folder hierarchy
+    guessing intent from any ancestor."""
+
+    relative = file.relative_to(graphics_dir)
+
+    if len(relative.parts) < 2:
+        return None
+
+    immediate_parent = relative.parts[-2]
+
+    if immediate_parent in FULL_SCREEN_HINT_FOLDERS:
+        return "full"
+
+    return None
+
 
 def load_json(path: Path):
     with path.open("r", encoding="utf-8") as f:
@@ -58,13 +92,21 @@ def caption_from_filename(filename):
 
 
 def list_asset_files(graphics_dir: Path):
+    """Recursive (rglob), matching index_code.py's list_code_files —
+    subfolders under graphics/ are meaningful both for plain organization
+    (a user grouping related images together) and, for FULL_SCREEN_HINT_FOLDERS
+    specifically, as a presentation hint (see default_display_hint above).
+    A flat graphics/ folder (no subfolders — every existing real episode's
+    convention as of this change) indexes identically to the old
+    non-recursive iterdir() scan, since rglob("*") includes the root's own
+    direct children."""
 
     if not graphics_dir.exists():
         return []
 
     files = sorted(
         f
-        for f in graphics_dir.iterdir()
+        for f in graphics_dir.rglob("*")
         if f.is_file()
            and f.name not in IGNORED_FILES
            and f.suffix.lower() in IMAGE_EXTENSIONS
@@ -103,15 +145,20 @@ def index_assets(episode: Path):
             caption_from_filename(file.name)
         )
 
-        assets.append(
-            {
-                "id": asset_id,
-                "filename": file.name,
-                "path": str(file.relative_to(episode)),
-                "renderPath": str(Path("episodes") / episode.name / "graphics" / file.name),
-                "caption": caption,
-            }
-        )
+        asset = {
+            "id": asset_id,
+            "filename": file.name,
+            "path": str(file.relative_to(episode)),
+            "renderPath": str(Path("episodes") / episode.name / "graphics" / file.relative_to(graphics_dir)),
+            "caption": caption,
+        }
+
+        hint = default_display_hint(file, graphics_dir)
+
+        if hint:
+            asset["defaultDisplay"] = hint
+
+        assets.append(asset)
 
     write_json_atomic(output_path, {"assets": assets})
 

@@ -14,6 +14,14 @@ export interface EpisodeAsset {
     filename: string;
     path: string;
     caption: string;
+    // Authoring hint from the asset's source folder (e.g.
+    // graphics/full-screen/x.png — see index_assets.py's
+    // default_display_hint), read by generate_moments.py's prompt as a
+    // suggestion for the AI's initial presentation choice. Never a
+    // constraint: the renderer itself doesn't read this field at all — an
+    // image/moment's actual presentation is still whatever display/
+    // treatment ends up on its scene, same as before this field existed.
+    defaultDisplay?: "full";
 }
 
 export interface EpisodeCodeAsset {
