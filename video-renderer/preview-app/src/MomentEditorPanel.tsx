@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
+import type { PresenterScene, ScenePlan } from "video-renderer-src/episode/types";
 import { getAssets, getMoments, saveMoments } from "./api";
+import { normalizeMoment } from "./momentDuration";
+import { OverlayStrip, type EditableOverlay } from "./OverlayStrip";
 
 // Scoped to editing ONE moment, opened by clicking its chip in
 // ActiveSceneBar. Unlike titles (#32 — no shared id, text-matched), a
@@ -42,18 +45,27 @@ function summarizeMomentContent(m: any): string {
 interface Props {
     episodePath: string;
     sceneId: string;
+    scenePlan: ScenePlan;
+    currentFrame: number;
+    onSeek: (absoluteFrame: number) => void;
     onClose: () => void;
 }
 
-export function MomentEditorPanel({ episodePath, sceneId, onClose }: Props) {
+export function MomentEditorPanel({ episodePath, sceneId, scenePlan, currentFrame, onSeek, onClose }: Props) {
     const [moments, setMoments] = useState<any[] | null>(null);
     const [assetOptions, setAssetOptions] = useState<Asset[]>([]);
     const [status, setStatus] = useState("");
     const [error, setError] = useState<string | null>(null);
+    const [timingExpanded, setTimingExpanded] = useState(false);
 
     useEffect(() => {
         getMoments(episodePath)
-            .then((data) => setMoments(data.moments ?? []))
+            // Defensive normalization for moments.json written by an older
+            // pipeline version — see momentDuration.ts. A no-op for
+            // anything the current pipeline wrote; matters here since
+            // OverlayStrip's drag math depends on maxDurationInParentFrames
+            // already being the real, clamped duration.
+            .then((data) => setMoments((data.moments ?? []).map(normalizeMoment)))
             .catch(() => setMoments([]));
         getAssets(episodePath)
             .then(setAssetOptions)
@@ -89,6 +101,31 @@ export function MomentEditorPanel({ episodePath, sceneId, onClose }: Props) {
             ti === termIndex ? { ...t, ...patch } : t
         );
         update({ terms });
+    };
+
+    // "Adjust timing" used to be a separate scene-scoped page reached via a
+    // new browser tab (?sceneId=... — see #28), which needed a
+    // visibilitychange listener to notice edits made over there and
+    // re-fetch moments.json. Now it's this same component's own state —
+    // dragging a block writes directly into the `moments` array this panel
+    // already saves from, so there's exactly one buffer, not two racing
+    // each other.
+    const parentScene = scenePlan.scenes.find(
+        (s): s is PresenterScene => s.type === "presenter" && s.id === moment.sceneId
+    );
+
+    const editableOverlays: EditableOverlay[] = moments
+        .filter((m) => m.sceneId === moment.sceneId)
+        .map((m) => ({ kind: "moment" as const, data: m }));
+
+    const updateOverlay = (updated: EditableOverlay) => {
+        setMoments((prev) =>
+            prev
+                ? prev.map((m) =>
+                      updated.kind === "moment" && m.windowId === updated.data.windowId ? updated.data : m
+                  )
+                : prev
+        );
     };
 
     const remove = async () => {
@@ -194,6 +231,22 @@ export function MomentEditorPanel({ episodePath, sceneId, onClose }: Props) {
 
             {moment.reason && <p style={styles.reason}>{moment.reason}</p>}
 
+            {parentScene && (
+                <button className="secondary small" onClick={() => setTimingExpanded((v) => !v)} style={styles.timingToggle}>
+                    {timingExpanded ? "Adjust timing ▾" : "Adjust timing ▸"}
+                </button>
+            )}
+
+            {timingExpanded && parentScene && (
+                <OverlayStrip
+                    parentScene={parentScene}
+                    overlays={editableOverlays}
+                    onChange={updateOverlay}
+                    onSeek={onSeek}
+                    currentFrame={currentFrame}
+                />
+            )}
+
             <div style={styles.actions}>
                 <button onClick={handleSave}>Save changes</button>
                 <button className="secondary" onClick={remove}>
@@ -274,6 +327,10 @@ const styles: Record<string, React.CSSProperties> = {
         fontSize: 12,
         color: "#6b7683",
         margin: 0,
+    },
+    timingToggle: {
+        alignSelf: "flex-start",
+        fontSize: 12,
     },
     actions: {
         display: "flex",

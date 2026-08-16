@@ -1,16 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Player, type PlayerRef } from "@remotion/player";
 import { Episode } from "video-renderer-src/episode/Episode";
-import type { EpisodeProps, PresenterScene, Scene, ScenePlan } from "video-renderer-src/episode/types";
-import { getAssets, getCodeAssets, getManifest, getMoments, getScenePlan, saveMoments, type EpisodeStatus } from "./api";
+import type { EpisodeProps, Scene, ScenePlan } from "video-renderer-src/episode/types";
+import { getAssets, getCodeAssets, getManifest, getMoments, getScenePlan, type EpisodeStatus } from "./api";
 import { ActiveSceneBar } from "./ActiveSceneBar";
 import { AdvancedPanel } from "./AdvancedPanel";
 import { ChapterStrip } from "./ChapterStrip";
 import { EditPlanChat } from "./EditPlanChat";
 import { manifestToEpisodeBaseProps } from "./episodeProps";
 import { MomentEditorPanel } from "./MomentEditorPanel";
-import { normalizeMoment } from "./momentDuration";
-import { OverlayStrip, type EditableOverlay } from "./OverlayStrip";
 import { ProgressFlow } from "./ProgressFlow";
 import { StoryboardPanel } from "./StoryboardPanel";
 import { TitleEditorPanel } from "./TitleEditorPanel";
@@ -19,21 +17,28 @@ function useQueryParams() {
     const params = new URLSearchParams(window.location.search);
     return {
         episodePath: params.get("path") ?? "",
-        sceneId: params.get("sceneId"),
     };
 }
 
 // Everything App.tsx used to render directly — extracted verbatim (see
 // #24) so the router root can place this at /episode instead of it being
-// the only thing the app can ever show. No logic changed from the
-// pre-router version; only the file it lives in and its name.
+// the only thing the app can ever show.
+//
+// Used to also support a "?sceneId=..." scene-scoped mode (a separate
+// browser tab, narrower player, OverlayStrip always visible) reached via
+// the control panel's "Adjust timing" link — removed in #28. Adjusting a
+// moment's timing is now MomentEditorPanel's own "Adjust timing" toggle,
+// scoped to whichever moment you clicked, in this same full-episode view.
+// That removed the two-buffer problem the old cross-tab design had (this
+// component's `moments` state vs. the scene-scoped tab's own copy, kept in
+// sync only by a visibilitychange listener re-fetching on focus) — now
+// there's exactly one `moments` array, owned by whichever
+// MomentEditorPanel is currently open.
 export function EpisodeWorkspace() {
-    const { episodePath, sceneId } = useQueryParams();
+    const { episodePath } = useQueryParams();
 
     const [episodeProps, setEpisodeProps] = useState<EpisodeProps | null>(null);
-    const [moments, setMoments] = useState<{ moments: any[] } | null>(null);
     const [error, setError] = useState<string | null>(null);
-    const [saveStatus, setSaveStatus] = useState("");
     const [episodeStatus, setEpisodeStatus] = useState<EpisodeStatus | null>(null);
     // Persisted per browser session, matching ui/static/app.js's
     // `includeCaptions` default (unticked = don't generate them —
@@ -81,15 +86,9 @@ export function EpisodeWorkspace() {
             getCodeAssets(episodePath),
             getMoments(episodePath),
         ])
-            .then(([scenePlan, manifest, assets, codeAssets, momentsData]) => {
+            .then(([scenePlan, manifest, assets, codeAssets]) => {
                 const baseProps = manifestToEpisodeBaseProps(manifest, assets, codeAssets);
                 setEpisodeProps({ ...baseProps, scenePlan: scenePlan as ScenePlan });
-                // Defensive normalization for moments.json written by an
-                // older pipeline version — see momentDuration.ts. A no-op
-                // for anything the current pipeline wrote.
-                setMoments({
-                    moments: (momentsData?.moments ?? []).map(normalizeMoment),
-                });
             })
             .catch((e) => {
                 // A raw network failure (browser's generic "Failed to
@@ -139,13 +138,6 @@ export function EpisodeWorkspace() {
         };
     }, [episodeProps, showCaptions]);
 
-    const parentScene: PresenterScene | undefined = useMemo(() => {
-        if (!episodeProps || !sceneId) return undefined;
-        return episodeProps.scenePlan.scenes.find(
-            (s): s is PresenterScene => s.type === "presenter" && s.id === sceneId
-        );
-    }, [episodeProps, sceneId]);
-
     // What's actually on screen at currentFrame: exactly one track scene
     // (presenter/title, absolute timelineStartFrame) plus zero or more
     // overlay scenes (moment/caption/image) anchored to whichever
@@ -174,38 +166,6 @@ export function EpisodeWorkspace() {
 
         return { track, overlays };
     }, [episodeProps, currentFrame]);
-
-    const editableOverlays: EditableOverlay[] = useMemo(() => {
-        if (!moments || !sceneId) return [];
-
-        // moments state is already normalized (see the fetch effect above)
-        // — maxDurationInParentFrames here is the real, currently-editable
-        // duration, not the raw window ceiling.
-        return moments.moments
-            .filter((m: any) => m.sceneId === sceneId)
-            .map((m: any) => ({ kind: "moment" as const, data: m }));
-    }, [moments, sceneId]);
-
-    const updateOverlay = (updated: EditableOverlay) => {
-        if (!moments) return;
-
-        setMoments({
-            moments: moments.moments.map((m: any) =>
-                updated.kind === "moment" && m.windowId === updated.data.windowId ? updated.data : m
-            ),
-        });
-    };
-
-    const handleSave = async () => {
-        if (!moments) return;
-        setSaveStatus("Saving…");
-        try {
-            await saveMoments(episodePath, moments.moments);
-            setSaveStatus("Saved — the next render will pick this up.");
-        } catch (e) {
-            setSaveStatus(`Save failed: ${e}`);
-        }
-    };
 
     const seekToAbsoluteFrame = (absoluteFrame: number) => {
         if (!playerRef.current) return;
@@ -257,21 +217,6 @@ export function EpisodeWorkspace() {
         );
     }
 
-    if (sceneId && !parentScene) {
-        return (
-            <div style={styles.container}>
-                {header}
-                <div style={styles.message}>Scene "{sceneId}" not found in scene-plan.json</div>
-            </div>
-        );
-    }
-
-    // With no sceneId, this is a full-episode preview rather than a
-    // scene-scoped timing editor — give the player the full page width
-    // instead of the narrow strip-editor width, since there's no
-    // OverlayStrip/save UI competing for space below it.
-    const playerWrapStyle = sceneId ? styles.playerWrap : styles.playerWrapFullEpisode;
-
     const totalFrames = Math.max(
         1,
         episodeProps.scenePlan.scenes.reduce(
@@ -285,7 +230,7 @@ export function EpisodeWorkspace() {
         <div style={styles.container}>
             {header}
 
-            <div style={playerWrapStyle}>
+            <div style={styles.playerWrap}>
                 <Player
                     ref={playerRef}
                     component={Episode as any}
@@ -296,34 +241,20 @@ export function EpisodeWorkspace() {
                     fps={episodeProps.fps}
                     style={{ width: "100%" }}
                     controls
-                    initialFrame={parentScene ? parentScene.timelineStartFrame : 0}
-                    // Constrain the scrubber to the scene being edited so
-                    // its range matches the overlay strip below one-to-one —
-                    // dragging a block to a position and seeing the player
-                    // land on the same position are the same frame number,
-                    // not two independently-scaled coordinate spaces.
-                    inFrame={parentScene ? parentScene.timelineStartFrame : undefined}
-                    outFrame={
-                        parentScene
-                            ? parentScene.timelineStartFrame + parentScene.durationInFrames - 1
-                            : undefined
-                    }
                 />
             </div>
 
-            {!parentScene && (
-                <div style={playerWrapStyle}>
-                    <ChapterStrip
-                        scenePlan={episodeProps.scenePlan}
-                        totalFrames={totalFrames}
-                        currentFrame={currentFrame}
-                        fps={episodeProps.fps}
-                        onSeek={seekToAbsoluteFrame}
-                    />
-                </div>
-            )}
+            <div style={styles.playerWrap}>
+                <ChapterStrip
+                    scenePlan={episodeProps.scenePlan}
+                    totalFrames={totalFrames}
+                    currentFrame={currentFrame}
+                    fps={episodeProps.fps}
+                    onSeek={seekToAbsoluteFrame}
+                />
+            </div>
 
-            <div style={playerWrapStyle}>
+            <div style={styles.playerWrap}>
                 <label style={styles.checkboxRow}>
                     <input
                         type="checkbox"
@@ -334,7 +265,7 @@ export function EpisodeWorkspace() {
                 </label>
             </div>
 
-            <div style={playerWrapStyle}>
+            <div style={styles.playerWrap}>
                 <ActiveSceneBar
                     track={activeScenes.track}
                     overlays={activeScenes.overlays}
@@ -344,7 +275,7 @@ export function EpisodeWorkspace() {
             </div>
 
             {selectedEditor?.kind === "title" && (
-                <div style={playerWrapStyle}>
+                <div style={styles.playerWrap}>
                     <TitleEditorPanel
                         episodePath={episodePath}
                         titleText={selectedEditor.titleText}
@@ -354,35 +285,21 @@ export function EpisodeWorkspace() {
             )}
 
             {selectedEditor?.kind === "moment" && (
-                <div style={playerWrapStyle}>
+                <div style={styles.playerWrap}>
                     <MomentEditorPanel
                         episodePath={episodePath}
                         sceneId={selectedEditor.sceneId}
+                        scenePlan={episodeProps.scenePlan}
+                        currentFrame={currentFrame}
+                        onSeek={seekToAbsoluteFrame}
                         onClose={() => setSelectedEditor(null)}
                     />
                 </div>
             )}
 
-            <div style={playerWrapStyle}>
+            <div style={styles.playerWrap}>
                 <EditPlanChat episodePath={episodePath} onApplied={reloadScenePlan} />
             </div>
-
-            {parentScene && (
-                <OverlayStrip
-                    parentScene={parentScene}
-                    overlays={editableOverlays}
-                    onChange={updateOverlay}
-                    onSeek={seekToAbsoluteFrame}
-                    currentFrame={currentFrame}
-                />
-            )}
-
-            {parentScene && (
-                <div style={styles.actions}>
-                    <button onClick={handleSave}>Save changes</button>
-                    <span>{saveStatus}</span>
-                </div>
-            )}
         </div>
     );
 }
@@ -418,10 +335,6 @@ const styles: Record<string, React.CSSProperties> = {
     },
     playerWrap: {
         width: "100%",
-        maxWidth: 720,
-    },
-    playerWrapFullEpisode: {
-        width: "100%",
         maxWidth: 1280,
     },
     message: {
@@ -436,11 +349,6 @@ const styles: Record<string, React.CSSProperties> = {
         fontSize: 18,
         fontWeight: 600,
         marginBottom: 8,
-    },
-    actions: {
-        display: "flex",
-        alignItems: "center",
-        gap: 12,
     },
     checkboxRow: {
         display: "flex",
