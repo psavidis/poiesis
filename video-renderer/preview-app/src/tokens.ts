@@ -22,6 +22,11 @@ export const colors = {
     textPrimary: "#e8edf2",
     textSecondary: "#9aa7b4",
     textMuted: "#6b7683",
+    // Monospace/log/JSON output text (AdvancedPanel's run log,
+    // EpisodeAnalysisPanel's raw JSON dump) — a softer tone than
+    // textPrimary, deliberately distinct since dense pre-formatted text
+    // reads better slightly muted.
+    codeText: "#c9d2da",
 
     // Semantic
     error: "#ff8f8f",

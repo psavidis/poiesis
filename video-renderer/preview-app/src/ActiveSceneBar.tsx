@@ -1,4 +1,5 @@
 import type { Scene } from "video-renderer-src/episode/types";
+import { colors, radius, typography } from "./tokens";
 
 interface Props {
     track: Scene | undefined;
@@ -115,17 +116,17 @@ const styles: Record<string, React.CSSProperties> = {
         display: "flex",
         flexWrap: "wrap",
         gap: 6,
-        fontSize: 12,
-        color: "#6b7683",
+        fontSize: typography.size.sm,
+        color: colors.textMuted,
     },
     chip: {
         display: "flex",
         alignItems: "center",
         gap: 6,
         padding: "3px 8px",
-        background: "#161d24",
-        border: "1px solid #2a333d",
-        borderRadius: 4,
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderRadius: radius.sm,
     },
     overlayChip: {
         borderStyle: "dashed",
@@ -136,16 +137,16 @@ const styles: Record<string, React.CSSProperties> = {
     chipType: {
         textTransform: "uppercase",
         fontSize: 10,
-        fontWeight: 700,
+        fontWeight: typography.weight.bold,
         letterSpacing: 0.5,
-        color: "#9aa7b4",
+        color: colors.textSecondary,
     },
     chipId: {
         fontFamily: "monospace",
-        color: "#e8edf2",
+        color: colors.textPrimary,
     },
     chipLabel: {
-        color: "#9aa7b4",
+        color: colors.textSecondary,
         overflow: "hidden",
         textOverflow: "ellipsis",
         whiteSpace: "nowrap",

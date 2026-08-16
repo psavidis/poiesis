@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { getEpisodeStatus, runOverWebSocket, type EpisodeStatus, type RunHandle, type RunMessage } from "./api";
+import { colors, radius, typography } from "./tokens";
 
 // Groups the 15 chained pipeline stages (ui/pipeline_stages.py's
 // PIPELINE_STAGES, mirrored here by id — no backend change, this is pure
@@ -147,9 +148,9 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
 }
 
 function dotStyleFor(state: PhaseState): React.CSSProperties {
-    if (state === "done") return { background: "#3fa66a", borderColor: "#3fa66a" };
-    if (state === "in-progress") return { background: "#e8a23a", borderColor: "#e8a23a" };
-    return { background: "transparent", borderColor: "#3a4552" };
+    if (state === "done") return { background: colors.success, borderColor: colors.success };
+    if (state === "in-progress") return { background: colors.warning, borderColor: colors.warning };
+    return { background: "transparent", borderColor: colors.borderStrong };
 }
 
 const styles: Record<string, React.CSSProperties> = {
@@ -158,9 +159,9 @@ const styles: Record<string, React.CSSProperties> = {
         flexDirection: "column",
         gap: 10,
         padding: "12px 14px",
-        background: "#161d24",
-        border: "1px solid #2a333d",
-        borderRadius: 8,
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderRadius: radius.lg,
     },
     phases: {
         display: "flex",
@@ -181,8 +182,8 @@ const styles: Record<string, React.CSSProperties> = {
         flexShrink: 0,
     },
     phaseLabel: {
-        fontSize: 13,
-        color: "#e8edf2",
+        fontSize: typography.size.md,
+        color: colors.textPrimary,
     },
     actions: {
         display: "flex",
@@ -190,11 +191,11 @@ const styles: Record<string, React.CSSProperties> = {
         gap: 10,
     },
     runningLabel: {
-        fontSize: 13,
-        color: "#9aa7b4",
+        fontSize: typography.size.md,
+        color: colors.textSecondary,
     },
     error: {
-        fontSize: 13,
-        color: "#ff8f8f",
+        fontSize: typography.size.md,
+        color: colors.error,
     },
 };

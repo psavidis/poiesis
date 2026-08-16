@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { PresenterScene } from "video-renderer-src/episode/types";
+import { colors, radius, typography } from "./tokens";
 
 export type EditableOverlay =
     | { kind: "moment"; data: any }
@@ -197,12 +198,19 @@ export function OverlayStrip({ parentScene, overlays, onChange, onSeek, currentF
                                 ...styles.block,
                                 left: `${leftPct}%`,
                                 width: `${widthPct}%`,
+                                // Aligned to MomentBar's own text/visual
+                                // color split (colors.timelineText/
+                                // timelineImage) — this strip previously
+                                // used its own slightly different, unrelated
+                                // hex pair for the same distinction, a real
+                                // (if subtle) inconsistency the design
+                                // system pass is meant to catch.
                                 background:
                                     overlay.kind === "moment"
                                         ? isMomentImage
-                                            ? "#c96f2a"
-                                            : "#3a7bd5"
-                                        : "#c96f2a",
+                                            ? colors.timelineImage
+                                            : colors.timelineText
+                                        : colors.timelineImage,
                             }}
                             onMouseDown={(e) => startDrag(e, overlay, "move")}
                             title={
@@ -263,14 +271,18 @@ const styles: Record<string, React.CSSProperties> = {
         justifyContent: "space-between",
     },
     label: {
-        fontSize: 12,
-        color: "#9aa7b4",
+        fontSize: typography.size.sm,
+        color: colors.textSecondary,
     },
     ruler: {
         display: "flex",
         justifyContent: "space-between",
         fontSize: 10,
-        color: "#5c6773",
+        // Was its own near-duplicate muted gray (#5c6773) distinct from
+        // colors.textMuted (#6b7683) — folded into the shared token since
+        // the two are visually indistinguishable and having both defeats
+        // the point of a shared muted-text token.
+        color: colors.textMuted,
         padding: "0 2px",
     },
     tick: {
@@ -279,9 +291,9 @@ const styles: Record<string, React.CSSProperties> = {
     track: {
         position: "relative",
         height: 72,
-        background: "#161d24",
-        border: "1px solid #2a333d",
-        borderRadius: 6,
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderRadius: radius.md,
         userSelect: "none",
         overflow: "hidden",
         cursor: "pointer",
@@ -296,7 +308,7 @@ const styles: Record<string, React.CSSProperties> = {
         alignItems: "center",
         paddingLeft: 8,
         color: "#fff",
-        fontSize: 12,
+        fontSize: typography.size.sm,
         overflow: "visible",
         whiteSpace: "nowrap",
         boxShadow: "0 0 0 1px rgba(0,0,0,0.3)",
@@ -320,11 +332,11 @@ const styles: Record<string, React.CSSProperties> = {
         left: 0,
         marginBottom: 4,
         padding: "3px 6px",
-        background: "#0b0f14",
-        border: "1px solid #2a333d",
-        borderRadius: 4,
-        fontSize: 11,
-        color: "#e8edf2",
+        background: colors.background,
+        border: `1px solid ${colors.border}`,
+        borderRadius: radius.sm,
+        fontSize: typography.size.xs,
+        color: colors.textPrimary,
         whiteSpace: "nowrap",
         zIndex: 2,
     },
@@ -333,13 +345,13 @@ const styles: Record<string, React.CSSProperties> = {
         top: 0,
         bottom: 0,
         width: 2,
-        background: "#ff5a3c",
+        background: colors.playhead,
         pointerEvents: "none",
         zIndex: 1,
         boxShadow: "0 0 4px rgba(255,90,60,0.8)",
     },
     hint: {
-        fontSize: 12,
-        color: "#6b7683",
+        fontSize: typography.size.sm,
+        color: colors.textMuted,
     },
 };

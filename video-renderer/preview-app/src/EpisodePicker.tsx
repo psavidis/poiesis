@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { browse, DEFAULT_BROWSE_PATH, type BrowseResult } from "./api";
 import { useRouter } from "./Router";
+import { colors, radius, typography } from "./tokens";
 
 // Where the last-picked episode path is remembered across reloads — a
 // picker action is always explicit (this never auto-navigates away from
@@ -96,7 +97,7 @@ export function EpisodePicker() {
 const styles: Record<string, React.CSSProperties> = {
     container: {
         fontFamily: "system-ui, sans-serif",
-        color: "#e8edf2",
+        color: colors.textPrimary,
         padding: 12,
         display: "flex",
         flexDirection: "column",
@@ -119,23 +120,23 @@ const styles: Record<string, React.CSSProperties> = {
     },
     brandText: {
         fontSize: 26,
-        fontWeight: 700,
-        color: "#e8edf2",
+        fontWeight: typography.weight.bold,
+        color: colors.textPrimary,
         letterSpacing: 0.3,
     },
     panel: {
         width: "100%",
         maxWidth: 640,
-        background: "#161d24",
-        border: "1px solid #2a333d",
-        borderRadius: 8,
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderRadius: radius.lg,
         overflow: "hidden",
     },
     currentPath: {
         padding: "10px 14px",
-        fontSize: 12,
-        color: "#9aa7b4",
-        borderBottom: "1px solid #2a333d",
+        fontSize: typography.size.sm,
+        color: colors.textSecondary,
+        borderBottom: `1px solid ${colors.border}`,
         wordBreak: "break-all",
     },
     list: {
@@ -151,9 +152,9 @@ const styles: Record<string, React.CSSProperties> = {
         padding: "10px 14px",
         background: "none",
         border: "none",
-        borderBottom: "1px solid #1c242c",
-        color: "#e8edf2",
-        fontSize: 14,
+        borderBottom: `1px solid ${colors.surfaceElevated}`,
+        color: colors.textPrimary,
+        fontSize: typography.size.base,
         cursor: "pointer",
     },
     episodeRow: {
@@ -169,24 +170,24 @@ const styles: Record<string, React.CSSProperties> = {
         whiteSpace: "nowrap",
     },
     badge: {
-        fontSize: 11,
-        fontWeight: 700,
+        fontSize: typography.size.xs,
+        fontWeight: typography.weight.bold,
         letterSpacing: 0.3,
         textTransform: "uppercase",
-        color: "#e8a23a",
-        border: "1px solid #e8a23a",
-        borderRadius: 4,
+        color: colors.warning,
+        border: `1px solid ${colors.warning}`,
+        borderRadius: radius.sm,
         padding: "2px 6px",
         flexShrink: 0,
     },
     empty: {
         padding: 14,
-        fontSize: 13,
-        color: "#6b7683",
+        fontSize: typography.size.md,
+        color: colors.textMuted,
     },
     error: {
         padding: 14,
-        fontSize: 13,
-        color: "#e5484d",
+        fontSize: typography.size.md,
+        color: colors.errorStrong,
     },
 };

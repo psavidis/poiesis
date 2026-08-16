@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { getEpisodeStatus, runOverWebSocket, type EpisodeStageStatus, type EpisodeStatus, type RunHandle, type RunMessage } from "./api";
+import { colors, radius, typography } from "./tokens";
 
 // The full 15-stage + 2-secondary-stage list, individual Run/Re-run,
 // force/skip-captions, and render controls — everything ui/static/app.js's
@@ -169,8 +170,8 @@ function StageRow({
             <span
                 style={{
                     ...styles.stageDot,
-                    background: running ? "#e8a23a" : stage.complete ? "#3fa66a" : "transparent",
-                    borderColor: running ? "#e8a23a" : stage.complete ? "#3fa66a" : "#3a4552",
+                    background: running ? colors.warning : stage.complete ? colors.success : "transparent",
+                    borderColor: running ? colors.warning : stage.complete ? colors.success : colors.borderStrong,
                 }}
             />
             <span style={styles.stageLabel}>{stage.label}</span>
@@ -184,31 +185,31 @@ function StageRow({
 const styles: Record<string, React.CSSProperties> = {
     toggle: {
         alignSelf: "flex-start",
-        fontSize: 13,
+        fontSize: typography.size.md,
     },
     wrap: {
         display: "flex",
         flexDirection: "column",
         gap: 10,
         padding: "12px 14px",
-        background: "#161d24",
-        border: "1px solid #2a333d",
-        borderRadius: 8,
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderRadius: radius.lg,
     },
     captionsRow: {
         display: "flex",
         alignItems: "center",
         gap: 8,
-        fontSize: 13,
-        color: "#9aa7b4",
+        fontSize: typography.size.md,
+        color: colors.textSecondary,
     },
     renderOptions: {
         display: "flex",
         alignItems: "center",
         gap: 14,
         flexWrap: "wrap",
-        fontSize: 13,
-        color: "#9aa7b4",
+        fontSize: typography.size.md,
+        color: colors.textSecondary,
     },
     optionLabel: {
         display: "flex",
@@ -235,8 +236,8 @@ const styles: Record<string, React.CSSProperties> = {
     },
     stageLabel: {
         flex: 1,
-        fontSize: 13,
-        color: "#e8edf2",
+        fontSize: typography.size.md,
+        color: colors.textPrimary,
     },
     logSection: {
         display: "flex",
@@ -247,22 +248,22 @@ const styles: Record<string, React.CSSProperties> = {
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        fontSize: 13,
-        color: "#9aa7b4",
+        fontSize: typography.size.md,
+        color: colors.textSecondary,
     },
     cancelBtn: {
-        fontSize: 12,
+        fontSize: typography.size.sm,
     },
     logPanel: {
         maxHeight: 240,
         overflowY: "auto",
-        background: "#0b0f14",
-        border: "1px solid #2a333d",
-        borderRadius: 6,
+        background: colors.background,
+        border: `1px solid ${colors.border}`,
+        borderRadius: radius.md,
         padding: 10,
-        fontSize: 12,
+        fontSize: typography.size.sm,
         fontFamily: "monospace",
-        color: "#c9d2da",
+        color: colors.codeText,
         whiteSpace: "pre-wrap",
         margin: 0,
     },

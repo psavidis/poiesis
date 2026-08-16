@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getEpisodeAnalysis } from "./api";
+import { colors, radius, typography } from "./tokens";
 
 // Read-only dump of analyze_episode's output (AI narrative summary +
 // transcript QA) — ports ui/static/app.js's renderEpisodeAnalysis, which
@@ -53,25 +54,25 @@ const styles: Record<string, React.CSSProperties> = {
         flexDirection: "column",
         gap: 8,
         padding: "12px 14px",
-        background: "#161d24",
-        border: "1px solid #2a333d",
-        borderRadius: 8,
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderRadius: radius.lg,
     },
     hint: {
-        fontSize: 12,
-        color: "#9aa7b4",
+        fontSize: typography.size.sm,
+        color: colors.textSecondary,
         margin: 0,
     },
     jsonView: {
         maxHeight: 400,
         overflow: "auto",
-        background: "#0b0f14",
-        border: "1px solid #2a333d",
-        borderRadius: 6,
+        background: colors.background,
+        border: `1px solid ${colors.border}`,
+        borderRadius: radius.md,
         padding: 10,
-        fontSize: 12,
+        fontSize: typography.size.sm,
         fontFamily: "monospace",
-        color: "#c9d2da",
+        color: colors.codeText,
         whiteSpace: "pre-wrap",
         margin: 0,
     },
