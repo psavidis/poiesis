@@ -1,4 +1,10 @@
+import { useEffect, useRef, useState } from "react";
 import type { ScenePlan, TitleScene } from "video-renderer-src/episode/types";
+
+// Display-only label for the edit shortcut's hint text — mirrors BeatBar's
+// own MOD_KEY_LABEL constant (kept per-file rather than shared since it's
+// a one-line platform sniff, not worth a shared module for).
+const MOD_KEY_LABEL = navigator.platform.toLowerCase().includes("mac") ? "Cmd" : "Ctrl";
 
 interface Chapter {
     title: string | null; // null = the lead-in before the first title card
@@ -58,21 +64,50 @@ interface Props {
 // A full-episode strip dividing the video into chapters at each title
 // card, so the shape of the whole episode is visible at a glance — how
 // long each topic runs, how many chapters there are, and where the
-// current playhead sits relative to all of them. Clicking always seeks;
-// clicking a chapter (not the pre-title "Intro" segment) also opens that
-// chapter's underlying title text editor via onSelectTitle (see #34) —
-// chapters ARE title scenes, so this is the same click-to-edit path
-// ActiveSceneBar's title chips already use. Only rendered in the
-// full-episode preview, not the scene-scoped "Adjust timing" view, which
-// already has its own OverlayStrip.
+// current playhead sits relative to all of them. Clicking a chapter (not
+// the pre-title "Intro" segment) selects/highlights it and seeks there;
+// pressing Cmd+E (Mac) / Ctrl+E while selected opens that chapter's
+// underlying title text editor via onSelectTitle (see #40) — chapters ARE
+// title scenes, same select-then-edit lifecycle already used by BeatBar
+// (#39), not click-opens-immediately. Only rendered in the full-episode
+// preview, not the scene-scoped "Adjust timing" view, which already has
+// its own OverlayStrip.
 export function ChapterStrip({ scenePlan, totalFrames, currentFrame, fps, onSeek, onSelectTitle }: Props) {
     const titles = scenePlan.scenes.filter((s): s is TitleScene => s.type === "title");
+
+    // The clicked-but-not-editing chapter's title text — highlighted, and
+    // the target of Cmd+E/Ctrl+E. Click selects only; it never opens the
+    // editor by itself (mirrors BeatBar's selectedBeatId).
+    const [selectedTitle, setSelectedTitle] = useState<string | null>(null);
+    const selectedAnchorRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+    // Global (not scoped to the track element) so the shortcut fires with
+    // focus anywhere on the page, same reasoning as BeatBar's own listener.
+    useEffect(() => {
+        if (!selectedTitle || !onSelectTitle) return;
+
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key.toLowerCase() !== "e" || !(e.metaKey || e.ctrlKey)) return;
+            const target = e.target as HTMLElement | null;
+            if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+
+            e.preventDefault();
+            onSelectTitle(selectedTitle, selectedAnchorRef.current);
+        };
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [selectedTitle, onSelectTitle]);
 
     if (totalFrames <= 0) return null;
 
     const chapters = chaptersFromTitles(titles, totalFrames);
 
     const onTrackClick = (e: React.MouseEvent<HTMLDivElement>) => {
+        // A click that reaches here (not a chapter segment — those
+        // stopPropagation) is on empty track space, so it deselects rather
+        // than leaving a stale selection highlighted.
+        setSelectedTitle(null);
         const rect = e.currentTarget.getBoundingClientRect();
         const pct = clamp((e.clientX - rect.left) / rect.width, 0, 1);
         onSeek(Math.round(pct * totalFrames));
@@ -93,7 +128,8 @@ export function ChapterStrip({ scenePlan, totalFrames, currentFrame, fps, onSeek
                     const widthPct = ((chapter.endFrame - chapter.startFrame) / totalFrames) * 100;
                     const color = chapter.title === null ? "#3a4552" : CHAPTER_COLORS[i % CHAPTER_COLORS.length];
 
-                    const clickable = chapter.title !== null && !!onSelectTitle;
+                    const selectable = chapter.title !== null && !!onSelectTitle;
+                    const isSelected = selectable && selectedTitle === chapter.title;
 
                     return (
                         <div
@@ -102,16 +138,24 @@ export function ChapterStrip({ scenePlan, totalFrames, currentFrame, fps, onSeek
                                 ...styles.chapter,
                                 width: `${widthPct}%`,
                                 background: color,
-                                cursor: clickable ? "pointer" : "inherit",
+                                cursor: selectable ? "pointer" : "inherit",
+                                ...(isSelected ? styles.chapterSelected : {}),
                             }}
                             title={
-                                clickable
-                                    ? `Click to seek here, or edit title: ${chapter.title}`
+                                isSelected
+                                    ? `${chapter.title} — press ${MOD_KEY_LABEL}+E to edit`
+                                    : selectable
+                                    ? `Click to select, then ${MOD_KEY_LABEL}+E to edit: ${chapter.title}`
                                     : chapter.title ?? "Intro (before first title card)"
                             }
                             onClick={
-                                clickable
-                                    ? (e) => onSelectTitle!(chapter.title!, { x: e.clientX, y: e.clientY })
+                                selectable
+                                    ? (e) => {
+                                          e.stopPropagation();
+                                          selectedAnchorRef.current = { x: e.clientX, y: e.clientY };
+                                          setSelectedTitle(chapter.title!);
+                                          onSeek(chapter.startFrame);
+                                      }
                                     : undefined
                             }
                         >
@@ -128,8 +172,11 @@ export function ChapterStrip({ scenePlan, totalFrames, currentFrame, fps, onSeek
             </div>
 
             <div style={styles.hint}>
-                Click anywhere to jump the player there
-                {onSelectTitle ? " — clicking a chapter also opens its title editor" : ""}.
+                {selectedTitle
+                    ? `Selected — press ${MOD_KEY_LABEL}+E to edit its title.`
+                    : `Click anywhere to jump the player there${
+                          onSelectTitle ? `, or click a chapter to select it, then ${MOD_KEY_LABEL}+E to edit` : ""
+                      }.`}
             </div>
         </div>
     );
@@ -173,6 +220,13 @@ const styles: Record<string, React.CSSProperties> = {
         alignItems: "center",
         borderRight: "1px solid rgba(0,0,0,0.35)",
         overflow: "hidden",
+    },
+    // Mirrors BeatBar's segmentSelected — a visibly thicker, brighter
+    // outline so "this chapter is selected, press Cmd+E to edit" reads as
+    // a distinct state from the normal resting/hover appearance.
+    chapterSelected: {
+        boxShadow: "inset 0 0 0 2px #ffffff, 0 0 8px rgba(255,255,255,0.5)",
+        zIndex: 1,
     },
     chapterLabel: {
         padding: "0 8px",

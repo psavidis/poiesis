@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import type { PresenterScene, ScenePlan, TitleScene } from "video-renderer-src/episode/types";
 
 // Distinct from ChapterStrip's per-chapter color cycle (which groups scenes
@@ -6,6 +7,10 @@ import type { PresenterScene, ScenePlan, TitleScene } from "video-renderer-src/e
 // visually distinguishable at a glance.
 const PRESENTER_COLOR = "#2a7d6f";
 const TITLE_COLOR = "#c98a2a";
+
+// Display-only label for the edit shortcut's hint text — mirrors BeatBar's
+// own MOD_KEY_LABEL constant.
+const MOD_KEY_LABEL = navigator.platform.toLowerCase().includes("mac") ? "Cmd" : "Ctrl";
 
 interface Props {
     scenePlan: ScenePlan;
@@ -22,8 +27,30 @@ interface Props {
 // Every track scene (presenter clip or title card) as its own segment
 // across the full episode, so individual clips/titles are visible and
 // jumpable without scrubbing — ChapterStrip only shows chapter-level
-// grouping, not where each underlying clip/title actually starts.
+// grouping, not where each underlying clip/title actually starts. Title
+// segments use the same select-then-Cmd+E lifecycle as ChapterStrip (#40)
+// and BeatBar (#39) — click selects/highlights only, Cmd+E/Ctrl+E opens
+// the title editor.
 export function SceneBar({ scenePlan, totalFrames, currentFrame, onSeek, onSelectTitle }: Props) {
+    const [selectedTitle, setSelectedTitle] = useState<string | null>(null);
+    const selectedAnchorRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+    useEffect(() => {
+        if (!selectedTitle) return;
+
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key.toLowerCase() !== "e" || !(e.metaKey || e.ctrlKey)) return;
+            const target = e.target as HTMLElement | null;
+            if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+
+            e.preventDefault();
+            onSelectTitle(selectedTitle, selectedAnchorRef.current);
+        };
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [selectedTitle, onSelectTitle]);
+
     if (totalFrames <= 0) return null;
 
     const scenes = scenePlan.scenes.filter(
@@ -35,6 +62,7 @@ export function SceneBar({ scenePlan, totalFrames, currentFrame, onSeek, onSelec
     const sorted = [...scenes].sort((a, b) => a.timelineStartFrame - b.timelineStartFrame);
 
     const onTrackClick = (e: React.MouseEvent<HTMLDivElement>) => {
+        setSelectedTitle(null);
         const rect = e.currentTarget.getBoundingClientRect();
         const pct = clamp((e.clientX - rect.left) / rect.width, 0, 1);
         onSeek(Math.round(pct * totalFrames));
@@ -51,6 +79,7 @@ export function SceneBar({ scenePlan, totalFrames, currentFrame, onSeek, onSelec
                     const widthPct = (scene.durationInFrames / totalFrames) * 100;
                     const isTitle = scene.type === "title";
                     const label = isTitle ? scene.text : `clip ${scene.videoId}`;
+                    const isSelected = isTitle && selectedTitle === scene.text;
 
                     return (
                         <div
@@ -60,11 +89,23 @@ export function SceneBar({ scenePlan, totalFrames, currentFrame, onSeek, onSelec
                                 width: `${widthPct}%`,
                                 background: isTitle ? TITLE_COLOR : PRESENTER_COLOR,
                                 cursor: isTitle ? "pointer" : "default",
+                                ...(isSelected ? styles.segmentSelected : {}),
                             }}
-                            title={`${scene.id} — ${label}`}
+                            title={
+                                isSelected
+                                    ? `${label} — press ${MOD_KEY_LABEL}+E to edit`
+                                    : isTitle
+                                    ? `${scene.id} — click to select, then ${MOD_KEY_LABEL}+E to edit: ${label}`
+                                    : `${scene.id} — ${label}`
+                            }
                             onClick={
                                 isTitle
-                                    ? (e) => onSelectTitle(scene.text, { x: e.clientX, y: e.clientY })
+                                    ? (e) => {
+                                          e.stopPropagation();
+                                          selectedAnchorRef.current = { x: e.clientX, y: e.clientY };
+                                          setSelectedTitle(scene.text);
+                                          onSeek(scene.timelineStartFrame);
+                                      }
                                     : undefined
                             }
                         >
@@ -110,6 +151,11 @@ const styles: Record<string, React.CSSProperties> = {
         alignItems: "center",
         borderRight: "1px solid rgba(0,0,0,0.35)",
         overflow: "hidden",
+    },
+    // Mirrors BeatBar/ChapterStrip's selected styling.
+    segmentSelected: {
+        boxShadow: "inset 0 0 0 2px #ffffff, 0 0 8px rgba(255,255,255,0.5)",
+        zIndex: 1,
     },
     segmentLabel: {
         padding: "0 6px",
