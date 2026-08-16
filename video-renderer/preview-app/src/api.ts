@@ -137,6 +137,10 @@ export async function updateSceneFields(episodePath: string, sceneId: string, fi
 export interface TitleSceneProposal {
     segmentId: string;
     text: string;
+    // Field names a human has explicitly changed since the AI last
+    // proposed this title (#59) — server-recomputed on every save from a
+    // segmentId-matched diff, same pattern as moments/beats (#57/#58).
+    overriddenFields?: string[];
 }
 
 export const getTitleScenes = (episodePath: string) =>

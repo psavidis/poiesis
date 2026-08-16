@@ -223,6 +223,104 @@ def test_update_title_scenes_can_remove_a_title_by_omitting_it(tmp_path):
     assert title_scenes == []
 
 
+def test_update_title_scenes_marks_changed_field_as_overridden(tmp_path):
+    # #59 — mirrors #57/#58's provenance coverage, but matched by
+    # segmentId (a title's real stable id) rather than array position.
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+    _make_title_scene_fixtures(episode)
+    (episode / "processing" / "title_scenes.json").write_text(
+        json.dumps({"titles": [{"segmentId": "s0", "text": "AI proposed this"}]})
+    )
+
+    response = client.put(
+        "/api/episode/title-scenes",
+        params={"path": str(episode)},
+        json={"titles": [{"segmentId": "s0", "text": "Human edited this"}]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["titles"][0]["overriddenFields"] == ["text"]
+
+    titles_on_disk = json.loads((episode / "processing" / "title_scenes.json").read_text())
+    assert titles_on_disk["titles"][0]["overriddenFields"] == ["text"]
+
+
+def test_update_title_scenes_unchanged_resave_does_not_add_spurious_overrides(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+    _make_title_scene_fixtures(episode)
+    (episode / "processing" / "title_scenes.json").write_text(
+        json.dumps({"titles": [{"segmentId": "s0", "text": "AI proposed this"}]})
+    )
+
+    response = client.put(
+        "/api/episode/title-scenes",
+        params={"path": str(episode)},
+        json={"titles": [{"segmentId": "s0", "text": "AI proposed this"}]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["titles"][0]["overriddenFields"] == []
+
+
+def test_update_title_scenes_reset_to_automatic_clears_a_prior_override(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+    _make_title_scene_fixtures(episode)
+    (episode / "processing" / "title_scenes.json").write_text(
+        json.dumps({"titles": [{"segmentId": "s0", "text": "edited", "overriddenFields": ["text"]}]})
+    )
+
+    response = client.put(
+        "/api/episode/title-scenes",
+        params={"path": str(episode)},
+        json={"titles": [{"segmentId": "s0", "text": "edited", "overriddenFields": []}]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["titles"][0]["overriddenFields"] == []
+
+    titles_on_disk = json.loads((episode / "processing" / "title_scenes.json").read_text())
+    assert titles_on_disk["titles"][0]["overriddenFields"] == []
+
+
+def test_update_title_scenes_matches_prior_state_by_segment_id_not_position(tmp_path):
+    # Unlike moments/beats, a title's identity is segmentId, not array
+    # position — reordering the payload must not lose or misattribute an
+    # override.
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+    _make_title_scene_fixtures(episode)
+    (episode / "processing" / "title_scenes.json").write_text(
+        json.dumps(
+            {
+                "titles": [
+                    {"segmentId": "s0", "text": "first, overridden", "overriddenFields": ["text"]},
+                    {"segmentId": "s1", "text": "second, still automatic"},
+                ]
+            }
+        )
+    )
+
+    # Payload arrives in the OPPOSITE order from what's on disk.
+    response = client.put(
+        "/api/episode/title-scenes",
+        params={"path": str(episode)},
+        json={
+            "titles": [
+                {"segmentId": "s1", "text": "second, still automatic"},
+                {"segmentId": "s0", "text": "first, overridden", "overriddenFields": ["text"]},
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    by_segment = {t["segmentId"]: t for t in response.json()["titles"]}
+    assert by_segment["s0"]["overriddenFields"] == ["text"]
+    assert by_segment["s1"]["overriddenFields"] == []
+
+
 def _bottom_callout_payload(**overrides):
     payload = {
         "windowId": "w1",

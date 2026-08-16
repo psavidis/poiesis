@@ -18,7 +18,11 @@ from undo import restore_latest, wrap_with_checkpoint
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
 
-from generate_title_scenes import merge_title_scenes, write_json_atomic  # noqa: E402
+from generate_title_scenes import (  # noqa: E402
+    compute_overridden_fields as compute_overridden_title_fields,
+    merge_title_scenes,
+    write_json_atomic,
+)
 from generate_moments import compute_overridden_fields, merge_moment_scenes  # noqa: E402
 from generate_emphasis import (  # noqa: E402
     compute_overridden_fields as compute_overridden_beat_fields,
@@ -168,6 +172,11 @@ def episode_artifact(path: str, name: str):
 class TitleScene(BaseModel):
     segmentId: str
     text: str
+    # Field names a human has explicitly changed since the AI last proposed
+    # this title (see #59) — recomputed on every save in
+    # update_title_scenes below, matched by segmentId rather than array
+    # position (a title has a stable id, unlike moments/beats).
+    overriddenFields: list[str] = []
 
 
 class TitleScenesUpdate(BaseModel):
@@ -199,6 +208,21 @@ def update_title_scenes(path: str, body: TitleScenesUpdate):
         raise HTTPException(status_code=404, detail="episode_transcript.json/manifest.json not found — run the pipeline first")
 
     titles = [title.model_dump() for title in body.titles]
+
+    # overriddenFields (#59) is recomputed here, not trusted from the
+    # request body — matched by segmentId (a title's real stable id),
+    # unlike update_moments/update_beats which must diff by array position
+    # since moments/beats have no persistent id of their own.
+    old_titles_by_segment = {}
+    if title_scenes_path.exists():
+        with title_scenes_path.open("r", encoding="utf-8") as f:
+            old_titles_by_segment = {
+                t["segmentId"]: t for t in json.load(f).get("titles", [])
+            }
+
+    for title in titles:
+        old_title = old_titles_by_segment.get(title["segmentId"], {})
+        title["overriddenFields"] = compute_overridden_title_fields(old_title, title)
 
     def do_write():
         with scene_plan_path.open("r", encoding="utf-8") as f:

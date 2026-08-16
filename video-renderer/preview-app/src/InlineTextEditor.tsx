@@ -57,12 +57,14 @@ export function InlineTextEditor({ episodePath, target, anchor, onSaved, onClose
     const [loaded, setLoaded] = useState(false);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    // Only meaningful for kind "beat" (see #58) — beats have no structured
-    // property panel like moments' MomentEditorPanel, so this box is also
-    // where a beat's "text was manually edited" state and its reset
-    // affordance live. undefined until a beat is loaded; empty array once
-    // loaded but not overridden.
-    const [beatOverriddenFields, setBeatOverriddenFields] = useState<string[] | undefined>(undefined);
+    // Only meaningful for kind "beat" (#58) or "title" (#59) — neither has
+    // a structured property panel with its own reset UI always in view
+    // (titles have TitleEditorPanel, but this box is a separate, faster
+    // entry point to the same data), so this box is also where "text was
+    // manually edited" state and its reset affordance live for both.
+    // Moments are excluded — MomentEditorPanel already owns that for them.
+    // undefined until loaded; empty array once loaded but not overridden.
+    const [textOverriddenFields, setTextOverriddenFields] = useState<string[] | undefined>(undefined);
     const boxRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
     // The text as originally loaded, so cancelling (Escape / outside-click)
@@ -82,6 +84,7 @@ export function InlineTextEditor({ episodePath, target, anchor, onSaved, onClose
                     const initial = found?.text ?? target.titleText;
                     setText(initial);
                     originalTextRef.current = initial;
+                    setTextOverriddenFields(found?.overriddenFields ?? []);
                     setLoaded(true);
                 })
                 .catch((e) => setError(String(e)));
@@ -94,7 +97,7 @@ export function InlineTextEditor({ episodePath, target, anchor, onSaved, onClose
                     const initial = beat?.text ?? "";
                     setText(initial);
                     originalTextRef.current = initial;
-                    setBeatOverriddenFields(beat?.overriddenFields ?? []);
+                    setTextOverriddenFields(beat?.overriddenFields ?? []);
                     setLoaded(true);
                 })
                 .catch((e) => setError(String(e)));
@@ -144,7 +147,13 @@ export function InlineTextEditor({ episodePath, target, anchor, onSaved, onClose
                 const titles = await getTitleScenes(episodePath);
                 const index = titles.findIndex((t) => t.text === target.titleText);
                 if (index === -1) throw new Error("This title no longer exists — it may have been edited elsewhere.");
-                const next = titles.map((t, i) => (i === index ? { ...t, text } : t));
+                // overriddenFields is sent explicitly (not just left to
+                // round-trip) so a pending Reset-to-Automatic click (#59)
+                // takes effect on save — the server still recomputes it
+                // from a segmentId-matched diff on top, same as beats (#58).
+                const next = titles.map((t, i) =>
+                    i === index ? { ...t, text, overriddenFields: textOverriddenFields ?? t.overriddenFields } : t
+                );
                 await saveTitleScenes(episodePath, next);
             } else if (target.kind === "beat") {
                 const index = beatIndexFromSceneId(target.sceneId);
@@ -158,7 +167,7 @@ export function InlineTextEditor({ episodePath, target, anchor, onSaved, onClose
                 // takes effect on save — the server still recomputes it
                 // from a value diff on top, same as moments (#57).
                 const next = beats.map((b: any, i: number) =>
-                    i === index ? { ...b, text, overriddenFields: beatOverriddenFields ?? b.overriddenFields } : b
+                    i === index ? { ...b, text, overriddenFields: textOverriddenFields ?? b.overriddenFields } : b
                 );
                 await saveBeats(episodePath, next);
             } else {
@@ -220,12 +229,12 @@ export function InlineTextEditor({ episodePath, target, anchor, onSaved, onClose
                         <button className="secondary small" onClick={handleCancel} disabled={saving}>
                             Cancel
                         </button>
-                        {target.kind === "beat" && beatOverriddenFields?.includes("text") && (
+                        {(target.kind === "beat" || target.kind === "title") && textOverriddenFields?.includes("text") && (
                             <button
                                 type="button"
                                 className="secondary small"
                                 disabled={saving}
-                                onClick={() => setBeatOverriddenFields((prev) => (prev || []).filter((f) => f !== "text"))}
+                                onClick={() => setTextOverriddenFields((prev) => (prev || []).filter((f) => f !== "text"))}
                                 title="This text was manually edited — reset to let the AI decide it again next time"
                             >
                                 Reset to Automatic

@@ -384,6 +384,71 @@ def merge_title_scenes(scene_plan, titles, transcript, manifest, style=None):
     return scene_plan
 
 
+# text is the only field a human can actually change through either
+# title-editing UI (TitleEditorPanel.tsx, InlineTextEditor.tsx's "title"
+# branch) — see #59, third slice of #44 after moments (#57) and beats
+# (#58).
+OVERRIDABLE_TITLE_FIELDS = {"text"}
+
+
+def compute_overridden_fields(old_title, new_title):
+    """Unlike moments/beats (compute_overridden_fields in
+    generate_moments.py/generate_emphasis.py), which have no persistent id
+    and must diff by array position, a title has a real stable identity —
+    segmentId, assigned from transcript segment order and unaffected by
+    save-time reordering. old_title here is therefore looked up by
+    segmentId, not position (see update_title_scenes in ui/server.py,
+    which builds the old-titles-by-segmentId map before calling this).
+    Same "start from new_title's own overriddenFields, then add real value
+    changes on top" logic as #57/#58, so Reset to Automatic can actually
+    take effect."""
+
+    overridden = set(new_title.get("overriddenFields", old_title.get("overriddenFields", [])))
+
+    for field in OVERRIDABLE_TITLE_FIELDS:
+        if new_title.get(field) != old_title.get(field):
+            overridden.add(field)
+
+    return sorted(overridden)
+
+
+def preserve_overridden_fields(old_titles, new_proposals):
+    """Before a --force regeneration overwrites title_scenes.json, copy
+    forward any human-overridden text onto the matching new proposal —
+    matched by segmentId (exact match, not a nearest-offset heuristic like
+    moments/beats use), since segmentId is stable across regenerations as
+    long as the underlying transcript segment still exists. An old title
+    whose segmentId doesn't appear in the fresh proposal batch (e.g. the AI
+    no longer proposes a title for that segment) has nothing to copy onto —
+    its override is silently dropped along with the proposal itself,
+    mirroring how an old moment/beat with no matching new candidate is
+    simply left unmatched."""
+
+    old_by_segment = {
+        title["segmentId"]: title for title in old_titles if title.get("overriddenFields")
+    }
+
+    if not old_by_segment:
+        return new_proposals
+
+    for proposal in new_proposals:
+
+        old_title = old_by_segment.get(proposal["segmentId"])
+
+        if old_title is None:
+            continue
+
+        for field in old_title["overriddenFields"]:
+            if field in old_title:
+                proposal[field] = old_title[field]
+
+        proposal["overriddenFields"] = sorted(
+            set(proposal.get("overriddenFields", [])) | set(old_title["overriddenFields"])
+        )
+
+    return new_proposals
+
+
 def main():
 
     parser = argparse.ArgumentParser(
@@ -426,6 +491,11 @@ def main():
         print(output_file)
         return
 
+    # Loaded before the fresh proposal overwrites output_file, so a
+    # --force regeneration can carry forward any human-overridden text
+    # from the titles this run is about to replace (see #59).
+    previous_titles = load_json(output_file)["titles"] if output_file.exists() else []
+
     llm = LLMClient(PROJECT_ROOT / "config.json")
     prompt_template = load_prompt(PROMPT_FILE)
 
@@ -444,6 +514,8 @@ def main():
             prompt_template,
             episode_context=load_episode_narrative_text(episode)
         )
+
+        titles = preserve_overridden_fields(previous_titles, titles)
 
         write_json_atomic(output_file, {"titles": titles})
 

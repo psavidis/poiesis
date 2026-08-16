@@ -1,8 +1,10 @@
 from episode_context import NO_CONTEXT_TEXT
 from generate_title_scenes import (
+    compute_overridden_fields,
     format_transcript_for_prompt,
     indexed_segments,
     merge_title_scenes,
+    preserve_overridden_fields,
     propose_title_scenes,
 )
 from style import load_style
@@ -671,3 +673,76 @@ def test_merge_title_scenes_keeps_overlay_scenes_aligned_when_parent_splits():
 
     assert moment_scene["parentSceneId"] == "scene-001"
     assert moment_scene["offsetInParentFrames"] == 10
+
+
+# compute_overridden_fields / preserve_overridden_fields (#59) — AI-vs-
+# human provenance tracking, third slice of #44 (mirrors #57/#58, but
+# matched by segmentId — a title's real stable id — rather than array
+# position or nearest-offset heuristics).
+def test_compute_overridden_fields_detects_a_changed_field():
+    old = {"segmentId": "s1", "text": "before"}
+    new = {"segmentId": "s1", "text": "after"}
+
+    assert compute_overridden_fields(old, new) == ["text"]
+
+
+def test_compute_overridden_fields_ignores_unchanged_fields():
+    old = {"segmentId": "s1", "text": "same"}
+    new = {"segmentId": "s1", "text": "same"}
+
+    assert compute_overridden_fields(old, new) == []
+
+
+def test_compute_overridden_fields_reset_actually_clears_the_marker():
+    old = {"segmentId": "s1", "text": "same", "overriddenFields": ["text"]}
+    new = {"segmentId": "s1", "text": "same", "overriddenFields": []}
+
+    assert compute_overridden_fields(old, new) == []
+
+
+def test_compute_overridden_fields_against_empty_old_title():
+    new = {"segmentId": "s1", "text": "brand new"}
+
+    assert compute_overridden_fields({}, new) == ["text"]
+
+
+def test_preserve_overridden_fields_copies_forward_a_manually_edited_text_matched_by_segment_id():
+    old_titles = [
+        {"segmentId": "s1", "text": "human edited title", "overriddenFields": ["text"]},
+    ]
+    fresh_proposals = [
+        {"segmentId": "s1", "text": "freshly regenerated title"},
+        {"segmentId": "s5", "text": "a different, unrelated title"},
+    ]
+
+    result = preserve_overridden_fields(old_titles, fresh_proposals)
+
+    by_segment = {p["segmentId"]: p for p in result}
+    assert by_segment["s1"]["text"] == "human edited title"
+    assert by_segment["s1"]["overriddenFields"] == ["text"]
+    # A segment with no prior override is left exactly as freshly proposed.
+    assert by_segment["s5"]["text"] == "a different, unrelated title"
+
+
+def test_preserve_overridden_fields_drops_override_when_segment_no_longer_proposed():
+    # The AI no longer proposes a title for this segment at all — nothing
+    # to copy the override onto, so it's silently dropped along with the
+    # proposal itself (matches moments/beats' unmatched-candidate behavior).
+    old_titles = [
+        {"segmentId": "s1", "text": "human edited title", "overriddenFields": ["text"]},
+    ]
+    fresh_proposals = [
+        {"segmentId": "s9", "text": "a completely different title"},
+    ]
+
+    result = preserve_overridden_fields(old_titles, fresh_proposals)
+
+    assert result == fresh_proposals
+
+
+def test_preserve_overridden_fields_with_no_prior_overrides_returns_proposals_unchanged():
+    fresh_proposals = [{"segmentId": "s1", "text": "new"}]
+
+    result = preserve_overridden_fields([], fresh_proposals)
+
+    assert result is fresh_proposals

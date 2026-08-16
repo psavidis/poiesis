@@ -54,6 +54,22 @@ export function TitleEditorPanel({ episodePath, titleText, refreshKey, onClose }
         setTitles((prev) => (prev ? prev.map((t, i) => (i === index ? { ...t, text } : t)) : prev));
     };
 
+    // Reset to Automatic (#59, mirrors #57/#58): clears "text" from
+    // overriddenFields so it's eligible for the AI to change again on the
+    // next --force regeneration. No value change here — same as moments'
+    // own reset affordance, the user must still click "Save changes" for
+    // this to take effect server-side.
+    const isTextOverridden = (title.overriddenFields || []).includes("text");
+    const resetText = () => {
+        setTitles((prev) =>
+            prev
+                ? prev.map((t, i) =>
+                      i === index ? { ...t, overriddenFields: (t.overriddenFields || []).filter((f) => f !== "text") } : t
+                  )
+                : prev
+        );
+    };
+
     const remove = async () => {
         const next = titles.filter((_, i) => i !== index);
         setStatus("Saving…");
@@ -99,6 +115,16 @@ export function TitleEditorPanel({ episodePath, titleText, refreshKey, onClose }
                 <button className="secondary" onClick={remove}>
                     Remove
                 </button>
+                {isTextOverridden && (
+                    <button
+                        type="button"
+                        className="secondary small"
+                        onClick={resetText}
+                        title="This text was manually edited — reset to let the AI decide it again next time"
+                    >
+                        Reset to Automatic
+                    </button>
+                )}
                 <span style={styles.status}>{status}</span>
                 {error && <span style={styles.error}>{error}</span>}
             </div>
