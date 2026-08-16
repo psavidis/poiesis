@@ -116,7 +116,21 @@ as if the window were the only thing that exists:
      for a snippet the viewer genuinely needs to read closely (not just
      glance at), where showing the presenter alongside it would leave the
      code too small to actually read.
-9. Nothing.
+9. "content-dominant-code": pick one of the available code snippets below —
+   shown large, taking up most of the frame, while the presenter shrinks to
+   a small box in the corner rather than disappearing. Use this instead of
+   "side-code" when the code itself needs to be the clear visual focus (more
+   room to read it than a side panel gives), but instead of full-visual's
+   "code" kind when the presenter's own reaction/explanation while pointing
+   at the code still matters to keep visible — e.g. walking through a
+   snippet line by line while explaining it, where seeing the presenter
+   react/gesture is still part of the explanation. If the code just needs a
+   supporting glance, use "side-code"; if the presenter's presence adds
+   nothing while this code is on screen, use full-visual's "code" kind
+   instead. Same grounding requirement as "side-code": do not invent a
+   codeAssetId, and no "presenterSide" — the presenter goes to a fixed
+   corner, not a chosen side.
+10. Nothing.
 
 Use these sparingly and deliberately — most windows should get NOTHING.
 Reserve "side-text"/"side-image"/"side-code"/"side-diagram"/"side-terms"
@@ -129,9 +143,11 @@ or "right") — the content fills the opposite side. Prefer "left" for the
 presenter unless there's a specific reason to use "right" (e.g. two
 consecutive side treatments in the same clip alternating sides feels more
 dynamic than always the same side). Do NOT include "presenterSide" for
-"full-visual" or "comparison" — for full-visual the presenter is hidden
-entirely, and for comparison the presenter stays centered, so in both
-cases there's no side to choose.
+"full-visual", "content-dominant-code", or "comparison" — for full-visual
+the presenter is hidden entirely, for content-dominant-code the presenter
+goes to a fixed corner rather than a chosen side, and for comparison the
+presenter stays centered, so in none of these three cases is there a side
+to choose.
 
 Text (for "bottom-callout" and "side-text") must be a short phrase taken
 directly from what is actually said in the window — quote it closely, do
@@ -149,9 +165,9 @@ Code snippets must be selected by their exact codeAssetId from the list
 below, using each snippet's description to judge whether it matches what
 is actually being said in that specific window. Do not invent a
 codeAssetId. If no available snippet is a good fit for that window, do not
-propose "side-code" or a full-visual with fullVisualKind "code" — use
-another treatment or nothing instead. This same codeAssetId requirement
-applies to full-visual with fullVisualKind "code".
+propose "side-code", "content-dominant-code", or a full-visual with
+fullVisualKind "code" — use another treatment or nothing instead. This same
+codeAssetId requirement applies to all three.
 
 Diagrams ("side-diagram") use this structure:
 - "nodes": a list of small boxes, each with a short "id" and a short
@@ -188,16 +204,16 @@ Schema:
   "moments": [
     {
       "windowId": "string, must match a windowId below",
-      "treatment": "bottom-callout" | "side-text" | "side-image" | "side-code" | "side-diagram" | "side-terms" | "comparison" | "full-visual",
+      "treatment": "bottom-callout" | "side-text" | "side-image" | "side-code" | "side-diagram" | "side-terms" | "comparison" | "full-visual" | "content-dominant-code",
       "fullVisualKind": "image" | "diagram" | "text" | "code" — required for full-visual, omit otherwise",
       "text": "required for bottom-callout, side-text, and full-visual with fullVisualKind 'text'",
       "sideTextStyle": "quote" | "title" — optional for side-text, defaults to 'quote' if omitted, not used otherwise",
       "assetId": "required for side-image, and for full-visual with fullVisualKind 'image' — must match an assetId below",
-      "codeAssetId": "required for side-code, and for full-visual with fullVisualKind 'code' — must match a codeAssetId below",
+      "codeAssetId": "required for side-code, content-dominant-code, and for full-visual with fullVisualKind 'code' — must match a codeAssetId below",
       "diagram": "required for side-diagram, and for full-visual with fullVisualKind 'diagram': { nodes: [{id, label}], edges: [{from, to, label?}], layout: 'horizontal'|'vertical' }",
       "terms": "required for side-terms: [{ text, level: 'muted'|'primary'|'accent' }], at most 4 terms",
       "comparison": "required for comparison: { left, right }, both short phrases",
-      "presenterSide": "left" | "right" — required for side-text, side-image, side-code, side-diagram, and side-terms, omit for bottom-callout, comparison, and full-visual",
+      "presenterSide": "left" | "right" — required for side-text, side-image, side-code, side-diagram, and side-terms, omit for bottom-callout, comparison, full-visual, and content-dominant-code",
       "reason": "short justification"
     }
   ]

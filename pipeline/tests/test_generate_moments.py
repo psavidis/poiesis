@@ -945,6 +945,64 @@ def test_propose_moments_rejects_side_code_without_presenter_side():
     assert proposals == []
 
 
+def test_propose_moments_accepts_valid_content_dominant_code():
+    llm = _FakeLLMClient(
+        {
+            "moments": [
+                {
+                    "windowId": "w0",
+                    "treatment": "content-dominant-code",
+                    "codeAssetId": "code-001",
+                    "reason": "the code is the main point but the presenter's reaction still matters",
+                }
+            ]
+        }
+    )
+
+    proposals = propose_moments(
+        _scene_plan_with_one_long_scene(),
+        _transcript_with_late_segment(),
+        _manifest_single_video(),
+        _no_assets(),
+        llm,
+        "{windows}{assets}{code_assets}",
+        code_assets=_one_code_asset(),
+    )
+
+    assert len(proposals) == 1
+    assert proposals[0]["treatment"] == "content-dominant-code"
+    assert proposals[0]["codeAssetId"] == "code-001"
+    assert proposals[0]["caption"] == "a constructor injection example"
+    assert proposals[0]["presenterSide"] is None
+
+
+def test_propose_moments_rejects_content_dominant_code_with_unknown_code_asset_id():
+    llm = _FakeLLMClient(
+        {
+            "moments": [
+                {
+                    "windowId": "w0",
+                    "treatment": "content-dominant-code",
+                    "codeAssetId": "code-999",
+                    "reason": "hallucinated",
+                }
+            ]
+        }
+    )
+
+    proposals = propose_moments(
+        _scene_plan_with_one_long_scene(),
+        _transcript_with_late_segment(),
+        _manifest_single_video(),
+        _no_assets(),
+        llm,
+        "{windows}{assets}{code_assets}",
+        code_assets=_one_code_asset(),
+    )
+
+    assert proposals == []
+
+
 def test_propose_moments_accepts_valid_side_diagram():
     # _transcript_with_late_segment's text is "the important key idea" —
     # labels below share words/stems with it ("important", "idea").
@@ -1977,6 +2035,44 @@ def test_merge_moment_scenes_side_code_stores_code_asset_and_caption():
     assert moment_scene["presenterSide"] == "left"
 
 
+def test_merge_moment_scenes_content_dominant_code_stores_code_asset_and_no_presenter_side():
+    scene_plan = {
+        "fps": 30,
+        "scenes": [
+            {
+                "id": "scene-001",
+                "type": "presenter",
+                "videoId": "001",
+                "timelineStartFrame": 0,
+                "durationInFrames": 900,
+            },
+        ],
+    }
+
+    proposals = [
+        {
+            "windowId": "w0",
+            "sceneId": "scene-001",
+            "videoId": "001",
+            "offsetInParentFrames": 500,
+            "maxDurationInParentFrames": 240,
+            "treatment": "content-dominant-code",
+            "codeAssetId": "code-001",
+            "caption": "a constructor injection example",
+            "presenterSide": None,
+            "reason": "the code is the main point but the presenter's reaction still matters",
+        }
+    ]
+
+    result = merge_moment_scenes(scene_plan, proposals)
+    moment_scene = next(s for s in result["scenes"] if s["type"] == "moment")
+
+    assert moment_scene["treatment"] == "content-dominant-code"
+    assert moment_scene["codeAssetId"] == "code-001"
+    assert moment_scene["caption"] == "a constructor injection example"
+    assert "presenterSide" not in moment_scene
+
+
 def test_merge_moment_scenes_side_diagram_stores_diagram_data():
     scene_plan = {
         "fps": 30,
@@ -2312,3 +2408,42 @@ def test_cap_full_visual_ratio_leaves_non_full_visual_proposals_untouched():
     kept = cap_full_visual_ratio(proposals, style)
 
     assert kept == proposals
+
+
+def _content_dominant_code_proposal(window_id, scene_id="scene-001", offset=0):
+    return {
+        "windowId": window_id,
+        "sceneId": scene_id,
+        "videoId": "001",
+        "offsetInParentFrames": offset,
+        "maxDurationInParentFrames": 240,
+        "treatment": "content-dominant-code",
+        "codeAssetId": "code-001",
+        "caption": "a constructor injection example",
+        "presenterSide": None,
+        "reason": "the code needs to be prominent but the presenter's reaction matters here",
+    }
+
+
+def test_cap_full_visual_ratio_also_caps_content_dominant_code():
+    style = dict(load_style())
+    style["moments"] = dict(style["moments"])
+    style["moments"]["fullVisualMaxRatioToSideMoments"] = 0.25
+
+    # 4 side moments -> cap is 1 rare-treatment proposal total, shared
+    # across full-visual and content-dominant-code, not one budget each.
+    proposals = [
+        _side_text_proposal("w0", offset=0),
+        _side_text_proposal("w1", offset=200),
+        _side_text_proposal("w2", offset=400),
+        _side_text_proposal("w3", offset=600),
+        _content_dominant_code_proposal("w4", offset=800),
+        _full_visual_proposal("w5", offset=1000),
+    ]
+
+    kept = cap_full_visual_ratio(proposals, style)
+
+    rare_kept = [p for p in kept if p["treatment"] in ("content-dominant-code", "full-visual")]
+    assert len(rare_kept) == 1
+    assert rare_kept[0]["windowId"] == "w4"
+    assert sum(1 for p in kept if p["treatment"] == "side-text") == 4

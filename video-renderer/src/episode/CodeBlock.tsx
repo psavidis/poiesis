@@ -42,26 +42,39 @@ async function getHighlighter(language: BundledLanguage) {
 
 type Token = { content: string; color?: string };
 
-const MAX_VISIBLE_LINES = 14;
-// More lines fit comfortably at full-frame scale than in the side panel —
-// mirrors DiagramBlock's full-mode sizing, which also gets a larger
-// type/box scale rather than just more of the same cramped layout.
-const MAX_VISIBLE_LINES_FULL = 22;
+// Three size tiers instead of a `full` boolean, since #48 added a third:
+// "side" (default, ~40%-width panel next to the presenter), "dominant"
+// (content-dominant-code — most of the frame, presenter shrunk to a
+// corner PiP rather than hidden), "full" (full-visual — presenter hidden
+// entirely). Each gets its own line count and type scale, same reasoning
+// as DiagramBlock's `full` prop: more screen space, more lines actually
+// fit before truncating.
+export type CodeBlockSize = "side" | "dominant" | "full";
+
+const MAX_VISIBLE_LINES: Record<CodeBlockSize, number> = {
+    side: 14,
+    dominant: 18,
+    full: 22,
+};
+
+const FONT_SIZE: Record<CodeBlockSize, number> = {
+    side: 20,
+    dominant: 23,
+    full: 26,
+};
 
 export const CodeBlock = ({
                                path,
                                language,
                                presenterOnLeft,
-                               full = false,
+                               size = "side",
                            }: {
     path: string;
     language: string;
     presenterOnLeft: boolean;
-    // Full-frame variant for "full-visual" moments (see
-    // FullVisualMoment.tsx) — same syntax highlighting, just centered at a
-    // larger scale instead of confined to the side panel a presenter is
-    // sharing the frame with. Mirrors DiagramBlock.tsx's own `full` prop.
-    full?: boolean;
+    // See CodeBlockSize above. "side" (default) keeps today's side-panel
+    // behavior unchanged.
+    size?: CodeBlockSize;
 }) => {
     const frame = useCurrentFrame();
     const { durationInFrames } = useVideoConfig();
@@ -103,7 +116,7 @@ export const CodeBlock = ({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [path, language]);
 
-    const maxVisibleLines = full ? MAX_VISIBLE_LINES_FULL : MAX_VISIBLE_LINES;
+    const maxVisibleLines = MAX_VISIBLE_LINES[size];
 
     const visibleLines = useMemo(() => {
         if (!lines) return [];
@@ -112,14 +125,19 @@ export const CodeBlock = ({
 
     const isTruncated = (lines?.length ?? 0) > maxVisibleLines;
 
-    const translateX = full
-        ? 0
-        : interpolate(
-              frame,
-              [0, TRANSITION_FRAMES],
-              [presenterOnLeft ? -40 : 40, 0],
-              { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
-          );
+    // Only "side" slides in from the presenter's opposite side — "dominant"
+    // and "full" have no side panel to slide from (dominant is
+    // center-weighted with the presenter in a corner, not beside it), so
+    // both use a plain fade like FullText's entrance.
+    const translateX =
+        size === "side"
+            ? interpolate(
+                  frame,
+                  [0, TRANSITION_FRAMES],
+                  [presenterOnLeft ? -40 : 40, 0],
+                  { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+              )
+            : 0;
 
     const opacity = interpolate(
         frame,
@@ -132,7 +150,7 @@ export const CodeBlock = ({
         return null;
     }
 
-    const fontSize = full ? 26 : 20;
+    const fontSize = FONT_SIZE[size];
 
     const content = (
         <div
@@ -144,7 +162,7 @@ export const CodeBlock = ({
                 backgroundColor: brand.colors.overlayBackground,
                 border: `2px solid ${brand.colors.accent}`,
                 borderRadius: brand.radii.frame,
-                padding: full ? "28px 36px" : "20px 24px",
+                padding: size === "side" ? "20px 24px" : "28px 36px",
                 boxShadow: "0 12px 32px rgba(0, 0, 0, 0.45)",
                 overflow: "hidden",
                 position: "relative",
@@ -200,10 +218,23 @@ export const CodeBlock = ({
         </div>
     );
 
-    if (full) {
+    if (size === "full") {
         return (
             <AbsoluteFill style={{ pointerEvents: "none", alignItems: "center", justifyContent: "center" }}>
                 <div style={{ width: "76%" }}>{content}</div>
+            </AbsoluteFill>
+        );
+    }
+
+    if (size === "dominant") {
+        // Anchored top-left rather than centered — leaves the bottom-right
+        // corner clear for the presenter's PiP box (LAYOUT_GEOMETRY.corner
+        // in timing.ts: leftPct 70/topPct 62), so the two never overlap.
+        // Sized to comfortably fill the remaining space without touching
+        // that corner.
+        return (
+            <AbsoluteFill style={{ pointerEvents: "none" }}>
+                <div style={{ position: "absolute", top: "8%", left: "6%", width: "62%" }}>{content}</div>
             </AbsoluteFill>
         );
     }

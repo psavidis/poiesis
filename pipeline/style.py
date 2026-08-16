@@ -27,6 +27,13 @@ DEFAULTS = {
             # there's no slide-aside animation eating into the window.
             "comparison": 150,
             "fullVisual": 300,
+            # Same read-time budget as sideCode (#48's "content-dominant-code"
+            # is the same content at a larger, more prominent scale, not a
+            # different amount of code to read) — not fullVisual's longer
+            # window, since the presenter stays visible here rather than
+            # hidden, so there's less pressure to linger than a true
+            # full-visual moment.
+            "contentDominantCode": 240,
         },
         # A full-visual moment hides the presenter entirely, so it should
         # be noticeably rarer than the side treatments (which keep the

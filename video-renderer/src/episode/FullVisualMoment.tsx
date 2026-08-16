@@ -111,7 +111,7 @@ export const FullVisualMoment = ({
     }
 
     if (kind === "code" && codePath && codeLanguage) {
-        return <CodeBlock path={codePath} language={codeLanguage} presenterOnLeft={false} full />;
+        return <CodeBlock path={codePath} language={codeLanguage} presenterOnLeft={false} size="full" />;
     }
 
     return null;

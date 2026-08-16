@@ -37,7 +37,9 @@ function momentLabel(moment: MomentScene): string {
     if (moment.treatment === "side-diagram" && moment.diagram) {
         return moment.diagram.nodes.map((n) => n.label).join(" → ");
     }
-    if (moment.treatment === "side-code") return moment.codeAssetId ?? moment.treatment;
+    if (moment.treatment === "side-code" || moment.treatment === "content-dominant-code") {
+        return moment.codeAssetId ?? moment.treatment;
+    }
     if (moment.treatment === "side-image") return moment.caption || moment.assetId || moment.treatment;
     return moment.treatment;
 }

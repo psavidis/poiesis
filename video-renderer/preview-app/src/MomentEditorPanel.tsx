@@ -15,7 +15,10 @@ const VALID_TERM_LEVELS = ["muted", "primary", "accent"] as const;
 // editor yet get a read-only summary — matches ui/static/app.js's
 // NO_TEXT_EDIT_TREATMENTS (side-terms and side-text/sideTextStyle got
 // real editors, side-diagram/side-code/comparison have not yet).
-const NO_TEXT_EDIT_TREATMENTS = new Set(["side-diagram", "side-code", "comparison"]);
+// content-dominant-code (#48) is the same codeAssetId-driven content as
+// side-code, just a different presenter layout, so it gets the same
+// treatment here.
+const NO_TEXT_EDIT_TREATMENTS = new Set(["side-diagram", "side-code", "comparison", "content-dominant-code"]);
 
 function summarizeMomentContent(m: any): string {
     if (m.treatment === "comparison" && m.comparison) {
@@ -24,7 +27,7 @@ function summarizeMomentContent(m: any): string {
     if (m.treatment === "side-diagram" && m.diagram) {
         return (m.diagram.nodes || []).map((n: any) => n.label).join(" → ");
     }
-    if (m.treatment === "side-code") {
+    if (m.treatment === "side-code" || m.treatment === "content-dominant-code") {
         return m.codeAssetId || "";
     }
     return "";

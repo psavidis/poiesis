@@ -32,10 +32,26 @@ export const TRANSITION_FRAMES = 24;
 // MomentTreatments.tsx's content panel and the presenter's freed space
 // can never drift apart the way two independently-hardcoded percentages
 // could.
-export const LAYOUT_GEOMETRY: Record<PresenterLayout, { widthPct: number; leftPct: number }> = {
-    center: { widthPct: 100, leftPct: 0 },
-    left: { widthPct: 60, leftPct: 0 },
-    right: { widthPct: 60, leftPct: 40 },
+// topPct/heightPct default to full-height (0/100) for every layout except
+// "corner" — added alongside widthPct/leftPct (not replacing them) so
+// center/left/right's existing full-height behavior is unchanged; only
+// "corner" (content-dominant code, #48) actually shrinks vertically as
+// well as horizontally, since it's a small picture-in-picture box rather
+// than a full-height side window.
+export const LAYOUT_GEOMETRY: Record<
+    PresenterLayout,
+    { widthPct: number; leftPct: number; topPct: number; heightPct: number }
+> = {
+    center: { widthPct: 100, leftPct: 0, topPct: 0, heightPct: 100 },
+    left: { widthPct: 60, leftPct: 0, topPct: 0, heightPct: 100 },
+    right: { widthPct: 60, leftPct: 40, topPct: 0, heightPct: 100 },
+    // Bottom-right corner PiP for content-dominant code (#48) — the code
+    // itself uses most of the frame (see FullVisualMoment-adjacent sizing
+    // in ContentDominantCode), the presenter shrinks to a small box rather
+    // than losing only width the way left/right do. Margins (4%/6%) keep
+    // it clear of the frame edge and match the visual weight of a
+    // deliberate PiP rather than a flush-mounted corner crop.
+    corner: { widthPct: 26, leftPct: 70, topPct: 62, heightPct: 34 },
 };
 
 export const SIDE_CONTENT_WIDTH_PCT = 100 - LAYOUT_GEOMETRY.right.widthPct;

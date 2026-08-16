@@ -46,7 +46,11 @@ export interface SceneEffects {
 // the scene's entire duration even though the moment content it's making
 // room for is only on screen for a few seconds in the middle. See
 // MomentScene.presenterSide below.
-export type PresenterLayout = "center" | "left" | "right";
+// "corner": a small picture-in-picture box (bottom-right) for
+// "content-dominant-code" moments (#48) — the presenter shrinks in both
+// width AND height, unlike left/right which only narrow (see
+// LAYOUT_GEOMETRY in timing.ts).
+export type PresenterLayout = "center" | "left" | "right" | "corner";
 
 export interface PresenterScene {
     type: "presenter";
@@ -80,7 +84,13 @@ export interface TitleScene {
 // treats it as a fourth ("hidden") state rather than reusing bottom-callout's
 // "stays centered" meaning. Validated in pipeline/generate_moments.py, not
 // just assumed.
-export type MomentTreatment = "bottom-callout" | "side-text" | "side-image" | "side-code" | "side-diagram" | "side-terms" | "comparison" | "full-visual";
+// "content-dominant-code" (#48) is a fifth presenter state: the presenter
+// shrinks to a small corner picture-in-picture (PresenterLayout "corner")
+// while the code fills most of the frame — reuses codeAssetId, same as
+// side-code, since it's the same content, just a different layout
+// decision (per SideTextStyle's own precedent above: a layout-affecting
+// difference gets a new treatment value, not a field on an existing one).
+export type MomentTreatment = "bottom-callout" | "side-text" | "side-image" | "side-code" | "side-diagram" | "side-terms" | "comparison" | "full-visual" | "content-dominant-code";
 
 // "quote" (default, existing behavior unchanged) renders a single phrase
 // exactly as before. "title" is a bolder/larger typographic treatment for a

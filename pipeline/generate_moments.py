@@ -414,6 +414,7 @@ def duration_for_treatment(treatment, style=None):
         "side-terms": duration_frames["sideTerms"],
         "comparison": duration_frames["comparison"],
         "full-visual": duration_frames["fullVisual"],
+        "content-dominant-code": duration_frames["contentDominantCode"],
     }[treatment]
 
 
@@ -425,38 +426,46 @@ MAX_SIDE_TERMS = 4
 
 
 def cap_full_visual_ratio(proposals, style):
-    """A full-visual moment hides the presenter entirely, so it should stay
-    noticeably rarer than the side treatments — capped as a ratio of
-    already-proposed side moments (style["moments"]["fullVisualMaxRatioToSideMoments"])
-    rather than its own fixed density constant, so the cap scales with
-    however visually busy this particular episode already is. Keeps
-    proposals in their original (LLM response) order and drops full-visual
+    """A full-visual moment hides the presenter entirely, and a
+    content-dominant-code moment shrinks the presenter to a small corner
+    PiP (#48) — both give up significantly more presenter presence than a
+    side treatment, so both stay noticeably rarer than the side
+    treatments, capped as a ratio of already-proposed side moments
+    (style["moments"]["fullVisualMaxRatioToSideMoments"]) rather than
+    their own fixed density constant, so the cap scales with however
+    visually busy this particular episode already is. Shares one cap
+    (rather than a second near-duplicate config knob) since both
+    represent the same underlying judgment call: "is this visual central
+    enough to justify significantly reducing the presenter's presence."
+    Keeps proposals in their original (LLM response) order and drops
     proposals past the cap — the same "keep earliest, drop the rest"
     convention dedupe_overlapping_windows already uses."""
 
+    RARE_TREATMENTS = {"full-visual", "content-dominant-code"}
+
     side_count = sum(1 for p in proposals if p["treatment"] in SIDE_TREATMENTS)
 
-    # At least 1: the ratio is meant to keep full-visual rarer once side
-    # moments are already common, not to forbid it outright in an episode
-    # that happens to have few/no side moments proposed.
-    max_full_visual = max(
+    # At least 1: the ratio is meant to keep these rarer once side moments
+    # are already common, not to forbid them outright in an episode that
+    # happens to have few/no side moments proposed.
+    max_rare = max(
         1,
         int(side_count * style["moments"]["fullVisualMaxRatioToSideMoments"])
     )
 
     kept = []
-    full_visual_count = 0
+    rare_count = 0
 
     for proposal in proposals:
 
-        if proposal["treatment"] != "full-visual":
+        if proposal["treatment"] not in RARE_TREATMENTS:
             kept.append(proposal)
             continue
 
-        if full_visual_count >= max_full_visual:
+        if rare_count >= max_rare:
             continue
 
-        full_visual_count += 1
+        rare_count += 1
         kept.append(proposal)
 
     return kept
@@ -703,6 +712,35 @@ def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, pr
                     "codeAssetId": code_asset_id,
                     "caption": code_asset["description"],
                     "presenterSide": presenter_side,
+                    "reason": moment.get("reason", ""),
+                }
+            )
+
+        elif treatment == "content-dominant-code":
+
+            # No presenterSide — the presenter shrinks to a fixed corner
+            # PiP (Episode.tsx's LAYOUT_GEOMETRY.corner) rather than a
+            # chosen side, so there's no left/right decision here, same
+            # reasoning as full-visual/comparison already not requiring one.
+            code_asset_id = moment.get("codeAssetId")
+            code_asset = code_assets_by_id.get(code_asset_id)
+
+            if not code_asset:
+                continue
+
+            claimed_windows.add(window_id)
+
+            proposals.append(
+                {
+                    "windowId": window_id,
+                    "sceneId": candidate["sceneId"],
+                    "videoId": candidate["videoId"],
+                    "offsetInParentFrames": candidate["offsetInParentFrames"],
+                    "maxDurationInParentFrames": candidate["maxDurationInParentFrames"],
+                    "treatment": "content-dominant-code",
+                    "codeAssetId": code_asset_id,
+                    "caption": code_asset["description"],
+                    "presenterSide": None,
                     "reason": moment.get("reason", ""),
                 }
             )

@@ -47,21 +47,36 @@ export interface LayoutWindow {
     // Frame the slide-back-to-center completes — moment's own end plus
     // TRANSITION_FRAMES, clamped.
     end: number;
-    // "left"/"right": presenter slides to that side, narrowed. "hidden":
-    // presenter fades out entirely (a "full-visual" moment) rather than
-    // moving — AnimatedPresenterFrame handles this as an opacity fade, not
-    // a width/left interpolation, since there's no meaningful "side" to
-    // slide toward when the presenter isn't on screen at all.
-    side: "left" | "right" | "hidden";
+    // "left"/"right": presenter slides to that side, narrowed. "corner":
+    // presenter shrinks to a small picture-in-picture box (#48's
+    // "content-dominant-code" — code fills most of the frame, presenter
+    // stays visible but small) — reuses the same width/left/top/height
+    // interpolation as left/right (see LAYOUT_GEOMETRY's "corner" entry),
+    // just a different geometry, not a different animation mechanism.
+    // "hidden": presenter fades out entirely (a "full-visual" moment)
+    // rather than moving — AnimatedPresenterFrame handles this as an
+    // opacity fade, not a width/left interpolation, since there's no
+    // meaningful position to slide toward when the presenter isn't on
+    // screen at all.
+    side: "left" | "right" | "corner" | "hidden";
 }
 
 export const layoutWindowsForScene = (scene: PresenterScene, moments: MomentScene[]): LayoutWindow[] => {
     const windows = moments
-        .filter((m) => m.parentSceneId === scene.id && (m.presenterSide || m.treatment === "full-visual"))
+        .filter(
+            (m) =>
+                m.parentSceneId === scene.id &&
+                (m.presenterSide || m.treatment === "full-visual" || m.treatment === "content-dominant-code")
+        )
         .map((m) => ({
             start: Math.max(0, m.offsetInParentFrames - TRANSITION_FRAMES),
             end: Math.min(scene.durationInFrames, m.offsetInParentFrames + m.durationInFrames + TRANSITION_FRAMES),
-            side: m.treatment === "full-visual" ? "hidden" as const : (m.presenterSide as "left" | "right"),
+            side:
+                m.treatment === "full-visual"
+                    ? ("hidden" as const)
+                    : m.treatment === "content-dominant-code"
+                    ? ("corner" as const)
+                    : (m.presenterSide as "left" | "right"),
         }))
         .sort((a, b) => a.start - b.start);
 
@@ -231,6 +246,8 @@ const AnimatedPresenterFrame = ({
 
     let widthPct = centerGeo.widthPct;
     let leftPct = centerGeo.leftPct;
+    let topPct = centerGeo.topPct;
+    let heightPct = centerGeo.heightPct;
 
     if (activeWindow && activeWindow.side !== "hidden") {
         const sideGeo = LAYOUT_GEOMETRY[activeWindow.side];
@@ -252,6 +269,25 @@ const AnimatedPresenterFrame = ({
             sceneFrame,
             [activeWindow.start, enterEnd, exitStart, activeWindow.end],
             [centerGeo.leftPct, sideGeo.leftPct, sideGeo.leftPct, centerGeo.leftPct],
+            { easing: Easing.inOut(Easing.cubic), extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+        );
+
+        // topPct/heightPct are a no-op (0/100 -> 0/100) for left/right,
+        // since only "corner" (#48) actually varies them — kept as a
+        // uniform interpolation rather than a conditional branch so the
+        // corner PiP's shrink animates in sync with the width/left slide
+        // instead of needing its own separate enter/exit timing.
+        topPct = interpolate(
+            sceneFrame,
+            [activeWindow.start, enterEnd, exitStart, activeWindow.end],
+            [centerGeo.topPct, sideGeo.topPct, sideGeo.topPct, centerGeo.topPct],
+            { easing: Easing.inOut(Easing.cubic), extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+        );
+
+        heightPct = interpolate(
+            sceneFrame,
+            [activeWindow.start, enterEnd, exitStart, activeWindow.end],
+            [centerGeo.heightPct, sideGeo.heightPct, sideGeo.heightPct, centerGeo.heightPct],
             { easing: Easing.inOut(Easing.cubic), extrapolateLeft: "clamp", extrapolateRight: "clamp" }
         );
     }
@@ -302,6 +338,15 @@ const AnimatedPresenterFrame = ({
     const videoDivWidthPct = outerWidthPct === 0 ? 100 : (100 / outerWidthPct) * 100;
     const videoShiftPct = 50 - (videoDivWidthPct / 2);
 
+    // Vertical mirror of the above — a no-op (0/100 in, 0/100 out) for
+    // every layout except "corner" (#48), where the presenter's window
+    // shrinks vertically as well as horizontally rather than always
+    // spanning the full frame height the way left/right/center do.
+    const outerTopPct = topPct;
+    const outerHeightPct = heightPct;
+    const videoDivHeightPct = outerHeightPct === 0 ? 100 : (100 / outerHeightPct) * 100;
+    const videoVerticalShiftPct = 50 - (videoDivHeightPct / 2);
+
     // Fades in from 0 across the borrowed lead-in (rawFrame 0..crossfadeInFrames)
     // — during that window the outgoing scene's own tail is still rendering
     // underneath (it ends exactly at this scene's true timelineStartFrame,
@@ -324,8 +369,8 @@ const AnimatedPresenterFrame = ({
             <div
                 style={{
                     position: "absolute",
-                    top: 0,
-                    bottom: 0,
+                    top: `${outerTopPct}%`,
+                    height: `${outerHeightPct}%`,
                     left: `${outerLeftPct}%`,
                     width: `${outerWidthPct}%`,
                     overflow: "hidden",
@@ -334,8 +379,8 @@ const AnimatedPresenterFrame = ({
                 <div
                     style={{
                         position: "absolute",
-                        top: 0,
-                        bottom: 0,
+                        top: `${videoVerticalShiftPct}%`,
+                        height: `${videoDivHeightPct}%`,
                         left: `${videoShiftPct}%`,
                         width: `${videoDivWidthPct}%`,
                     }}
@@ -429,6 +474,22 @@ const MomentSequence = ({
                     path={codeAsset.path}
                     language={codeAsset.language}
                     presenterOnLeft={presenterOnLeft}
+                />
+            );
+        }
+
+        case "content-dominant-code": {
+            // No presenterSide — the presenter shrinks to a fixed
+            // bottom-right corner PiP (LAYOUT_GEOMETRY.corner) rather than
+            // moving to a chosen side, so there's no left/right slide
+            // direction to pass through.
+            if (!codeAsset) return null;
+            return (
+                <CodeBlock
+                    path={codeAsset.path}
+                    language={codeAsset.language}
+                    presenterOnLeft={false}
+                    size="dominant"
                 />
             );
         }

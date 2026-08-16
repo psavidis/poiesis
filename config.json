@@ -21,7 +21,8 @@
         "sideCode": 240,
         "sideDiagram": 180,
         "sideTerms": 180,
-        "fullVisual": 300
+        "fullVisual": 300,
+        "contentDominantCode": 240
       },
       "fullVisualMaxRatioToSideMoments": 0.25
     },
