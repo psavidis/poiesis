@@ -3,7 +3,7 @@ import { AbsoluteFill, interpolate, useCurrentFrame, useVideoConfig } from "remo
 import { brand } from "./brand";
 import { computeDiagramLayout } from "./diagramLayout";
 import { sideContentStyle } from "./MomentTreatments";
-import { TRANSITION_FRAMES } from "./timing";
+import { SIDE_CONTENT_WIDTH_PCT, TRANSITION_FRAMES } from "./timing";
 import type { DiagramData } from "./types";
 
 // Each node fades in slightly after the previous one (by its original
@@ -33,12 +33,13 @@ export const DiagramBlock = ({
     // Dagre lays out nodes at their natural fixed box size (see
     // diagramLayout.ts's NODE_WIDTH/NODE_HEIGHT) with no knowledge of how
     // much screen space is actually available — a wide horizontal diagram
-    // or a tall vertical one can exceed the side panel (28% of frame width)
-    // or even the full frame. Scale the whole layout down (never up — a
+    // or a tall vertical one can exceed the side panel (see timing.ts's
+    // SIDE_CONTENT_WIDTH_PCT) or even the full frame. Scale the whole
+    // layout down (never up — a
     // small 2-node diagram shouldn't blow up to fill the available box)
     // so it always fits, rather than silently clipping against the
     // AbsoluteFill's overflow:hidden.
-    const availableWidth = full ? frameWidth * 0.86 : frameWidth * 0.28 * 0.88;
+    const availableWidth = full ? frameWidth * 0.86 : frameWidth * (SIDE_CONTENT_WIDTH_PCT / 100) * 0.88;
     const availableHeight = full ? frameHeight * 0.7 : frameHeight * 0.88;
     const fitScale = Math.min(
         1,

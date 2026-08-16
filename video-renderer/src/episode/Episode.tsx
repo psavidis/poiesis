@@ -1,6 +1,7 @@
 import {
     AbsoluteFill,
     Audio,
+    Easing,
     Loop,
     OffthreadVideo,
     Sequence,
@@ -10,7 +11,7 @@ import {
     useVideoConfig,
 } from "remotion";
 
-import type { EpisodeAsset, EpisodeCodeAsset, EpisodeProps, EpisodeVideo, MomentScene, PresenterLayout, PresenterScene, Scene, TitleScene } from "./types";
+import type { EpisodeAsset, EpisodeCodeAsset, EpisodeProps, EpisodeVideo, MomentScene, PresenterScene, Scene, TitleScene } from "./types";
 import { AnimatedTitle } from "./AnimatedTitle";
 import { BeatOverlay } from "./BeatOverlay";
 import { CaptionText } from "./CaptionText";
@@ -21,25 +22,7 @@ import { EpisodeImage } from "./EpisodeImage";
 import { FullVisualMoment } from "./FullVisualMoment";
 import { BottomCallout, SideImage, SideText } from "./MomentTreatments";
 import { SideTerms } from "./SideTerms";
-import { TRANSITION_FRAMES } from "./timing";
-
-// Frame geometry for each layout, as a fraction of the full frame. "left"/
-// "right" leave the opposite side free for a moment's side-text/side-image
-// treatment. The presenter box stays wide (72%) rather than a literal half
-// — objectFit stays "cover" at the same scale as center (see
-// AnimatedPresenterFrame), so the presenter never shrinks when moving to a
-// side. A narrower box would force either shrinking the presenter to fit
-// (feels wrong — the whole point of the slide is to free up room, not
-// visually diminish the presenter) or cropping at the box edges tight
-// enough to regularly clip gesturing arms/hands. 72% only crops the far
-// background at the box edge, not the presenter's own motion range for
-// ordinary talking-head gesturing. MomentTreatments.tsx's SideText/SideImage
-// use the matching 28% remaining width.
-export const LAYOUT_GEOMETRY: Record<PresenterLayout, { widthPct: number; leftPct: number }> = {
-    center: { widthPct: 100, leftPct: 0 },
-    left: { widthPct: 72, leftPct: 0 },
-    right: { widthPct: 72, leftPct: 28 },
-};
+import { LAYOUT_GEOMETRY, TRANSITION_FRAMES } from "./timing";
 
 // A crossfade "borrows" a few extra source frames immediately before a
 // clip's own silence-trimmed sourceStartFrame (real footage that exists,
@@ -238,18 +221,22 @@ const AnimatedPresenterFrame = ({
         const enterEnd = Math.min(activeWindow.start + TRANSITION_FRAMES, activeWindow.end);
         const exitStart = Math.max(activeWindow.end - TRANSITION_FRAMES, enterEnd);
 
+        // Eased (not linear) so the slide reads as a deliberate, weighted
+        // move rather than a mechanical pan — accelerates out of center,
+        // decelerates into the side position (and the mirror on the way
+        // back), same easing on both edges since inOut is symmetric.
         widthPct = interpolate(
             sceneFrame,
             [activeWindow.start, enterEnd, exitStart, activeWindow.end],
             [centerGeo.widthPct, sideGeo.widthPct, sideGeo.widthPct, centerGeo.widthPct],
-            { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+            { easing: Easing.inOut(Easing.cubic), extrapolateLeft: "clamp", extrapolateRight: "clamp" }
         );
 
         leftPct = interpolate(
             sceneFrame,
             [activeWindow.start, enterEnd, exitStart, activeWindow.end],
             [centerGeo.leftPct, sideGeo.leftPct, sideGeo.leftPct, centerGeo.leftPct],
-            { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+            { easing: Easing.inOut(Easing.cubic), extrapolateLeft: "clamp", extrapolateRight: "clamp" }
         );
     }
 

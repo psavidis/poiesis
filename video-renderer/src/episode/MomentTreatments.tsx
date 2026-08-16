@@ -1,5 +1,6 @@
 import {
     AbsoluteFill,
+    Easing,
     Img,
     interpolate,
     spring,
@@ -9,7 +10,7 @@ import {
 } from "remotion";
 
 import { brand } from "./brand";
-import { TRANSITION_FRAMES } from "./timing";
+import { SIDE_CONTENT_WIDTH_PCT, TRANSITION_FRAMES } from "./timing";
 
 // SideText/SideImage's own fade timing is derived from the same
 // TRANSITION_FRAMES constant Episode.tsx uses for the presenter's
@@ -91,15 +92,16 @@ export const BottomCallout = ({ text }: { text: string }) => {
 
 // Shared positioning for the "content fills whichever side the presenter
 // isn't occupying" treatments. presenterOnLeft mirrors the content to the
-// opposite side, matching Episode.tsx's LAYOUT_GEOMETRY split (presenter
-// stays at full on-screen scale in a 72%-wide window, content in the
-// remaining 28%).
+// opposite side. Width is derived from timing.ts's LAYOUT_GEOMETRY (100 -
+// the presenter's own widthPct) rather than a second hardcoded
+// percentage, so this can never silently drift out of sync with how much
+// room the presenter's own slide animation actually frees up.
 export const sideContentStyle = (presenterOnLeft: boolean): React.CSSProperties => ({
     position: "absolute",
     top: 0,
     bottom: 0,
     [presenterOnLeft ? "right" : "left"]: 0,
-    width: "28%",
+    width: `${SIDE_CONTENT_WIDTH_PCT}%`,
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
@@ -130,12 +132,15 @@ export const SideText = ({
     // Slides in from its own edge (the side the presenter just vacated)
     // rather than fading in place, so it visually arrives together with the
     // presenter's own slide animation instead of feeling like an unrelated
-    // overlay.
+    // overlay — eased (not linear), matching the presenter's own eased
+    // slide (see Episode.tsx's AnimatedPresenterFrame), so the two motions
+    // read as one choreographed move rather than arriving on different
+    // rhythms.
     const translateX = interpolate(
         frame,
         [0, TRANSITION_FRAMES],
         [presenterOnLeft ? -40 : 40, 0],
-        { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+        { easing: Easing.out(Easing.cubic), extrapolateLeft: "clamp", extrapolateRight: "clamp" }
     );
 
     const opacity = interpolate(
@@ -183,11 +188,15 @@ export const SideImage = ({
     const frame = useCurrentFrame();
     const { durationInFrames } = useVideoConfig();
 
+    // Eased slide-in, matching the presenter's own eased slide (see
+    // Episode.tsx's AnimatedPresenterFrame) so the two motions read as one
+    // choreographed move rather than the content arriving on a different
+    // rhythm than the presenter making room for it.
     const translateX = interpolate(
         frame,
         [0, TRANSITION_FRAMES],
         [presenterOnLeft ? -40 : 40, 0],
-        { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+        { easing: Easing.out(Easing.cubic), extrapolateLeft: "clamp", extrapolateRight: "clamp" }
     );
 
     const opacity = interpolate(

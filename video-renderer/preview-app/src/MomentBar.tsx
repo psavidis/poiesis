@@ -1,9 +1,42 @@
 import type { MomentScene, PresenterScene, ScenePlan, TitleScene } from "video-renderer-src/episode/types";
 
-// One color regardless of treatment — treatments already have their own
-// per-type styling inside the player itself; this strip's job is just
-// "where are the moments," not re-encoding treatment as color too.
-const MOMENT_COLOR = "#8b5cf6";
+// Two-category color scheme, not per-treatment — the question this strip
+// answers is "where does text appear on screen" (see #35), not "what
+// exact treatment is this." Text-bearing: the viewer will see words
+// rendered as this moment's primary content. Visual-bearing: an
+// image/diagram/code block is the primary content (its own caption, if
+// any, is secondary). "full-visual" is data-driven (fullVisualKind), not
+// a fixed treatment->category mapping, so it needs the whole moment, not
+// just its treatment string.
+const TEXT_COLOR = "#3a9bd5";
+const VISUAL_COLOR = "#8b5cf6";
+
+const TEXT_TREATMENTS = new Set(["bottom-callout", "side-text", "side-terms", "comparison"]);
+
+function isTextMoment(moment: MomentScene): boolean {
+    if (moment.treatment === "full-visual") return moment.fullVisualKind === "text";
+    return TEXT_TREATMENTS.has(moment.treatment);
+}
+
+// Best-effort label for what a moment actually shows, for the inline
+// label on wide-enough segments and the hover tooltip on narrow ones —
+// mirrors MomentEditorPanel's summarizeMomentContent for the treatments
+// that don't carry a single m.text field.
+function momentLabel(moment: MomentScene): string {
+    if (moment.text) return moment.text;
+    if (moment.treatment === "side-terms" && moment.terms?.length) {
+        return moment.terms.map((t) => t.text).join(", ");
+    }
+    if (moment.treatment === "comparison" && moment.comparison) {
+        return `${moment.comparison.left} vs ${moment.comparison.right}`;
+    }
+    if (moment.treatment === "side-diagram" && moment.diagram) {
+        return moment.diagram.nodes.map((n) => n.label).join(" → ");
+    }
+    if (moment.treatment === "side-code") return moment.codeAssetId ?? moment.treatment;
+    if (moment.treatment === "side-image") return moment.caption || moment.assetId || moment.treatment;
+    return moment.treatment;
+}
 
 interface Props {
     scenePlan: ScenePlan;
@@ -55,7 +88,17 @@ export function MomentBar({ scenePlan, totalFrames, currentFrame, onSeek, onSele
 
     return (
         <div style={styles.wrap}>
-            <div style={styles.label}>Moments ({resolved.length})</div>
+            <div style={styles.labelRow}>
+                <span style={styles.label}>Moments ({resolved.length})</span>
+                <span style={styles.legend}>
+                    <span style={styles.legendItem}>
+                        <span style={{ ...styles.legendDot, background: TEXT_COLOR }} /> text
+                    </span>
+                    <span style={styles.legendItem}>
+                        <span style={{ ...styles.legendDot, background: VISUAL_COLOR }} /> image/diagram/code
+                    </span>
+                </span>
+            </div>
 
             <div style={styles.track} onMouseDown={onTrackClick}>
                 {resolved.map(({ moment, startFrame }) => {
@@ -64,6 +107,8 @@ export function MomentBar({ scenePlan, totalFrames, currentFrame, onSeek, onSele
                     // rendering as an invisible sliver.
                     const widthPct = Math.max((moment.durationInFrames / totalFrames) * 100, 0.6);
                     const leftPct = (startFrame / totalFrames) * 100;
+                    const label = momentLabel(moment);
+                    const color = isTextMoment(moment) ? TEXT_COLOR : VISUAL_COLOR;
 
                     return (
                         <div
@@ -72,10 +117,13 @@ export function MomentBar({ scenePlan, totalFrames, currentFrame, onSeek, onSele
                                 ...styles.segment,
                                 left: `${leftPct}%`,
                                 width: `${widthPct}%`,
+                                background: color,
                             }}
-                            title={`${moment.id} — ${moment.treatment}`}
+                            title={`${moment.id} — ${moment.treatment}: ${label}`}
                             onClick={(e) => onSelectMoment(moment.id, { x: e.clientX, y: e.clientY })}
-                        />
+                        >
+                            {widthPct > 4 && <span style={styles.segmentLabel}>{label}</span>}
+                        </div>
                     );
                 })}
 
@@ -95,13 +143,37 @@ const styles: Record<string, React.CSSProperties> = {
         flexDirection: "column",
         gap: 6,
     },
+    labelRow: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        flexWrap: "wrap",
+        gap: 8,
+    },
     label: {
         fontSize: 12,
         color: "#9aa7b4",
     },
+    legend: {
+        display: "flex",
+        gap: 12,
+        fontSize: 11,
+        color: "#6b7683",
+    },
+    legendItem: {
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+    },
+    legendDot: {
+        width: 8,
+        height: 8,
+        borderRadius: "50%",
+        flexShrink: 0,
+    },
     track: {
         position: "relative",
-        height: 20,
+        height: 28,
         borderRadius: 6,
         background: "#161d24",
         border: "1px solid #2a333d",
@@ -113,8 +185,20 @@ const styles: Record<string, React.CSSProperties> = {
         top: 2,
         bottom: 2,
         borderRadius: 3,
-        background: MOMENT_COLOR,
+        display: "flex",
+        alignItems: "center",
+        overflow: "hidden",
         cursor: "pointer",
+    },
+    segmentLabel: {
+        padding: "0 6px",
+        fontSize: 10,
+        fontWeight: 600,
+        color: "#fff",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        textShadow: "0 1px 2px rgba(0,0,0,0.5)",
     },
     playhead: {
         position: "absolute",
