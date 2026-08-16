@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Player, type PlayerRef } from "@remotion/player";
 import { Episode } from "video-renderer-src/episode/Episode";
 import type { EpisodeProps, Scene, ScenePlan } from "video-renderer-src/episode/types";
-import { getAssets, getCodeAssets, getManifest, getScenePlan, type EpisodeStatus } from "./api";
+import { getAssets, getCodeAssets, getManifest, getScenePlan, undoLastEdit, type EpisodeStatus } from "./api";
 import { ActiveSceneBar } from "./ActiveSceneBar";
 import { AdvancedPanel } from "./AdvancedPanel";
 import { BeatBar } from "./BeatBar";
@@ -19,6 +19,10 @@ import { ProgressFlow } from "./ProgressFlow";
 import { SceneBar } from "./SceneBar";
 import { StoryboardPanel } from "./StoryboardPanel";
 import { TitleEditorPanel } from "./TitleEditorPanel";
+
+// Display-only label for the undo shortcut's hint — mirrors BeatBar's own
+// MOD_KEY_LABEL constant.
+const MOD_KEY_LABEL = navigator.platform.toLowerCase().includes("mac") ? "Cmd" : "Ctrl";
 
 function useQueryParams() {
     const params = new URLSearchParams(window.location.search);
@@ -240,6 +244,46 @@ export function EpisodeWorkspace() {
         setRefreshKey((k) => k + 1);
     };
 
+    // #50 — a single Undo button/shortcut covering every write path
+    // (moment/beat/title/storyboard/scene-field edits, and edit-plan chat
+    // instructions) uniformly, since the server-side checkpoint each of
+    // those endpoints saves already knows exactly which files that
+    // specific write touched. Reuses reloadScenePlan (same as every other
+    // save's onSaved callback) rather than a separate refresh path, so
+    // undo's result reaches the player/panels the same way any other edit
+    // already does.
+    const [undoStatus, setUndoStatus] = useState<string | null>(null);
+
+    const handleUndo = async () => {
+        if (!episodePath) return;
+        try {
+            const result = await undoLastEdit(episodePath);
+            if (result.restored) {
+                setUndoStatus(`Undid: ${result.restored.label}`);
+                reloadScenePlan();
+            } else {
+                setUndoStatus("Nothing to undo.");
+            }
+        } catch (e) {
+            setUndoStatus(String(e));
+        }
+    };
+
+    useEffect(() => {
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key.toLowerCase() !== "z" || !(e.metaKey || e.ctrlKey)) return;
+            const target = e.target as HTMLElement | null;
+            if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+
+            e.preventDefault();
+            handleUndo();
+        };
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [episodePath]);
+
     // Client-side only — never written back to scene-plan.json. Lets you
     // quickly check "how does this look without captions" without touching
     // saved data; pipeline/generate_captions.py --disable (via the control
@@ -305,6 +349,12 @@ export function EpisodeWorkspace() {
             <div style={styles.brandBanner}>
                 <img src="/poiesis-logo.png" alt="" style={styles.brandLogo} />
                 <span style={styles.brandText}>Poiesis Preview</span>
+                <div style={styles.undoWrap}>
+                    <button className="secondary small" onClick={handleUndo} title={`Undo the last edit (${MOD_KEY_LABEL}+Z)`}>
+                        Undo ({MOD_KEY_LABEL}+Z)
+                    </button>
+                    {undoStatus && <span style={styles.undoStatus}>{undoStatus}</span>}
+                </div>
             </div>
             <ProgressFlow episodePath={episodePath} skipCaptions={!includeCaptions} onStatusChange={setEpisodeStatus} />
             <AdvancedPanel
@@ -539,12 +589,30 @@ const styles: Record<string, React.CSSProperties> = {
         gap: 12,
     },
     brandBanner: {
+        position: "relative",
         display: "flex",
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
         gap: 16,
         padding: "20px 0",
+    },
+    undoWrap: {
+        position: "absolute",
+        right: 12,
+        top: "50%",
+        transform: "translateY(-50%)",
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+    },
+    undoStatus: {
+        fontSize: 12,
+        color: "#9aa7b4",
+        maxWidth: 260,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
     },
     brandLogo: {
         width: 88,

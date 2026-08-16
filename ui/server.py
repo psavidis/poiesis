@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from episode_locks import EpisodeBusyError, episode_lock
 from pipeline_stages import SECONDARY_STAGES, find_stage, stage_status
 from process_runner import stream_process
+from undo import restore_latest, wrap_with_checkpoint
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
 
@@ -196,22 +197,25 @@ def update_title_scenes(path: str, body: TitleScenesUpdate):
 
     titles = [title.model_dump() for title in body.titles]
 
+    def do_write():
+        with scene_plan_path.open("r", encoding="utf-8") as f:
+            scene_plan = json.load(f)
+
+        with episode_transcript_path.open("r", encoding="utf-8") as f:
+            episode_transcript = json.load(f)
+
+        with manifest_path.open("r", encoding="utf-8") as f:
+            manifest = json.load(f)
+
+        scene_plan = merge_title_scenes(scene_plan, titles, episode_transcript, manifest)
+
+        write_json_atomic(title_scenes_path, {"titles": titles})
+        write_json_atomic(scene_plan_path, scene_plan)
+        regenerate_codegen(episode)
+
     try:
         with episode_lock(episode, wait=False):
-            with scene_plan_path.open("r", encoding="utf-8") as f:
-                scene_plan = json.load(f)
-
-            with episode_transcript_path.open("r", encoding="utf-8") as f:
-                episode_transcript = json.load(f)
-
-            with manifest_path.open("r", encoding="utf-8") as f:
-                manifest = json.load(f)
-
-            scene_plan = merge_title_scenes(scene_plan, titles, episode_transcript, manifest)
-
-            write_json_atomic(title_scenes_path, {"titles": titles})
-            write_json_atomic(scene_plan_path, scene_plan)
-            regenerate_codegen(episode)
+            wrap_with_checkpoint(processing, [scene_plan_path, title_scenes_path], "title edit", do_write)
     except EpisodeBusyError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
@@ -247,7 +251,10 @@ def update_storyboard(path: str, body: StoryboardUpdate):
 
     try:
         with episode_lock(episode, wait=False):
-            write_json_atomic(storyboard_path, {"chapters": chapters})
+            wrap_with_checkpoint(
+                processing, [storyboard_path], "storyboard edit",
+                lambda: write_json_atomic(storyboard_path, {"chapters": chapters})
+            )
     except EpisodeBusyError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
@@ -303,16 +310,19 @@ def update_moments(path: str, body: MomentsUpdate):
 
     moments = [m.model_dump() for m in body.moments]
 
+    def do_write():
+        with scene_plan_path.open("r", encoding="utf-8") as f:
+            scene_plan = json.load(f)
+
+        scene_plan = merge_moment_scenes(scene_plan, moments)
+
+        write_json_atomic(moments_path, {"moments": moments})
+        write_json_atomic(scene_plan_path, scene_plan)
+        regenerate_codegen(episode)
+
     try:
         with episode_lock(episode, wait=False):
-            with scene_plan_path.open("r", encoding="utf-8") as f:
-                scene_plan = json.load(f)
-
-            scene_plan = merge_moment_scenes(scene_plan, moments)
-
-            write_json_atomic(moments_path, {"moments": moments})
-            write_json_atomic(scene_plan_path, scene_plan)
-            regenerate_codegen(episode)
+            wrap_with_checkpoint(processing, [scene_plan_path, moments_path], "moment edit", do_write)
     except EpisodeBusyError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
@@ -357,16 +367,19 @@ def update_beats(path: str, body: BeatsUpdate):
 
     beats = [b.model_dump() for b in body.beats]
 
+    def do_write():
+        with scene_plan_path.open("r", encoding="utf-8") as f:
+            scene_plan = json.load(f)
+
+        scene_plan = merge_beat_scenes(scene_plan, beats)
+
+        write_json_atomic(beats_path, {"beats": beats})
+        write_json_atomic(scene_plan_path, scene_plan)
+        regenerate_codegen(episode)
+
     try:
         with episode_lock(episode, wait=False):
-            with scene_plan_path.open("r", encoding="utf-8") as f:
-                scene_plan = json.load(f)
-
-            scene_plan = merge_beat_scenes(scene_plan, beats)
-
-            write_json_atomic(beats_path, {"beats": beats})
-            write_json_atomic(scene_plan_path, scene_plan)
-            regenerate_codegen(episode)
+            wrap_with_checkpoint(processing, [scene_plan_path, beats_path], "beat edit", do_write)
     except EpisodeBusyError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
@@ -415,11 +428,17 @@ def update_scene_fields(path: str, body: SceneFieldUpdate):
             if rejected:
                 raise HTTPException(status_code=422, detail=rejected[0]["reason"])
 
-            updated_plan = apply_operations(scene_plan, valid_ops)
-            updated_plan = reflow_timeline(updated_plan)
+            # Checkpoint only after validation passes — a rejected
+            # instruction never reaches a write at all, so it shouldn't
+            # burn an undo-history slot for nothing.
+            def do_write():
+                updated_plan = apply_operations(scene_plan, valid_ops)
+                updated_plan = reflow_timeline(updated_plan)
 
-            write_json_atomic(scene_plan_path, updated_plan)
-            regenerate_codegen(episode)
+                write_json_atomic(scene_plan_path, updated_plan)
+                regenerate_codegen(episode)
+
+            wrap_with_checkpoint(processing, [scene_plan_path], "scene field edit", do_write)
     except EpisodeBusyError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
@@ -547,17 +566,58 @@ def edit_scene_plan(path: str, body: EditPlanRequest):
             except Exception as e:
                 raise HTTPException(status_code=502, detail=f"Edit request failed: {e}")
 
-            removed_ids = {op["sceneId"] for op in valid_ops if op["op"] == "remove"}
-            if removed_ids:
-                _sync_removed_moments(processing, scene_plan, removed_ids)
-                _sync_removed_titles(processing, scene_plan, removed_ids)
+            # Checkpoint only after the LLM call succeeds — a failed LLM
+            # call never reaches a write, so it shouldn't burn an
+            # undo-history slot. moments.json/title_scenes.json are
+            # snapshotted unconditionally alongside scene-plan.json (not
+            # only when removed_ids is non-empty below) since
+            # save_checkpoint already only snapshots files that actually
+            # exist — simpler than predicting exactly which of the two
+            # this particular instruction will end up touching.
+            def do_write():
+                removed_ids = {op["sceneId"] for op in valid_ops if op["op"] == "remove"}
+                if removed_ids:
+                    _sync_removed_moments(processing, scene_plan, removed_ids)
+                    _sync_removed_titles(processing, scene_plan, removed_ids)
 
-            write_json_atomic(scene_plan_path, updated_plan)
-            regenerate_codegen(episode)
+                write_json_atomic(scene_plan_path, updated_plan)
+                regenerate_codegen(episode)
+
+            wrap_with_checkpoint(
+                processing,
+                [scene_plan_path, processing / "moments.json", processing / "title_scenes.json"],
+                f"chat: {body.instruction}",
+                do_write,
+            )
     except EpisodeBusyError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
     return {"applied": valid_ops, "rejected": rejected}
+
+
+@app.post("/api/episode/undo")
+def undo_last_edit(path: str):
+    """Restores the most recent checkpoint saved by any of the write
+    endpoints above (moments/beats/titles/storyboard/scene-field/edit-plan
+    — see undo.py's module docstring for why every write endpoint
+    snapshots every file it's about to touch, not just scene-plan.json).
+    Returns {"restored": None} rather than a 404/error when there's no
+    checkpoint to undo — an empty undo history is a normal state (a fresh
+    episode, or one already fully undone), not a failure."""
+
+    episode = resolve_episode(path)
+    processing = episode / "processing"
+
+    try:
+        with episode_lock(episode, wait=False):
+            manifest = restore_latest(processing)
+
+            if manifest is not None:
+                regenerate_codegen(episode)
+    except EpisodeBusyError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    return {"restored": manifest}
 
 
 async def _run_websocket(websocket: WebSocket, build_command):

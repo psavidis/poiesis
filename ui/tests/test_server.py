@@ -1031,3 +1031,109 @@ def test_different_episodes_do_not_block_each_other(tmp_path):
         )
 
     assert response.status_code == 200
+
+
+def test_undo_with_no_history_returns_none_restored(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    response = client.post("/api/episode/undo", params={"path": str(episode)})
+
+    assert response.status_code == 200
+    assert response.json() == {"restored": None}
+
+
+def test_undo_restores_scene_plan_and_moments_after_a_moment_edit(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    scene_plan_before = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    assert not (episode / "processing" / "moments.json").exists()
+
+    save_response = client.put(
+        "/api/episode/moments",
+        params={"path": str(episode)},
+        json={"moments": [_bottom_callout_payload()]},
+    )
+    assert save_response.status_code == 200
+    assert (episode / "processing" / "moments.json").exists()
+
+    scene_plan_after = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    assert scene_plan_after != scene_plan_before
+    assert any(s["type"] == "moment" for s in scene_plan_after["scenes"])
+
+    undo_response = client.post("/api/episode/undo", params={"path": str(episode)})
+
+    assert undo_response.status_code == 200
+    assert undo_response.json()["restored"]["label"] == "moment edit"
+
+    # scene-plan.json is back to its pre-edit state...
+    scene_plan_restored = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    assert scene_plan_restored == scene_plan_before
+
+    # ...and moments.json (which didn't exist before the edit) is gone
+    # again too — restoring only scene-plan.json while leaving a stray
+    # moments.json behind would let a later moment save silently
+    # resurrect the undone moment (the #33 bug class this guards against).
+    assert not (episode / "processing" / "moments.json").exists()
+
+
+def test_undo_after_edit_plan_chat_restores_removed_title_scene(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+    _make_title_scene_fixtures(episode)
+
+    client.put(
+        "/api/episode/title-scenes",
+        params={"path": str(episode)},
+        json={"titles": [{"segmentId": "s0", "text": "Original Title"}]},
+    )
+
+    title_scenes_before = json.loads((episode / "processing" / "title_scenes.json").read_text())
+    scene_plan_before = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    assert any(s["type"] == "title" for s in scene_plan_before["scenes"])
+
+    title_scene_id = next(s["id"] for s in scene_plan_before["scenes"] if s["type"] == "title")
+
+    with patch("server.edit_plan") as mock_edit_plan:
+        removed_plan = {
+            **scene_plan_before,
+            "scenes": [s for s in scene_plan_before["scenes"] if s["id"] != title_scene_id],
+        }
+        mock_edit_plan.return_value = (
+            removed_plan,
+            [{"op": "remove", "sceneId": title_scene_id, "reason": "not needed"}],
+            [],
+        )
+
+        chat_response = client.post(
+            "/api/episode/edit-plan",
+            params={"path": str(episode)},
+            json={"instruction": "remove the title card"},
+        )
+
+    assert chat_response.status_code == 200
+
+    scene_plan_after = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    assert not any(s["type"] == "title" for s in scene_plan_after["scenes"])
+
+    undo_response = client.post("/api/episode/undo", params={"path": str(episode)})
+
+    assert undo_response.status_code == 200
+    assert undo_response.json()["restored"]["label"] == "chat: remove the title card"
+
+    scene_plan_restored = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    title_scenes_restored = json.loads((episode / "processing" / "title_scenes.json").read_text())
+
+    assert scene_plan_restored == scene_plan_before
+    assert title_scenes_restored == title_scenes_before
+
+
+def test_undo_returns_409_when_episode_is_locked(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    with episode_lock(episode):
+        response = client.post("/api/episode/undo", params={"path": str(episode)})
+
+    assert response.status_code == 409

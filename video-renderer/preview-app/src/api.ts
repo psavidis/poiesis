@@ -216,6 +216,28 @@ export async function editPlan(episodePath: string, instruction: string): Promis
     return res.json();
 }
 
+export interface UndoResult {
+    restored: { label: string; files: { relative: string; existed: boolean }[] } | null;
+}
+
+// #50 — restores the most recent server-side checkpoint (see ui/undo.py),
+// covering every write path (moments/beats/titles/storyboard/scene-field/
+// edit-plan chat) uniformly, since each of those endpoints snapshots
+// every file it's about to touch before writing. `restored: null` means
+// there was nothing to undo (not an error) — the caller should treat that
+// as a no-op, e.g. show "nothing to undo" rather than reloading.
+export async function undoLastEdit(episodePath: string): Promise<UndoResult> {
+    const res = await fetch(
+        `${API_BASE}/api/episode/undo?path=${encodeURIComponent(episodePath)}`,
+        { method: "POST" }
+    );
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || "Undo failed");
+    }
+    return res.json();
+}
+
 export type RunMessage =
     | { type: "start"; command: string }
     | { type: "log"; line: string }
