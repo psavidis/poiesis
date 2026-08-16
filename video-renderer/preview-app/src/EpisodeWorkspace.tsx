@@ -85,15 +85,15 @@ export function EpisodeWorkspace() {
         | null
     >(null);
 
-    // Prefills EditPlanChat's instruction box when a scene chip is clicked
-    // (see #29) — the same click that opens a structured editor also
-    // primes the chat with "edit <that scene's id>: ", so both correction
-    // paths start from one gesture on one shared plan. prefillKey is
-    // bumped (not just prefillSceneId set) so clicking the same chip twice
-    // in a row still re-applies the prefill even if the box already holds
-    // that exact text.
-    const [prefillSceneId, setPrefillSceneId] = useState<string | undefined>(undefined);
-    const [prefillKey, setPrefillKey] = useState(0);
+    // The scene currently selected for chat context (see #51) — set when
+    // an ActiveSceneBar scene chip is clicked (see #29). Originally this
+    // pre-filled the chat's TEXT with "edit <id>: " so the user had to
+    // type the rest around it; now it's passed to EditPlanChat as
+    // structured context instead, so "make this bigger" resolves against
+    // it without any scene id appearing in what the user types (the
+    // server still degrades gracefully if this is stale/unset — see
+    // edit_plan.describe_selected_scene).
+    const [selectedSceneIdForChat, setSelectedSceneIdForChat] = useState<string | undefined>(undefined);
 
     // The floating text-only editor (see #34) — reached only from SceneBar/
     // MomentBar/ChapterStrip's segment clicks, deliberately NOT from
@@ -523,10 +523,7 @@ export function EpisodeWorkspace() {
                         setInlineEditTarget(null);
                         setSelectedEditor({ kind: "moment", sceneId: momentSceneId });
                     }}
-                    onSelectScene={(sceneId) => {
-                        setPrefillSceneId(sceneId);
-                        setPrefillKey((k) => k + 1);
-                    }}
+                    onSelectScene={(sceneId) => setSelectedSceneIdForChat(sceneId)}
                 />
             </div>
 
@@ -571,8 +568,8 @@ export function EpisodeWorkspace() {
                 <EditPlanChat
                     episodePath={episodePath}
                     onApplied={reloadScenePlan}
-                    prefillSceneId={prefillSceneId}
-                    prefillKey={prefillKey}
+                    selectedSceneId={selectedSceneIdForChat}
+                    scenePlan={episodeProps.scenePlan}
                 />
             </div>
         </div>

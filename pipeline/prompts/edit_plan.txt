@@ -8,6 +8,13 @@ The creator's instruction:
 
 {instruction}
 
+Currently selected in the editor (the creator clicked this scene right before typing, so
+"this"/"that"/"it" in the instruction most likely refers to it — but only if the instruction
+doesn't already point somewhere else, e.g. an explicit different scene id or an unambiguous
+description of a different scene):
+
+{selected_scene}
+
 The current scene plan:
 
 {scene_plan}
@@ -28,9 +35,10 @@ Only these fields may be updated, per scene type:
 
 If the instruction is ambiguous about which scene it refers to (e.g. "remove the pause" when
 several scenes could match), pick the single best match based on context — text content,
-position in the video, scene type implied by the instruction — rather than proposing multiple
-uncertain operations. If you genuinely cannot identify which scene the instruction means,
-return an empty operations list rather than guessing at the wrong one.
+position in the video, scene type implied by the instruction, and the currently selected scene
+above if there is one — rather than proposing multiple uncertain operations. If you genuinely
+cannot identify which scene the instruction means, return an empty operations list rather than
+guessing at the wrong one.
 
 Frame values (sourceStartFrame, sourceEndFrame, offsetInParentFrames, durationInFrames) are
 integers in frames, not seconds — the scene plan's "fps" field tells you the frame rate if you

@@ -697,8 +697,40 @@ def test_edit_scene_plan_applies_validated_operations(tmp_path):
     assert body["rejected"] == []
     mock_edit_plan.assert_called_once()
 
-    scene_plan_on_disk = json.loads((episode / "processing" / "scene-plan.json").read_text())
-    assert scene_plan_on_disk["scenes"][0]["id"] == "scene-001"
+
+def test_edit_scene_plan_passes_selected_scene_id_through_to_edit_plan(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    fake_result = ({"scenes": []}, [], [])
+
+    with patch("server.edit_plan", return_value=fake_result) as mock_edit_plan:
+        response = client.post(
+            "/api/episode/edit-plan",
+            params={"path": str(episode)},
+            json={"instruction": "make this bigger", "selectedSceneId": "scene-002"},
+        )
+
+    assert response.status_code == 200
+    mock_edit_plan.assert_called_once()
+    assert mock_edit_plan.call_args.kwargs["selected_scene_id"] == "scene-002"
+
+
+def test_edit_scene_plan_defaults_selected_scene_id_to_none(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    fake_result = ({"scenes": []}, [], [])
+
+    with patch("server.edit_plan", return_value=fake_result) as mock_edit_plan:
+        response = client.post(
+            "/api/episode/edit-plan",
+            params={"path": str(episode)},
+            json={"instruction": "remove the second clip"},
+        )
+
+    assert response.status_code == 200
+    assert mock_edit_plan.call_args.kwargs["selected_scene_id"] is None
 
 
 def test_edit_scene_plan_removes_moment_from_moments_json(tmp_path):

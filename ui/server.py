@@ -447,6 +447,13 @@ def update_scene_fields(path: str, body: SceneFieldUpdate):
 
 class EditPlanRequest(BaseModel):
     instruction: str
+    # The scene id currently selected in the editor when the user
+    # submitted the instruction (see #51) — lets edit_plan.py resolve
+    # "this"/"that"/"it" without the user typing a scene id. Optional and
+    # best-effort: a stale id (e.g. that scene was already removed by a
+    # prior edit) degrades gracefully rather than erroring — see
+    # edit_plan.describe_selected_scene.
+    selectedSceneId: str | None = None
 
 
 MOMENT_SCENE_ID_PATTERN = re.compile(r"^scene-moment-(\d+)$")
@@ -561,7 +568,8 @@ def edit_scene_plan(path: str, body: EditPlanRequest):
 
             try:
                 updated_plan, valid_ops, rejected = edit_plan(
-                    scene_plan, body.instruction, llm, prompt_template
+                    scene_plan, body.instruction, llm, prompt_template,
+                    selected_scene_id=body.selectedSceneId,
                 )
             except Exception as e:
                 raise HTTPException(status_code=502, detail=f"Edit request failed: {e}")

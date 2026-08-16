@@ -48,7 +48,10 @@ export function ActiveSceneBar({ track, overlays, onSelectTitle, onSelectMoment,
     );
 }
 
-function sceneLabel(scene: Scene): string {
+// Exported for EditPlanChat's selection indicator (#51) — same
+// "what does this scene actually show" summarization, no reason to
+// duplicate the per-type switch there.
+export function sceneLabel(scene: Scene): string {
     switch (scene.type) {
         case "presenter":
             return `clip ${scene.videoId}`;

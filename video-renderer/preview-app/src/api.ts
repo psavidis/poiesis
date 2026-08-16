@@ -200,13 +200,22 @@ export interface EditPlanResult {
     rejected: { operation: EditPlanOperation; reason: string }[];
 }
 
-export async function editPlan(episodePath: string, instruction: string): Promise<EditPlanResult> {
+// selectedSceneId (#51) — the scene currently selected in the editor when
+// the instruction was submitted, so "make this bigger" can resolve
+// without the user typing a scene id. Optional/best-effort: the server
+// degrades gracefully (edit_plan.describe_selected_scene) if the id is
+// stale or absent.
+export async function editPlan(
+    episodePath: string,
+    instruction: string,
+    selectedSceneId?: string
+): Promise<EditPlanResult> {
     const res = await fetch(
         `${API_BASE}/api/episode/edit-plan?path=${encodeURIComponent(episodePath)}`,
         {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ instruction }),
+            body: JSON.stringify({ instruction, selectedSceneId }),
         }
     );
     if (!res.ok) {

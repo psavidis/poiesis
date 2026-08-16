@@ -1,5 +1,6 @@
 from edit_plan import (
     apply_operations,
+    describe_selected_scene,
     edit_plan,
     reflow_timeline,
     validate_operations,
@@ -9,8 +10,10 @@ from edit_plan import (
 class _FakeLLMClient:
     def __init__(self, response):
         self.response = response
+        self.last_prompt = None
 
     def complete_json(self, prompt, thinking=True):
+        self.last_prompt = prompt
         return self.response
 
 
@@ -263,6 +266,7 @@ PROMPT_TEMPLATE = (
     "instruction: {instruction}\n"
     "plan: {scene_plan}\n"
     "fields: {editable_fields}\n"
+    "selected: {selected_scene}\n"
 )
 
 
@@ -342,3 +346,80 @@ def test_edit_plan_handles_instruction_containing_template_like_braces():
     assert valid_ops == []
     assert rejected == []
     assert updated_plan["scenes"][0]["text"] == "Hello"
+
+
+def test_describe_selected_scene_returns_none_when_no_id_given():
+    scene_plan = {"scenes": [_title("scene-title-0", "Hello", 0)]}
+
+    assert describe_selected_scene(scene_plan, None) is None
+    assert describe_selected_scene(scene_plan, "") is None
+
+
+def test_describe_selected_scene_returns_none_for_a_stale_or_unknown_id():
+    # A selection left over from before a prior edit removed that scene —
+    # must degrade gracefully, not raise, since selection is a hint for
+    # resolving "this"/"that", not a requirement.
+    scene_plan = {"scenes": [_title("scene-title-0", "Hello", 0)]}
+
+    assert describe_selected_scene(scene_plan, "scene-does-not-exist") is None
+
+
+def test_describe_selected_scene_summarizes_a_title_scene():
+    scene_plan = {"scenes": [_title("scene-title-0", "Why Event Sourcing", 0)]}
+
+    description = describe_selected_scene(scene_plan, "scene-title-0")
+
+    assert "id: scene-title-0" in description
+    assert "type: title" in description
+    assert "text: Why Event Sourcing" in description
+
+
+def test_describe_selected_scene_summarizes_a_moment_scene():
+    scene_plan = {"scenes": [_moment("scene-moment-0", "scene-001", 10, 60, "the key idea")]}
+
+    description = describe_selected_scene(scene_plan, "scene-moment-0")
+
+    assert "id: scene-moment-0" in description
+    assert "type: moment" in description
+    assert "text: the key idea" in description
+
+
+def test_edit_plan_injects_selected_scene_description_into_the_prompt():
+    scene_plan = {
+        "scenes": [
+            _presenter("scene-001", 0, 300, 0),
+            _moment("scene-moment-0", "scene-001", 10, 60, "the key idea"),
+        ]
+    }
+
+    llm = _FakeLLMClient({"operations": []})
+
+    edit_plan(scene_plan, "make this bigger", llm, PROMPT_TEMPLATE, selected_scene_id="scene-moment-0")
+
+    assert "id: scene-moment-0" in llm.last_prompt
+    assert "type: moment" in llm.last_prompt
+    assert "text: the key idea" in llm.last_prompt
+
+
+def test_edit_plan_injects_nothing_selected_when_no_selection_given():
+    scene_plan = {"scenes": [_title("scene-title-0", "Hello", 0)]}
+
+    llm = _FakeLLMClient({"operations": []})
+
+    edit_plan(scene_plan, "change the title", llm, PROMPT_TEMPLATE)
+
+    assert "(nothing selected)" in llm.last_prompt
+
+
+def test_edit_plan_degrades_to_nothing_selected_for_a_stale_selection():
+    scene_plan = {"scenes": [_title("scene-title-0", "Hello", 0)]}
+
+    llm = _FakeLLMClient({"operations": []})
+
+    updated_plan, valid_ops, rejected = edit_plan(
+        scene_plan, "make this bigger", llm, PROMPT_TEMPLATE, selected_scene_id="scene-does-not-exist"
+    )
+
+    assert "(nothing selected)" in llm.last_prompt
+    assert valid_ops == []
+    assert rejected == []

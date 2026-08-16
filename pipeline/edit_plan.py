@@ -195,9 +195,55 @@ def reflow_timeline(scene_plan):
     return scene_plan
 
 
-def edit_plan(scene_plan, instruction, llm: LLMClient, prompt_template: str):
+# Fields worth surfacing per scene type when describing "the currently
+# selected scene" to the LLM — a small, deliberate subset (not the whole
+# scene object) that's actually useful for recognizing what "this"/"that"
+# refers to: content the creator would recognize (text/caption), not
+# internal bookkeeping (frame offsets, ids of other scenes). Mirrors
+# EDITABLE_FIELDS's own per-type structure, but this is about
+# *description*, not what can be edited.
+SELECTED_SCENE_DESCRIPTION_FIELDS = {
+    "presenter": ["videoId"],
+    "title": ["text"],
+    "moment": ["treatment", "text", "caption"],
+    "caption": ["text"],
+    "image": ["caption", "display"],
+    "beat": ["kind", "text"],
+}
 
-    # Substitute the two fixed, non-user-authored blocks first, then the
+
+def describe_selected_scene(scene_plan, selected_scene_id):
+    """Renders the currently-selected scene as a short, human-readable
+    block for the prompt's "Currently selected" section — or None if
+    selected_scene_id is falsy or doesn't match any scene in the current
+    plan (e.g. a stale selection left over after a prior edit removed that
+    scene). A stale/unresolvable id is not an error: selection is a hint
+    for resolving "this"/"that", not a requirement, so the instruction
+    should still be attempted with no selection context rather than
+    failing outright."""
+
+    if not selected_scene_id:
+        return None
+
+    scene = next((s for s in scene_plan["scenes"] if s["id"] == selected_scene_id), None)
+
+    if not scene:
+        return None
+
+    lines = [f"id: {scene['id']}", f"type: {scene['type']}"]
+
+    for field in SELECTED_SCENE_DESCRIPTION_FIELDS.get(scene["type"], []):
+        if scene.get(field) is not None:
+            lines.append(f"{field}: {scene[field]}")
+
+    return "\n".join(lines)
+
+
+def edit_plan(scene_plan, instruction, llm: LLMClient, prompt_template: str, selected_scene_id=None):
+
+    selected_scene_text = describe_selected_scene(scene_plan, selected_scene_id) or "(nothing selected)"
+
+    # Substitute the fixed, non-user-authored blocks first, then the
     # free-text instruction last — it's the one value that could plausibly
     # contain a literal "{scene_plan}"/"{editable_fields}" substring (e.g.
     # quoting scene-plan syntax back at the model), which would otherwise
@@ -208,6 +254,8 @@ def edit_plan(scene_plan, instruction, llm: LLMClient, prompt_template: str):
         "{editable_fields}", json.dumps(
             {k: sorted(v) for k, v in EDITABLE_FIELDS.items()}, indent=2
         )
+    ).replace(
+        "{selected_scene}", selected_scene_text
     ).replace(
         "{instruction}", instruction
     )

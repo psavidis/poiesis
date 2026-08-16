@@ -1,19 +1,22 @@
 import { useEffect, useState } from "react";
+import type { ScenePlan } from "video-renderer-src/episode/types";
+import { sceneLabel } from "./ActiveSceneBar";
 import { editPlan, type EditPlanResult } from "./api";
 
 interface Props {
     episodePath: string;
     onApplied: () => void;
     // Set by EpisodeWorkspace when a scene chip in ActiveSceneBar is
-    // clicked (see #29) — prefills the instruction box with "edit
-    // scene-XXX: " so the two correction paths (structured editor,
-    // natural-language chat) both start from the same click on the same
-    // chip, instead of the chat requiring you to already know/type the
-    // scene id yourself. prefillKey changes on every click (even to the
-    // same scene) so re-clicking a chip re-applies the prefill even if the
-    // box currently holds that exact text already.
-    prefillSceneId?: string;
-    prefillKey?: number;
+    // clicked (see #29) — passed to the backend as structured context
+    // (#51), not typed text, so "make this bigger" can resolve to the
+    // selected scene without the user ever typing its id. Previously this
+    // pre-filled the instruction box with "edit scene-XXX: " text; now
+    // the box stays free-text and the indicator below it shows what
+    // "this" currently refers to.
+    selectedSceneId?: string;
+    // Needed to render the selection indicator's label (scene type/
+    // content) — the id alone isn't meaningful to read at a glance.
+    scenePlan?: ScenePlan;
 }
 
 // The in-app natural-language edit loop: type an instruction, the backend
@@ -24,18 +27,26 @@ interface Props {
 // reloads the plan. Each submission is an independent request against
 // whatever the plan currently is — there's no multi-turn conversation state
 // kept here, matching the scope decided for the first version.
-export function EditPlanChat({ episodePath, onApplied, prefillSceneId, prefillKey }: Props) {
+export function EditPlanChat({ episodePath, onApplied, selectedSceneId, scenePlan }: Props) {
     const [instruction, setInstruction] = useState("");
     const [status, setStatus] = useState<"idle" | "submitting">("idle");
     const [result, setResult] = useState<EditPlanResult | null>(null);
     const [error, setError] = useState<string | null>(null);
+    // Local dismiss, separate from EpisodeWorkspace's own selection state
+    // — clicking another chip still re-selects normally; this only lets
+    // the user clear "this" from the current instruction without needing
+    // a track/timeline click elsewhere to deselect.
+    const [dismissed, setDismissed] = useState(false);
 
+    // A newly clicked chip should reappear as "Editing: ..." even if a
+    // previous selection was dismissed — dismiss only suppresses THIS
+    // particular selection, not selection indicators in general.
     useEffect(() => {
-        if (prefillSceneId) {
-            setInstruction(`edit ${prefillSceneId}: `);
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [prefillKey]);
+        setDismissed(false);
+    }, [selectedSceneId]);
+
+    const selectedScene = scenePlan?.scenes.find((s) => s.id === selectedSceneId);
+    const showSelection = selectedSceneId && selectedScene && !dismissed;
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -47,7 +58,11 @@ export function EditPlanChat({ episodePath, onApplied, prefillSceneId, prefillKe
         setResult(null);
 
         try {
-            const editResult = await editPlan(episodePath, instruction);
+            const editResult = await editPlan(
+                episodePath,
+                instruction,
+                showSelection ? selectedSceneId : undefined
+            );
             setResult(editResult);
             setInstruction("");
 
@@ -63,12 +78,32 @@ export function EditPlanChat({ episodePath, onApplied, prefillSceneId, prefillKe
 
     return (
         <div style={styles.wrap}>
+            {showSelection && (
+                <div style={styles.selectionRow}>
+                    <span style={styles.selectionLabel}>
+                        Editing: <strong>{selectedScene.type}</strong> — {sceneLabel(selectedScene)}
+                    </span>
+                    <button
+                        type="button"
+                        className="secondary small"
+                        onClick={() => setDismissed(true)}
+                        title='Clear selection — "this" will no longer resolve to it'
+                    >
+                        Clear
+                    </button>
+                </div>
+            )}
+
             <form onSubmit={handleSubmit} style={styles.form}>
                 <input
                     type="text"
                     value={instruction}
                     onChange={(e) => setInstruction(e.target.value)}
-                    placeholder='e.g. "remove the third title card" or "trim 10 frames off the end of scene-009"'
+                    placeholder={
+                        showSelection
+                            ? 'e.g. "make this bigger" or "remove this"'
+                            : 'e.g. "remove the third title card" or "trim 10 frames off the end of scene-009"'
+                    }
                     style={styles.input}
                     disabled={status === "submitting"}
                 />
@@ -124,6 +159,23 @@ const styles: Record<string, React.CSSProperties> = {
     form: {
         display: "flex",
         gap: 8,
+    },
+    selectionRow: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 8,
+        padding: "6px 10px",
+        background: "#161d24",
+        border: "1px solid #3a4552",
+        borderRadius: 6,
+        fontSize: 12,
+    },
+    selectionLabel: {
+        color: "#9aa7b4",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
     },
     input: {
         flex: 1,
