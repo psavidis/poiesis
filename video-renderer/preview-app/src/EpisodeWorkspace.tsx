@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Player, type PlayerRef } from "@remotion/player";
 import { Episode } from "video-renderer-src/episode/Episode";
 import type { EpisodeProps, Scene, ScenePlan } from "video-renderer-src/episode/types";
-import { getAssets, getCodeAssets, getManifest, getMoments, getScenePlan, type EpisodeStatus } from "./api";
+import { getAssets, getCodeAssets, getManifest, getScenePlan, type EpisodeStatus } from "./api";
 import { ActiveSceneBar } from "./ActiveSceneBar";
 import { AdvancedPanel } from "./AdvancedPanel";
 import { ChapterStrip } from "./ChapterStrip";
@@ -99,18 +99,48 @@ export function EpisodeWorkspace() {
         return () => player.removeEventListener("frameupdate", onFrameUpdate);
     }, [episodeProps]);
 
+    // scene-plan.json first exists once analyze_scenes (stage 7 of 15)
+    // completes — well before any AI-proposal stage has run. Gate the
+    // initial fetch on that stage specifically, rather than firing blindly
+    // on mount, so a freshly-started run doesn't 404 its way into the
+    // generic error screen while still on stage 1-6 (see #30).
+    const scenePlanExists =
+        episodeStatus?.stages.find((s) => s.id === "analyze_scenes")?.complete ?? false;
+
+    // Stages whose output enriches scene-plan.json content once analyze_scenes
+    // has already produced the plain-cut plan (see pipeline_stages.py — each
+    // of these reads scene-plan.json, merges its own proposals in, and
+    // rewrites it in place). Joining their complete flags into one string
+    // gives a value that only changes when one of THESE stages flips, so the
+    // fetch effect below re-runs on real enrichment, not on every 2s status
+    // poll tick regardless of whether anything changed.
+    const ENRICHMENT_STAGE_IDS = [
+        "analyze_scenes",
+        "index_assets",
+        "generate_title_scenes",
+        "generate_storyboard",
+        "generate_moments",
+        "generate_captions",
+        "generate_emphasis",
+    ];
+    const enrichmentSignature = (episodeStatus?.stages ?? [])
+        .filter((s) => ENRICHMENT_STAGE_IDS.includes(s.id))
+        .map((s) => (s.complete ? "1" : "0"))
+        .join("");
+
     useEffect(() => {
         if (!episodePath) {
             setError("No episode path provided (expected ?path=... query param)");
             return;
         }
 
+        if (!scenePlanExists) return;
+
         Promise.all([
             getScenePlan(episodePath),
             getManifest(episodePath),
             getAssets(episodePath),
             getCodeAssets(episodePath),
-            getMoments(episodePath),
         ])
             .then(([scenePlan, manifest, assets, codeAssets]) => {
                 const baseProps = manifestToEpisodeBaseProps(manifest, assets, codeAssets);
@@ -132,7 +162,7 @@ export function EpisodeWorkspace() {
                 }
             });
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [episodePath]);
+    }, [episodePath, scenePlanExists, enrichmentSignature]);
 
     // Re-fetches only scene-plan.json (not manifest/assets, which an edit-plan
     // instruction never changes) and merges it into the existing episodeProps
@@ -242,7 +272,11 @@ export function EpisodeWorkspace() {
         return (
             <div style={styles.container}>
                 {header}
-                <div style={styles.message}>Loading preview…</div>
+                <div style={styles.message}>
+                    {scenePlanExists
+                        ? "Loading preview…"
+                        : "Waiting for the first scene plan (Understand stage)… the preview will appear automatically as soon as it's ready."}
+                </div>
             </div>
         );
     }

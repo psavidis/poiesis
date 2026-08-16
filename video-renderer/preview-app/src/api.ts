@@ -68,7 +68,9 @@ async function getArtifact(episodePath: string, name: string) {
 export const getScenePlan = (episodePath: string) => getArtifact(episodePath, "scene-plan.json");
 export const getManifest = (episodePath: string) => getArtifact(episodePath, "manifest.json");
 export const getAssets = (episodePath: string) =>
-    getArtifact(episodePath, "assets.json").then((data) => data.assets ?? []);
+    getArtifact(episodePath, "assets.json")
+        .then((data) => data.assets ?? [])
+        .catch(() => []); // index_assets hasn't run yet (see #30) — a normal state while the plan is still filling in, not a failure
 export const getCodeAssets = (episodePath: string) =>
     getArtifact(episodePath, "code_assets.json")
         .then((data) => data.codeAssets ?? [])
