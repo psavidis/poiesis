@@ -111,6 +111,29 @@ export async function saveBeats(episodePath: string, beats: unknown[]) {
     return res.json();
 }
 
+// Direct, non-LLM field update against a single scene in scene-plan.json
+// (see ui/server.py's PUT /api/episode/scene) — used by ImageBar's
+// drag-to-move/resize and display toggle (#46), which already know
+// exactly which scene/field to change and don't need the edit-plan chat's
+// natural-language interpretation. Server-side validation rejects an
+// unknown scene id or a field outside that scene type's editable
+// allowlist (422), same discipline as the chat endpoint.
+export async function updateSceneFields(episodePath: string, sceneId: string, fields: Record<string, unknown>) {
+    const res = await fetch(
+        `${API_BASE}/api/episode/scene?path=${encodeURIComponent(episodePath)}`,
+        {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sceneId, fields }),
+        }
+    );
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || "Save failed");
+    }
+    return res.json();
+}
+
 export interface TitleSceneProposal {
     segmentId: string;
     text: string;

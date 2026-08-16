@@ -10,6 +10,8 @@ import { ChapterStrip } from "./ChapterStrip";
 import { EditPlanChat } from "./EditPlanChat";
 import { EpisodeAnalysisPanel } from "./EpisodeAnalysisPanel";
 import { manifestToEpisodeBaseProps } from "./episodeProps";
+import { ImageBar } from "./ImageBar";
+import { ImageEditorPanel } from "./ImageEditorPanel";
 import { InlineTextEditor, isTextEligible, type EditTarget } from "./InlineTextEditor";
 import { MomentBar } from "./MomentBar";
 import { MomentEditorPanel } from "./MomentEditorPanel";
@@ -73,7 +75,10 @@ export function EpisodeWorkspace() {
     // click-to-open equivalent (chapter-keyed, not scene-anchored), so it
     // isn't part of this state.
     const [selectedEditor, setSelectedEditor] = useState<
-        { kind: "title"; titleText: string } | { kind: "moment"; sceneId: string } | null
+        | { kind: "title"; titleText: string }
+        | { kind: "moment"; sceneId: string }
+        | { kind: "image"; sceneId: string }
+        | null
     >(null);
 
     // Prefills EditPlanChat's instruction box when a scene chip is clicked
@@ -404,6 +409,21 @@ export function EpisodeWorkspace() {
             </div>
 
             <div style={styles.playerWrap}>
+                <ImageBar
+                    scenePlan={episodeProps.scenePlan}
+                    totalFrames={totalFrames}
+                    currentFrame={currentFrame}
+                    onSeek={seekToAbsoluteFrame}
+                    episodePath={episodePath}
+                    onSaved={reloadScenePlan}
+                    onEditRequested={(sceneId) => {
+                        setInlineEditTarget(null);
+                        setSelectedEditor({ kind: "image", sceneId });
+                    }}
+                />
+            </div>
+
+            <div style={styles.playerWrap}>
                 <BeatBar
                     scenePlan={episodeProps.scenePlan}
                     totalFrames={totalFrames}
@@ -480,6 +500,18 @@ export function EpisodeWorkspace() {
                         currentFrame={currentFrame}
                         onSeek={seekToAbsoluteFrame}
                         refreshKey={refreshKey}
+                        onClose={() => setSelectedEditor(null)}
+                    />
+                </div>
+            )}
+
+            {selectedEditor?.kind === "image" && (
+                <div style={styles.playerWrap}>
+                    <ImageEditorPanel
+                        episodePath={episodePath}
+                        sceneId={selectedEditor.sceneId}
+                        scenePlan={episodeProps.scenePlan}
+                        onSaved={reloadScenePlan}
                         onClose={() => setSelectedEditor(null)}
                     />
                 </div>

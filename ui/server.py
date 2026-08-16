@@ -21,7 +21,14 @@ from generate_title_scenes import merge_title_scenes, write_json_atomic  # noqa:
 from generate_moments import merge_moment_scenes  # noqa: E402
 from generate_emphasis import merge_beat_scenes  # noqa: E402
 from generate_scene_plan_ts import generate_scene_plan_ts  # noqa: E402
-from edit_plan import edit_plan, load_prompt as load_edit_plan_prompt, PROMPT_FILE as EDIT_PLAN_PROMPT_FILE  # noqa: E402
+from edit_plan import (  # noqa: E402
+    edit_plan,
+    load_prompt as load_edit_plan_prompt,
+    PROMPT_FILE as EDIT_PLAN_PROMPT_FILE,
+    validate_operations,
+    apply_operations,
+    reflow_timeline,
+)
 from llm.client import LLMClient  # noqa: E402
 
 RENDERER_DIR = Path(__file__).resolve().parent.parent / "video-renderer"
@@ -364,6 +371,59 @@ def update_beats(path: str, body: BeatsUpdate):
         raise HTTPException(status_code=409, detail=str(e))
 
     return {"beats": beats}
+
+
+class SceneFieldUpdate(BaseModel):
+    sceneId: str
+    fields: dict
+
+
+@app.put("/api/episode/scene")
+def update_scene_fields(path: str, body: SceneFieldUpdate):
+    """Direct, non-LLM field updates against a single scene in
+    scene-plan.json — the deterministic counterpart to /api/episode/edit-plan
+    for UI-driven edits (e.g. ImageBar's drag-to-move/resize, or a display
+    full/inset toggle) that already know exactly which scene and field they
+    want to change, so there's no reason to round-trip through the LLM the
+    chat box uses for free-text instructions. Reuses edit_plan.py's own
+    validate_operations/apply_operations — same allowlist per scene type
+    (EDITABLE_FIELDS), same rejection behavior for an unknown scene id or a
+    disallowed field, so this endpoint can never do anything the chat
+    endpoint couldn't already do; it's just a faster, structured path to it.
+    Unlike moments/beats, image scenes have no separate source-of-truth
+    file to also update — scene-plan.json already IS their only
+    representation (see docs/pipeline-guide.md: image scenes are
+    "hand-authored / edit-plan only")."""
+
+    episode = resolve_episode(path)
+    processing = episode / "processing"
+
+    scene_plan_path = processing / "scene-plan.json"
+
+    if not scene_plan_path.exists():
+        raise HTTPException(status_code=404, detail="scene-plan.json not found — run the pipeline first")
+
+    op = {"op": "update", "sceneId": body.sceneId, "fields": body.fields}
+
+    try:
+        with episode_lock(episode, wait=False):
+            with scene_plan_path.open("r", encoding="utf-8") as f:
+                scene_plan = json.load(f)
+
+            valid_ops, rejected = validate_operations(scene_plan, [op])
+
+            if rejected:
+                raise HTTPException(status_code=422, detail=rejected[0]["reason"])
+
+            updated_plan = apply_operations(scene_plan, valid_ops)
+            updated_plan = reflow_timeline(updated_plan)
+
+            write_json_atomic(scene_plan_path, updated_plan)
+            regenerate_codegen(episode)
+    except EpisodeBusyError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    return {"applied": valid_ops}
 
 
 class EditPlanRequest(BaseModel):

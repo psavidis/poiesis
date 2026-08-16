@@ -1,0 +1,409 @@
+import { useEffect, useRef, useState } from "react";
+import type { ImageScene, PresenterScene, ScenePlan, TitleScene } from "video-renderer-src/episode/types";
+import { updateSceneFields } from "./api";
+
+// A fourth, distinct color from SceneBar/MomentBar/BeatBar — image scenes
+// are their own scene type (not a moment treatment), and the spec (docs/
+// specs/content-types-and-presentation-editing.md) calls Full Screen a
+// first-class presentation deserving its own visible timeline surface, so
+// this gets its own bar rather than folding into MomentBar (#46).
+const IMAGE_COLOR = "#2ac9a0";
+
+const ZOOM_STEP = 1.6;
+const MAX_ZOOM = 20;
+const MIN_ZOOM = 1;
+
+const MOD_KEY_LABEL = navigator.platform.toLowerCase().includes("mac") ? "Cmd" : "Ctrl";
+
+interface Props {
+    scenePlan: ScenePlan;
+    totalFrames: number;
+    currentFrame: number;
+    onSeek: (absoluteFrame: number) => void;
+    episodePath: string;
+    onSaved: () => void;
+    // Opens the structured ImageEditorPanel (asset/display/caption) for
+    // whichever image scene is selected — image scenes have no single
+    // text field, so there's no InlineTextEditor-style Cmd+E path the way
+    // MomentBar has for text-eligible moments; click-to-select always
+    // pairs with this same panel, reached via Cmd+E for consistency with
+    // the rest of this timeline's select-then-edit lifecycle.
+    onEditRequested: (sceneId: string) => void;
+}
+
+type DragMode = "move" | "resize";
+
+type DragState = {
+    imageId: string;
+    mode: DragMode;
+    startX: number;
+    startOffset: number;
+    startDuration: number;
+    liveOffset: number;
+    liveDuration: number;
+};
+
+// Every image overlay's resolved window across the full episode — mirrors
+// MomentBar (#41) and BeatBar (#38/#39): select-then-Cmd+E, zoom, drag to
+// move, drag the right edge to resize. Image scenes live only in
+// scene-plan.json (no separate images.json source file the way moments/
+// beats have — see docs/pipeline-guide.md), so saves go through the
+// direct scene-field-update endpoint (ui/server.py's PUT
+// /api/episode/scene) rather than a moments.json/emphasis.json rewrite.
+export function ImageBar({
+    scenePlan,
+    totalFrames,
+    currentFrame,
+    onSeek,
+    episodePath,
+    onSaved,
+    onEditRequested,
+}: Props) {
+    const [zoom, setZoom] = useState(1);
+    const [panStartPct, setPanStartPct] = useState(0);
+    const [dragState, setDragState] = useState<{ imageId: string; mode: DragMode } | null>(null);
+    const [liveOffset, setLiveOffset] = useState(0);
+    const [liveDuration, setLiveDuration] = useState(0);
+    const [saveError, setSaveError] = useState<string | null>(null);
+    const [selectedImageId, setSelectedImageId] = useState<string | null>(null);
+    const trackRef = useRef<HTMLDivElement>(null);
+    const dragRef = useRef<DragState | null>(null);
+
+    if (totalFrames <= 0) return null;
+
+    const trackById = new Map<string, PresenterScene | TitleScene>();
+    scenePlan.scenes.forEach((s) => {
+        if (s.type === "presenter" || s.type === "title") trackById.set(s.id, s);
+    });
+
+    const resolved = scenePlan.scenes
+        .filter((s): s is ImageScene => s.type === "image")
+        .map((image) => {
+            const parent = trackById.get(image.parentSceneId);
+            if (!parent) return null;
+            return {
+                image,
+                parent,
+                startFrame: parent.timelineStartFrame + image.offsetInParentFrames,
+            };
+        })
+        .filter((m): m is { image: ImageScene; parent: PresenterScene | TitleScene; startFrame: number } => m !== null)
+        .sort((a, b) => a.startFrame - b.startFrame);
+
+    if (resolved.length === 0) return null;
+
+    const windowFrames = totalFrames / zoom;
+    const maxPanStartPct = 1 - windowFrames / totalFrames;
+    const clampedPanStartPct = clamp(panStartPct, 0, Math.max(0, maxPanStartPct));
+    const windowStartFrame = clampedPanStartPct * totalFrames;
+
+    const frameToPct = (frame: number) => ((frame - windowStartFrame) / windowFrames) * 100;
+
+    const applyZoom = (nextZoom: number) => {
+        const clampedZoom = clamp(nextZoom, MIN_ZOOM, MAX_ZOOM);
+        const nextWindowFrames = totalFrames / clampedZoom;
+        setZoom(clampedZoom);
+        setPanStartPct(currentFrame / totalFrames - nextWindowFrames / totalFrames / 2);
+    };
+
+    const zoomIn = () => applyZoom(zoom * ZOOM_STEP);
+    const zoomOut = () => applyZoom(zoom / ZOOM_STEP);
+    const resetZoom = () => {
+        setZoom(1);
+        setPanStartPct(0);
+    };
+
+    const onTrackClick = (e: React.MouseEvent<HTMLDivElement>) => {
+        if (dragState) return;
+        setSelectedImageId(null);
+        const rect = e.currentTarget.getBoundingClientRect();
+        const pct = clamp((e.clientX - rect.left) / rect.width, 0, 1);
+        onSeek(Math.round(windowStartFrame + pct * windowFrames));
+    };
+
+    const startDrag = (e: React.MouseEvent, image: ImageScene, mode: DragMode) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setSaveError(null);
+        dragRef.current = {
+            imageId: image.id,
+            mode,
+            startX: e.clientX,
+            startOffset: image.offsetInParentFrames,
+            startDuration: image.durationInFrames,
+            liveOffset: image.offsetInParentFrames,
+            liveDuration: image.durationInFrames,
+        };
+        setDragState({ imageId: image.id, mode });
+        setLiveOffset(image.offsetInParentFrames);
+        setLiveDuration(image.durationInFrames);
+    };
+
+    useEffect(() => {
+        if (!dragState) return;
+
+        const onMouseMove = (e: MouseEvent) => {
+            const drag = dragRef.current;
+            if (!drag || !trackRef.current) return;
+            const rect = trackRef.current.getBoundingClientRect();
+            const framesPerPixel = windowFrames / rect.width;
+            const deltaFrames = Math.round((e.clientX - drag.startX) * framesPerPixel);
+
+            const parentEntry = resolved.find((r) => r.image.id === drag.imageId);
+            const parentDuration = parentEntry?.parent.durationInFrames ?? Infinity;
+
+            if (drag.mode === "move") {
+                const maxOffset = Math.max(0, parentDuration - drag.startDuration);
+                const newOffset = clamp(drag.startOffset + deltaFrames, 0, maxOffset);
+                drag.liveOffset = newOffset;
+                setLiveOffset(newOffset);
+            } else {
+                const maxDuration = Math.max(1, parentDuration - drag.startOffset);
+                const newDuration = clamp(drag.startDuration + deltaFrames, 1, maxDuration);
+                drag.liveDuration = newDuration;
+                setLiveDuration(newDuration);
+            }
+        };
+
+        const onMouseUp = () => {
+            const drag = dragRef.current;
+            dragRef.current = null;
+            setDragState(null);
+            if (drag) commitDrag(drag);
+        };
+
+        window.addEventListener("mousemove", onMouseMove);
+        window.addEventListener("mouseup", onMouseUp);
+        return () => {
+            window.removeEventListener("mousemove", onMouseMove);
+            window.removeEventListener("mouseup", onMouseUp);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [dragState, windowFrames]);
+
+    useEffect(() => {
+        if (!selectedImageId) return;
+
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key.toLowerCase() !== "e" || !(e.metaKey || e.ctrlKey)) return;
+            const target = e.target as HTMLElement | null;
+            if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+
+            e.preventDefault();
+            onEditRequested(selectedImageId);
+        };
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [selectedImageId, onEditRequested]);
+
+    // Direct field update against scene-plan.json (no separate source-of-
+    // truth file for image scenes, unlike moments/beats) — see api.ts's
+    // updateSceneFields / ui/server.py's PUT /api/episode/scene.
+    const commitDrag = async (drag: DragState) => {
+        try {
+            await updateSceneFields(episodePath, drag.imageId, {
+                offsetInParentFrames: drag.liveOffset,
+                durationInFrames: drag.liveDuration,
+            });
+            onSaved();
+        } catch (e) {
+            setSaveError(String(e));
+        }
+    };
+
+    const playheadPct = clamp(frameToPct(currentFrame), 0, 100);
+    const playheadVisible = currentFrame >= windowStartFrame && currentFrame <= windowStartFrame + windowFrames;
+
+    return (
+        <div style={styles.wrap}>
+            <div style={styles.labelRow}>
+                <span style={styles.label}>Images ({resolved.length})</span>
+                <div style={styles.zoomControls}>
+                    <button className="secondary small" onClick={zoomIn} disabled={zoom >= MAX_ZOOM}>
+                        Zoom in
+                    </button>
+                    <button className="secondary small" onClick={zoomOut} disabled={zoom <= MIN_ZOOM}>
+                        Zoom out
+                    </button>
+                    <button className="secondary small" onClick={resetZoom} disabled={zoom === 1}>
+                        Reset
+                    </button>
+                </div>
+            </div>
+
+            <div ref={trackRef} style={styles.track} onMouseDown={onTrackClick}>
+                {resolved.map(({ image, startFrame }) => {
+                    const isDragging = dragState?.imageId === image.id;
+                    const offset = isDragging && dragState.mode === "move" ? liveOffset : image.offsetInParentFrames;
+                    const duration = isDragging ? liveDuration : image.durationInFrames;
+                    const effectiveStartFrame = startFrame - image.offsetInParentFrames + offset;
+
+                    const leftPct = frameToPct(effectiveStartFrame);
+                    const rawWidthPct = (duration / windowFrames) * 100;
+
+                    if (leftPct + rawWidthPct < 0 || leftPct > 100) return null;
+
+                    const widthPct = Math.max(rawWidthPct, 0.6);
+                    const label = image.caption || image.assetId;
+                    const isSelected = selectedImageId === image.id;
+
+                    return (
+                        <div
+                            key={image.id}
+                            style={{
+                                ...styles.segment,
+                                left: `${leftPct}%`,
+                                width: `${widthPct}%`,
+                                ...(isSelected ? styles.segmentSelected : {}),
+                            }}
+                            title={
+                                isSelected
+                                    ? `${image.id} — ${image.display}: ${label} — press ${MOD_KEY_LABEL}+E to edit`
+                                    : `${image.id} — ${image.display}: ${label}`
+                            }
+                            onClick={(e) => {
+                                if (isDragging) return;
+                                e.stopPropagation();
+                                setSelectedImageId(image.id);
+                                onSeek(startFrame);
+                            }}
+                            onMouseDown={(e) => {
+                                if (e.button !== 0) return;
+                                startDrag(e, image, "move");
+                            }}
+                        >
+                            {widthPct > 4 && <span style={styles.segmentLabel}>{label}</span>}
+                            <div
+                                style={styles.resizeHandle}
+                                onMouseDown={(e) => startDrag(e, image, "resize")}
+                                title="Drag to resize"
+                            />
+                            {isDragging && (
+                                <div style={styles.readout}>
+                                    {dragState.mode === "move"
+                                        ? `offset ${(offset / 30).toFixed(1)}s`
+                                        : `${(duration / 30).toFixed(1)}s`}
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
+
+                {playheadVisible && <div style={{ ...styles.playhead, left: `${playheadPct}%` }} />}
+            </div>
+
+            {saveError && <div style={styles.error}>{saveError}</div>}
+
+            <div style={styles.hint}>
+                {selectedImageId
+                    ? `Selected — press ${MOD_KEY_LABEL}+E to edit.`
+                    : zoom > 1
+                    ? "Click an image to select it, drag its body to move it or its right edge to resize, or click empty track to seek."
+                    : "Zoom in for precise dragging — at full-episode width a short image overlay is too thin to grab reliably."}
+            </div>
+        </div>
+    );
+}
+
+function clamp(value: number, min: number, max: number) {
+    return Math.min(Math.max(value, min), max);
+}
+
+const styles: Record<string, React.CSSProperties> = {
+    wrap: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+    },
+    labelRow: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        flexWrap: "wrap",
+        gap: 8,
+    },
+    label: {
+        fontSize: 12,
+        color: "#9aa7b4",
+    },
+    zoomControls: {
+        display: "flex",
+        gap: 6,
+    },
+    track: {
+        position: "relative",
+        height: 28,
+        borderRadius: 6,
+        background: "#161d24",
+        border: "1px solid #2a333d",
+        userSelect: "none",
+        cursor: "pointer",
+        overflow: "hidden",
+    },
+    segment: {
+        position: "absolute",
+        top: 2,
+        bottom: 2,
+        borderRadius: 3,
+        background: IMAGE_COLOR,
+        display: "flex",
+        alignItems: "center",
+        overflow: "visible",
+        cursor: "grab",
+        boxShadow: "0 0 0 0px transparent",
+    },
+    segmentSelected: {
+        boxShadow: "0 0 0 2px #ffffff, 0 0 8px rgba(255,255,255,0.5)",
+        zIndex: 1,
+    },
+    segmentLabel: {
+        padding: "0 5px",
+        fontSize: 10,
+        fontWeight: 600,
+        color: "#04231a",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+    },
+    resizeHandle: {
+        position: "absolute",
+        right: 0,
+        top: 0,
+        bottom: 0,
+        width: 8,
+        cursor: "ew-resize",
+        background: "rgba(0,0,0,0.25)",
+    },
+    readout: {
+        position: "absolute",
+        bottom: "100%",
+        right: 0,
+        marginBottom: 4,
+        padding: "2px 6px",
+        background: "#0b0f14",
+        border: "1px solid #2a333d",
+        borderRadius: 4,
+        fontSize: 11,
+        color: "#e8edf2",
+        whiteSpace: "nowrap",
+        zIndex: 2,
+    },
+    playhead: {
+        position: "absolute",
+        top: 0,
+        bottom: 0,
+        width: 2,
+        background: "#ff5a3c",
+        pointerEvents: "none",
+        boxShadow: "0 0 4px rgba(255,90,60,0.8)",
+    },
+    error: {
+        fontSize: 12,
+        color: "#ff8f8f",
+    },
+    hint: {
+        fontSize: 11,
+        color: "#6b7683",
+    },
+};

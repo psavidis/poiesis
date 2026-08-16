@@ -109,6 +109,37 @@ def test_validate_operations_rejects_update_with_disallowed_field():
     assert "timelineStartFrame" in rejected[0]["reason"]
 
 
+def _image(scene_id, parent_id, offset, duration, asset_id, display="inset"):
+    return {
+        "id": scene_id,
+        "type": "image",
+        "assetId": asset_id,
+        "caption": "",
+        "display": display,
+        "parentSceneId": parent_id,
+        "offsetInParentFrames": offset,
+        "durationInFrames": duration,
+    }
+
+
+def test_validate_operations_accepts_image_asset_and_display_updates():
+    scene_plan = {"scenes": [_image("scene-image-0", "scene-001", 0, 60, "asset-1")]}
+
+    ops = [
+        {
+            "op": "update",
+            "sceneId": "scene-image-0",
+            "fields": {"assetId": "asset-2", "display": "full"},
+            "reason": "swap to a full-screen diagram",
+        }
+    ]
+
+    valid, rejected = validate_operations(scene_plan, ops)
+
+    assert valid == ops
+    assert rejected == []
+
+
 def test_validate_operations_rejects_id_and_type_and_linking_fields():
     scene_plan = {
         "scenes": [_moment("scene-moment-0", "scene-001", 10, 60, "hello there")]

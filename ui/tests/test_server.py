@@ -549,6 +549,119 @@ def test_update_beats_can_remove_beats_by_omitting_them(tmp_path):
     assert beat_scenes == []
 
 
+def _make_scene_plan_with_image(episode, video_ids=("001", "002")):
+    """Same as _make_scene_plan but with an image scene overlaid on the
+    first presenter scene — used by the new direct-field-update endpoint's
+    tests (#46), which need a scene type that isn't a moment/beat/title
+    since those already have their own dedicated endpoints."""
+
+    scene_plan = _make_scene_plan(episode, video_ids)
+    scene_plan["scenes"].append(
+        {
+            "id": "scene-image-0",
+            "type": "image",
+            "assetId": "asset-1",
+            "caption": "A diagram",
+            "display": "inset",
+            "parentSceneId": scene_plan["scenes"][0]["id"],
+            "offsetInParentFrames": 10,
+            "durationInFrames": 40,
+        }
+    )
+    (episode / "processing" / "scene-plan.json").write_text(json.dumps(scene_plan))
+    return scene_plan
+
+
+def test_update_scene_returns_404_without_scene_plan(tmp_path):
+    episode = _make_episode(tmp_path)
+
+    response = client.put(
+        "/api/episode/scene",
+        params={"path": str(episode)},
+        json={"sceneId": "scene-image-0", "fields": {"display": "full"}},
+    )
+
+    assert response.status_code == 404
+
+
+def test_update_scene_rejects_unknown_scene_id(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan_with_image(episode)
+
+    response = client.put(
+        "/api/episode/scene",
+        params={"path": str(episode)},
+        json={"sceneId": "scene-does-not-exist", "fields": {"display": "full"}},
+    )
+
+    assert response.status_code == 422
+
+
+def test_update_scene_rejects_disallowed_field(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan_with_image(episode)
+
+    response = client.put(
+        "/api/episode/scene",
+        params={"path": str(episode)},
+        json={"sceneId": "scene-image-0", "fields": {"parentSceneId": "scene-002"}},
+    )
+
+    assert response.status_code == 422
+
+
+def test_update_scene_changes_image_display_mode(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan_with_image(episode)
+
+    response = client.put(
+        "/api/episode/scene",
+        params={"path": str(episode)},
+        json={"sceneId": "scene-image-0", "fields": {"display": "full"}},
+    )
+
+    assert response.status_code == 200
+
+    scene_plan_on_disk = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    image_scene = next(s for s in scene_plan_on_disk["scenes"] if s["id"] == "scene-image-0")
+    assert image_scene["display"] == "full"
+
+
+def test_update_scene_moves_and_resizes_an_image_overlay(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan_with_image(episode)
+
+    response = client.put(
+        "/api/episode/scene",
+        params={"path": str(episode)},
+        json={
+            "sceneId": "scene-image-0",
+            "fields": {"offsetInParentFrames": 20, "durationInFrames": 60},
+        },
+    )
+
+    assert response.status_code == 200
+
+    scene_plan_on_disk = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    image_scene = next(s for s in scene_plan_on_disk["scenes"] if s["id"] == "scene-image-0")
+    assert image_scene["offsetInParentFrames"] == 20
+    assert image_scene["durationInFrames"] == 60
+
+
+def test_update_scene_returns_409_when_episode_is_locked(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan_with_image(episode)
+
+    with episode_lock(episode):
+        response = client.put(
+            "/api/episode/scene",
+            params={"path": str(episode)},
+            json={"sceneId": "scene-image-0", "fields": {"display": "full"}},
+        )
+
+    assert response.status_code == 409
+
+
 def test_edit_scene_plan_returns_404_without_scene_plan(tmp_path):
     episode = _make_episode(tmp_path)
 

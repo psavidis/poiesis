@@ -31,7 +31,12 @@ EDITABLE_FIELDS = {
     "title": {"text"},
     "moment": {"text", "assetId", "caption", "offsetInParentFrames", "durationInFrames"},
     "caption": {"text", "offsetInParentFrames", "durationInFrames"},
-    "image": {"caption", "offsetInParentFrames", "durationInFrames"},
+    # "assetId"/"display" are included here (unlike moment's "assetId",
+    # which stays read-only) because changing which image is shown or
+    # whether it's full-screen vs. inset is a direct, low-risk field swap
+    # for this scene type — there's no parent-layout side effect the way a
+    # moment's treatment change has (see this dict's own module docstring).
+    "image": {"caption", "assetId", "display", "offsetInParentFrames", "durationInFrames"},
     # "kind"/"icon" excluded for the same reason as moment's "treatment":
     # switching word-pop/underline/icon-accent is generate_emphasis.py's
     # job, not a text edit.
