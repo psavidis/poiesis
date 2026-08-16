@@ -396,8 +396,19 @@ export function EpisodeWorkspace() {
     const header = episodePath ? (
         <>
             <div style={styles.brandBanner}>
-                <img src="/poiesis-logo.png" alt="" style={styles.brandLogo} />
-                <span style={styles.brandText}>Poiesis Preview</span>
+                {/* Left spacer — same flex basis as undoWrap on the right, so
+                    brandGroup stays visually centered via three equal-ish flex
+                    regions instead of undoWrap's old position:absolute (which
+                    had no reserved space and could overlap brandGroup's text
+                    on a narrow viewport — see #45's responsive-behavior pass,
+                    docs/specs/poiesis-product-theme-and-ui-design-system.md
+                    section 17). An empty div, not text, so it only takes up
+                    space, never wraps oddly on its own. */}
+                <div style={styles.brandSpacer} />
+                <div style={styles.brandGroup}>
+                    <img src="/poiesis-logo.png" alt="" style={styles.brandLogo} />
+                    <span style={styles.brandText}>Poiesis Preview</span>
+                </div>
                 <div style={styles.undoWrap}>
                     <button className="secondary small" onClick={handleUndo} title={`Undo the last edit (${MOD_KEY_LABEL}+Z)`}>
                         Undo ({MOD_KEY_LABEL}+Z)
@@ -653,23 +664,39 @@ const styles: Record<string, React.CSSProperties> = {
         maxWidth: WORKSPACE_MAX_WIDTH,
         margin: "0 auto",
     },
+    // Three-region row (spacer / brandGroup / undoWrap) instead of the
+    // previous "justify-content: center + position: absolute undo button"
+    // — that had no space reserved for undoWrap at all, so on a narrow
+    // viewport a long undoStatus message could overlap the centered brand
+    // text. brandSpacer/undoWrap share flex: 1 so brandGroup stays
+    // centered at any width, and flexWrap lets the row stack vertically
+    // rather than clip/overlap if it ever gets too narrow for one line
+    // (spec section 17: "should not become unusable on smaller screens").
     brandBanner: {
-        position: "relative",
         display: "flex",
         flexDirection: "row",
         alignItems: "center",
-        justifyContent: "center",
-        gap: 16,
+        flexWrap: "wrap",
+        gap: 12,
         padding: "20px 0",
     },
+    brandSpacer: {
+        flex: 1,
+        minWidth: 0,
+    },
+    brandGroup: {
+        display: "flex",
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 16,
+    },
     undoWrap: {
-        position: "absolute",
-        right: 12,
-        top: "50%",
-        transform: "translateY(-50%)",
+        flex: 1,
         display: "flex",
         alignItems: "center",
+        justifyContent: "flex-end",
         gap: 10,
+        minWidth: 0,
     },
     undoStatus: {
         fontSize: typography.size.sm,
@@ -684,6 +711,7 @@ const styles: Record<string, React.CSSProperties> = {
         height: 88,
         borderRadius: 16,
         objectFit: "cover",
+        flexShrink: 0,
     },
     brandText: {
         fontSize: 26,
