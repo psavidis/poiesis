@@ -31,7 +31,7 @@
     },
     "emphasis": {
       "minSecondsBetweenBeats": 4.0,
-      "defaultDurationFrames": 24
+      "defaultDurationFrames": 60
     }
   }
 }

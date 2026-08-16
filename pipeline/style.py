@@ -48,7 +48,12 @@ DEFAULTS = {
         # firing on the actual words worth emphasizing, not from hitting a
         # target count.
         "minSecondsBetweenBeats": 4.0,
-        "defaultDurationFrames": 24,
+        # 2s at 30fps (was 24 = 0.8s) — the original value left only ~0.63s
+        # actually held at full opacity after BeatOverlay.tsx's fade
+        # in/out, not enough time to read a 2-3 word phrase and connect it
+        # to what's being said (see #37). Well under minSecondsBetweenBeats
+        # above, so beats still never run into each other.
+        "defaultDurationFrames": 60,
     },
 }
 
