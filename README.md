@@ -259,30 +259,52 @@ rendering to catch render-time failures the scene-plan checks can't see.
 
 `--transparent` above produces one long transparent video the user has to manually cut and
 position in Resolve. `pipeline/export_davinci.py` automates that mechanical step: it renders
-one short transparent ProRes 4444 clip per scene (same flags as `--transparent`, just scoped
-to each scene's own frame range via Remotion's `--frames=`), and writes an
-[OpenTimelineIO](https://opentimelineio.readthedocs.io/) `timeline.otio` with those clips
-already placed in order — presenter clips, title cards, and moment/caption overlays already
-baked in exactly as they'd appear in a normal render, each as its own independently-editable
-timeline clip in Resolve rather than one flattened video.
+one short transparent ProRes 4444 clip per scene element (same flags as `--transparent`, just
+scoped to each scene's own frame range via Remotion's `--frames=`), and writes an
+[OpenTimelineIO](https://opentimelineio.readthedocs.io/) `timeline.otio` with each element
+type — presenter (video + its own audio track), titles, captions, moments, images — on its own
+OTIO track, independently trimmable/retimeable in Resolve rather than one flattened video.
 
 ```bash
 python3 pipeline/export_davinci.py /path/to/episode
 python3 pipeline/export_davinci.py /path/to/episode 3840x2160   # optional resolution override
+python3 pipeline/export_davinci.py /path/to/episode --resume    # skip clips already rendered by a prior run
 ```
 
 Requires `pip install opentimelineio` (see Python Library Dependencies above). Writes to
-`processing/davinci-export/timeline.otio` and `processing/davinci-export/clips/`. Open it in
-Resolve via **File → Import Timeline → OpenTimelineIO**. Same as `--transparent`:
-background/intro/outro/music are not part of this export — they stay a manual step on a
-project you build in Resolve. This is also available from the app's Advanced panel's "Render"
-button via the **Output format** selector, alongside the existing MP4 render.
+`<episode>/davinci-export/timeline.otio` and `<episode>/davinci-export/clips/` (sibling to
+`processing/`/`rendered/`, not nested inside either). Open it in Resolve via **File → Import
+Timeline → OpenTimelineIO**. Same as `--transparent`: background/intro/outro/music are not
+part of this export — they stay a manual step on a project you build in Resolve. This is also
+available from the app's Advanced panel's "Render" button via the **Output format** selector,
+alongside the existing MP4 render.
 
 Note: no interchange format (OTIO, AAF, EDL, FCPXML) reliably carries titles/text as
 real, editable Resolve title objects on import — that's why titles are baked into each
 clip's pixels via Remotion rather than left as Resolve-native text. Only clip placement
 (in/out points, order, timeline position) survives the OTIO round-trip, which is exactly
 what this export needs it for.
+
+#### Organizing the media pool into bins
+
+Resolve's OTIO importer can't be driven to create bins/folders from the `.otio` file itself —
+it doesn't even preserve OTIO track names on import — so every imported clip lands in one flat
+bin regardless of which track it came from. `pipeline/organize_davinci_bins.py` is a companion
+script that sorts them afterward, using Resolve's own Python Scripting API (**DaVinci Resolve
+Studio only** — the scripting API isn't available in the free edition). Run it from inside
+Resolve, after importing `timeline.otio` into the project you want organized:
+
+1. Open the project in Resolve, with `timeline.otio` already imported.
+2. **Workspace → Console**, switch to the **Py3** tab.
+3. `exec(open("/path/to/poiesis/pipeline/organize_davinci_bins.py").read())`
+
+This groups clips already in the media pool's root bin into `Presenter`/`Titles`/`Captions`/
+`Moments`/`Images`/`Beats` subfolders (only creating one for element types actually present),
+keyed off the clip filename convention `export_davinci.py` already writes
+(`{scene_type}-{scene_id}.mov`) — it doesn't read the OTIO timeline at all, and never touches
+`scene-plan.json`, same one-directional (Poiesis → Resolve) data flow as the export itself.
+Safe to re-run after importing more clips into the same project — already-sorted clips are
+left where they are.
 
 ## Background removal (optional, not part of the default pipeline)
 

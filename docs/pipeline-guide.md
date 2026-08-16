@@ -340,6 +340,18 @@ against wholesale fabrication before a diagram proposal is accepted.
   systems both writing the same state; a one-directional, re-exportable finishing pass doesn't
   reintroduce that risk, so it isn't the "editable Resolve timeline" this ADR rejects.
 
+  Media-pool bin organization (grouping imported clips into Presenter/Titles/Captions/Moments/
+  Images folders) can't be driven by the `.otio` file itself — confirmed against Resolve's own
+  OTIO-import documentation, none of which describes any bin-driving construct in the OTIO
+  schema, and Resolve doesn't even preserve OTIO track names on import. Every clip lands in
+  whatever bin is active at import time regardless of which track it came from. The only way to
+  organize the media pool is Resolve's own Python Scripting API (Studio-only), run from inside
+  Resolve after the OTIO import — see `pipeline/organize_davinci_bins.py`. That script keys off
+  the clip filename convention `export_davinci.py` already produces
+  (`{scene_type}-{scene_id}.mov`), so it doesn't need the OTIO track structure at all; the same
+  one-directional reasoning applies (it only reorganizes what's already in Resolve, it never
+  writes anything back to `scene-plan.json`).
+
 ## QA is metadata AND rendered-file checks, not a visual review
 
 `qa_check.py` runs two kinds of checks. Against `scene-plan.json` alone (no render needed):
