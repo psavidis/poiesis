@@ -200,6 +200,9 @@ export interface EditPlanOperation {
 // free-floating LLM-guessed offset. Written to emphasis.json server-side,
 // same shape as any other beat proposal there.
 export interface CreatedBeat {
+    // The PARENT presenter scene this beat attaches to — NOT the beat's
+    // own id (that's only resolved server-side at write time; see
+    // EditPlanResult.createdSceneIds below for the id to highlight).
     sceneId: string;
     kind: "word-pop" | "underline" | "icon-accent";
     text: string;
@@ -215,6 +218,8 @@ export interface CreatedBeat {
 // Written to moments.json server-side, same shape as any other moment
 // proposal there.
 export interface CreatedMoment {
+    // The PARENT presenter scene this moment attaches to — NOT the
+    // moment's own id (see EditPlanResult.createdSceneIds below).
     sceneId: string;
     videoId: string;
     treatment: "bottom-callout";
@@ -230,6 +235,13 @@ export interface EditPlanResult {
     rejected: { operation: EditPlanOperation; reason: string }[];
     created: CreatedBeat[];
     createdMoments: CreatedMoment[];
+    // Every scene id this instruction actually touched (#54) — each
+    // `applied` op's own sceneId, plus the resolved scene-beat-{N}/
+    // scene-moment-{N} id for each created_beats/createdMoments entry
+    // (those entries' own `sceneId` field means their PARENT scene, not
+    // themselves — see CreatedBeat/CreatedMoment above). Used to
+    // highlight/scroll to what changed on the relevant timeline bar(s).
+    createdSceneIds: string[];
 }
 
 // selectedSceneId (#51) — the scene currently selected in the editor when

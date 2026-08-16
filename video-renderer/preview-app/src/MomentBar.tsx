@@ -74,6 +74,11 @@ interface Props {
     // clicking one still opens the full structured MomentEditorPanel
     // directly, same as before #41, so this fires instead of selecting.
     onOpenStructuredEditor: (sceneId: string) => void;
+    // Set by EpisodeWorkspace right after a chat edit touches a moment on
+    // this bar (#54) — seeds selection and re-centers the view on it, the
+    // same way clicking the segment yourself would, so the AI's change is
+    // immediately visible instead of requiring the user to hunt for it.
+    highlightedId?: string | null;
 }
 
 type DragMode = "move" | "resize";
@@ -108,6 +113,7 @@ export function MomentBar({
     onSaved,
     onEditRequested,
     onOpenStructuredEditor,
+    highlightedId,
 }: Props) {
     const [zoom, setZoom] = useState(1);
     const [panStartPct, setPanStartPct] = useState(0);
@@ -243,6 +249,29 @@ export function MomentBar({
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [dragState, windowFrames]);
+
+    // Seeds selection from an AI chat edit (#54) and re-centers the view on
+    // it — reuses onSeek/applyZoom exactly as a real click would, so a
+    // moment created or changed off-screen (at 1x zoom that's most of an
+    // episode) becomes visible without the user hunting for it.
+    useEffect(() => {
+        if (!highlightedId) return;
+        const entry = resolved.find((r) => r.moment.id === highlightedId);
+        if (!entry) return;
+        setSelectedMomentId(highlightedId);
+        onSeek(entry.startFrame);
+        // Center on entry.startFrame directly, not applyZoom's usual
+        // currentFrame — onSeek's effect on currentFrame hasn't landed yet
+        // this tick, so reading it here would center on the stale position.
+        const nextZoom = clamp(zoom > 1 ? zoom : 4, MIN_ZOOM, MAX_ZOOM);
+        const nextWindowFrames = totalFrames / nextZoom;
+        setZoom(nextZoom);
+        setPanStartPct(entry.startFrame / totalFrames - nextWindowFrames / totalFrames / 2);
+        // The bar itself may be off-screen (long page, many bars) even once
+        // the segment inside it is in view — bring the whole bar on screen.
+        trackRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [highlightedId]);
 
     // Cmd+E (Mac) / Ctrl+E (elsewhere) opens the inline text editor for
     // whichever text-eligible moment is currently selected — never on the

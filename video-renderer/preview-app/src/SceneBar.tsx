@@ -22,6 +22,10 @@ interface Props {
     // actually clicked (see #34's InlineTextEditor) — not needed for the
     // seek itself, only for positioning that editor.
     onSelectTitle: (titleText: string, anchor: { x: number; y: number }) => void;
+    // Set by EpisodeWorkspace right after a chat edit touches a presenter
+    // or title scene on this bar (#54) — unlike ChapterStrip, scenes here
+    // do carry their own id, so this is keyed by sceneId directly.
+    highlightedId?: string | null;
 }
 
 // Every track scene (presenter clip or title card) as its own segment
@@ -31,9 +35,31 @@ interface Props {
 // segments use the same select-then-Cmd+E lifecycle as ChapterStrip (#40)
 // and BeatBar (#39) — click selects/highlights only, Cmd+E/Ctrl+E opens
 // the title editor.
-export function SceneBar({ scenePlan, totalFrames, currentFrame, onSeek, onSelectTitle }: Props) {
+export function SceneBar({
+    scenePlan,
+    totalFrames,
+    currentFrame,
+    onSeek,
+    onSelectTitle,
+    highlightedId,
+}: Props) {
     const [selectedTitle, setSelectedTitle] = useState<string | null>(null);
     const selectedAnchorRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+    const trackRef = useRef<HTMLDivElement>(null);
+
+    // Seeds selection from an AI chat edit (#54). Only title scenes have a
+    // highlight affordance here (selectedTitle is text-keyed, matching the
+    // click handler below) — a highlighted presenter scene still seeks the
+    // player there, it just has no distinct highlighted style to seed.
+    useEffect(() => {
+        if (!highlightedId) return;
+        const scene = scenePlan.scenes.find((s) => s.id === highlightedId);
+        if (!scene || (scene.type !== "presenter" && scene.type !== "title")) return;
+        if (scene.type === "title") setSelectedTitle(scene.text);
+        onSeek(scene.timelineStartFrame);
+        trackRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [highlightedId]);
 
     useEffect(() => {
         if (!selectedTitle) return;
@@ -74,7 +100,7 @@ export function SceneBar({ scenePlan, totalFrames, currentFrame, onSeek, onSelec
         <div style={styles.wrap}>
             <div style={styles.label}>Scenes ({sorted.length})</div>
 
-            <div style={styles.track} onMouseDown={onTrackClick}>
+            <div ref={trackRef} style={styles.track} onMouseDown={onTrackClick}>
                 {sorted.map((scene) => {
                     const widthPct = (scene.durationInFrames / totalFrames) * 100;
                     const isTitle = scene.type === "title";

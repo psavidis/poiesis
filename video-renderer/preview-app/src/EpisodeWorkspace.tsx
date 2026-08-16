@@ -95,6 +95,15 @@ export function EpisodeWorkspace() {
     // edit_plan.describe_selected_scene).
     const [selectedSceneIdForChat, setSelectedSceneIdForChat] = useState<string | undefined>(undefined);
 
+    // The scene(s) an AI chat edit just touched (#54) — routed to whichever
+    // bar(s) each id belongs to, below, so the change is visible on the
+    // timeline immediately instead of the user needing to find it
+    // themselves. Cleared on the next scene-plan reload's own effect below
+    // isn't needed: a stale highlight simply won't match anything once the
+    // id no longer resolves to a scene of the expected type, and a fresh
+    // chat submission always overwrites it with the new result anyway.
+    const [highlightedIds, setHighlightedIds] = useState<string[]>([]);
+
     // The floating text-only editor (see #34) — reached only from SceneBar/
     // MomentBar/ChapterStrip's segment clicks, deliberately NOT from
     // ActiveSceneBar's chips (those keep opening the full structured
@@ -243,6 +252,45 @@ export function EpisodeWorkspace() {
         });
         setRefreshKey((k) => k + 1);
     };
+
+    // #54 — reloads the plan (same as any other applied edit) and records
+    // which scene ids the chat instruction actually touched, so each bar
+    // below can seed its own selection/highlight state from whichever of
+    // these ids belongs to it.
+    const handleChatApplied = (touchedIds: string[]) => {
+        reloadScenePlan();
+        setHighlightedIds(touchedIds);
+    };
+
+    // Splits the touched ids (#54) by which bar owns that scene type, so
+    // each bar only ever receives an id it can actually resolve — a
+    // multi-scene edit (e.g. remove a title AND create a moment) highlights
+    // on both bars at once rather than only the first match winning.
+    // ChapterStrip/SceneBar's title highlight is keyed by title TEXT, not
+    // sceneId (see their own comments), hence the separate lookup.
+    const highlightedByType = useMemo(() => {
+        const empty = { presenterOrTitleId: null as string | null, titleText: null as string | null, momentId: null as string | null, beatId: null as string | null, imageId: null as string | null };
+        if (!episodeProps) return empty;
+        const scenesById = new Map(episodeProps.scenePlan.scenes.map((s) => [s.id, s] as const));
+        const result = { ...empty };
+        for (const id of highlightedIds) {
+            const scene = scenesById.get(id);
+            if (!scene) continue;
+            if (scene.type === "title") {
+                result.presenterOrTitleId ??= id;
+                result.titleText ??= scene.text;
+            } else if (scene.type === "presenter") {
+                result.presenterOrTitleId ??= id;
+            } else if (scene.type === "moment") {
+                result.momentId ??= id;
+            } else if (scene.type === "beat") {
+                result.beatId ??= id;
+            } else if (scene.type === "image") {
+                result.imageId ??= id;
+            }
+        }
+        return result;
+    }, [episodeProps, highlightedIds]);
 
     // #50 — a single Undo button/shortcut covering every write path
     // (moment/beat/title/storyboard/scene-field edits, and edit-plan chat
@@ -429,6 +477,7 @@ export function EpisodeWorkspace() {
                     fps={episodeProps.fps}
                     onSeek={seekToAbsoluteFrame}
                     onSelectTitle={openInlineTitleEditor}
+                    highlightedTitleText={highlightedByType.titleText}
                 />
             </div>
 
@@ -439,6 +488,7 @@ export function EpisodeWorkspace() {
                     currentFrame={currentFrame}
                     onSeek={seekToAbsoluteFrame}
                     onSelectTitle={openInlineTitleEditor}
+                    highlightedId={highlightedByType.presenterOrTitleId}
                 />
             </div>
 
@@ -455,6 +505,7 @@ export function EpisodeWorkspace() {
                         setInlineEditTarget(null);
                         setSelectedEditor({ kind: "moment", sceneId });
                     }}
+                    highlightedId={highlightedByType.momentId}
                 />
             </div>
 
@@ -470,6 +521,7 @@ export function EpisodeWorkspace() {
                         setInlineEditTarget(null);
                         setSelectedEditor({ kind: "image", sceneId });
                     }}
+                    highlightedId={highlightedByType.imageId}
                 />
             </div>
 
@@ -482,6 +534,7 @@ export function EpisodeWorkspace() {
                     episodePath={episodePath}
                     onSaved={reloadScenePlan}
                     onEditRequested={openInlineBeatEditor}
+                    highlightedId={highlightedByType.beatId}
                 />
             </div>
 
@@ -567,7 +620,7 @@ export function EpisodeWorkspace() {
             <div style={styles.playerWrap}>
                 <EditPlanChat
                     episodePath={episodePath}
-                    onApplied={reloadScenePlan}
+                    onApplied={handleChatApplied}
                     selectedSceneId={selectedSceneIdForChat}
                     scenePlan={episodeProps.scenePlan}
                 />

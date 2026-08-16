@@ -35,6 +35,9 @@ interface Props {
     // longer opens anything by itself; editing is a deliberate second step
     // (see #39 — explicitly not "click opens edit mode").
     onEditRequested: (sceneId: string, anchor: { x: number; y: number }) => void;
+    // Set by EpisodeWorkspace right after a chat edit touches a beat on
+    // this bar (#54) — seeds selection and re-centers the view on it.
+    highlightedId?: string | null;
 }
 
 type DragState = {
@@ -82,6 +85,7 @@ export function BeatBar({
     episodePath,
     onSaved,
     onEditRequested,
+    highlightedId,
 }: Props) {
     const [zoom, setZoom] = useState(1);
     // Fraction of totalFrames where the visible window starts — 0 at full
@@ -218,6 +222,22 @@ export function BeatBar({
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [dragBeatId, windowFrames]);
+
+    // Seeds selection from an AI chat edit (#54) and re-centers the view on
+    // it — mirrors MomentBar's own highlightedId effect.
+    useEffect(() => {
+        if (!highlightedId) return;
+        const entry = resolved.find((r) => r.beat.id === highlightedId);
+        if (!entry) return;
+        setSelectedBeatId(highlightedId);
+        onSeek(entry.startFrame);
+        const nextZoom = clamp(zoom > 1 ? zoom : 4, MIN_ZOOM, MAX_ZOOM);
+        const nextWindowFrames = totalFrames / nextZoom;
+        setZoom(nextZoom);
+        setPanStartPct(entry.startFrame / totalFrames - nextWindowFrames / totalFrames / 2);
+        trackRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [highlightedId]);
 
     // Cmd+E (Mac) / Ctrl+E (elsewhere) opens the text editor for whichever
     // beat is currently selected — only while something IS selected, and

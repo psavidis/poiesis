@@ -698,6 +698,10 @@ def test_edit_scene_plan_applies_validated_operations(tmp_path):
     assert body["applied"][0]["sceneId"] == "scene-002"
     assert body["rejected"] == []
     mock_edit_plan.assert_called_once()
+    # #54 — createdSceneIds includes every applied op's own sceneId too,
+    # not just created beats/moments, so a plain remove/update also
+    # highlights on the relevant bar.
+    assert body["createdSceneIds"] == ["scene-002"]
 
 
 def test_edit_scene_plan_passes_selected_scene_id_through_to_edit_plan(tmp_path):
@@ -891,6 +895,12 @@ def test_edit_scene_plan_creates_a_beat_in_emphasis_json_and_scene_plan(tmp_path
     assert len(beat_scenes) == 1
     assert beat_scenes[0]["text"] == "injection"
 
+    # #54 — the response names the beat's own resolved id (scene-beat-0,
+    # the first beat in an initially-empty emphasis.json), not the parent
+    # scene-001 the fake_result's "sceneId" field actually means.
+    assert body["createdSceneIds"] == [beat_scenes[0]["id"]]
+    assert beat_scenes[0]["id"] == "scene-beat-0"
+
 
 def test_edit_scene_plan_appends_created_beat_to_existing_beats(tmp_path):
     episode = _make_episode(tmp_path)
@@ -1032,6 +1042,11 @@ def test_edit_scene_plan_creates_a_moment_in_moments_json_and_scene_plan(tmp_pat
     moment_scenes = [s for s in scene_plan_on_disk["scenes"] if s["type"] == "moment"]
     assert len(moment_scenes) == 1
     assert moment_scenes[0]["text"] == "dependency injection matters"
+
+    # #54 — resolved id (scene-moment-0), not the parent scene-001 the
+    # fake_result's "sceneId" field actually means.
+    assert body["createdSceneIds"] == [moment_scenes[0]["id"]]
+    assert moment_scenes[0]["id"] == "scene-moment-0"
 
 
 def test_edit_scene_plan_appends_created_moment_to_existing_moments(tmp_path):

@@ -59,6 +59,10 @@ interface Props {
     // as SceneBar/MomentBar's onSelect* callbacks. Optional so ChapterStrip
     // still works standalone without every caller needing to pass a no-op.
     onSelectTitle?: (titleText: string, anchor: { x: number; y: number }) => void;
+    // Set by EpisodeWorkspace right after a chat edit touches a title
+    // scene (#54) — keyed by title text (a chapter's own identity here,
+    // since chapters aren't derived with their own scene id), not sceneId.
+    highlightedTitleText?: string | null;
 }
 
 // A full-episode strip dividing the video into chapters at each title
@@ -72,7 +76,15 @@ interface Props {
 // (#39), not click-opens-immediately. Only rendered in the full-episode
 // preview, not the scene-scoped "Adjust timing" view, which already has
 // its own OverlayStrip.
-export function ChapterStrip({ scenePlan, totalFrames, currentFrame, fps, onSeek, onSelectTitle }: Props) {
+export function ChapterStrip({
+    scenePlan,
+    totalFrames,
+    currentFrame,
+    fps,
+    onSeek,
+    onSelectTitle,
+    highlightedTitleText,
+}: Props) {
     const titles = scenePlan.scenes.filter((s): s is TitleScene => s.type === "title");
 
     // The clicked-but-not-editing chapter's title text — highlighted, and
@@ -80,6 +92,23 @@ export function ChapterStrip({ scenePlan, totalFrames, currentFrame, fps, onSeek
     // editor by itself (mirrors BeatBar's selectedBeatId).
     const [selectedTitle, setSelectedTitle] = useState<string | null>(null);
     const selectedAnchorRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+    const trackRef = useRef<HTMLDivElement>(null);
+
+    // Seeds selection from an AI chat edit (#54) — no zoom/pan to
+    // re-center here (unlike MomentBar/BeatBar/ImageBar), this strip
+    // already spans the full episode at a fixed scale, so the chapter is
+    // always in view horizontally once selected; onSeek still jumps the
+    // player there, and scrollIntoView handles the strip itself being
+    // vertically off-screen on a long page.
+    useEffect(() => {
+        if (!highlightedTitleText) return;
+        const chapter = titles.find((t) => t.text === highlightedTitleText);
+        if (!chapter) return;
+        setSelectedTitle(highlightedTitleText);
+        onSeek(chapter.timelineStartFrame);
+        trackRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [highlightedTitleText]);
 
     // Global (not scoped to the track element) so the shortcut fires with
     // focus anywhere on the page, same reasoning as BeatBar's own listener.
@@ -123,7 +152,7 @@ export function ChapterStrip({ scenePlan, totalFrames, currentFrame, fps, onSeek
                 {formatFrames(totalFrames, fps)} total
             </div>
 
-            <div style={styles.track} onMouseDown={onTrackClick}>
+            <div ref={trackRef} style={styles.track} onMouseDown={onTrackClick}>
                 {chapters.map((chapter, i) => {
                     const widthPct = ((chapter.endFrame - chapter.startFrame) / totalFrames) * 100;
                     const color = chapter.title === null ? "#3a4552" : CHAPTER_COLORS[i % CHAPTER_COLORS.length];

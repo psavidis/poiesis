@@ -29,6 +29,9 @@ interface Props {
     // pairs with this same panel, reached via Cmd+E for consistency with
     // the rest of this timeline's select-then-edit lifecycle.
     onEditRequested: (sceneId: string) => void;
+    // Set by EpisodeWorkspace right after a chat edit touches an image on
+    // this bar (#54) — seeds selection and re-centers the view on it.
+    highlightedId?: string | null;
 }
 
 type DragMode = "move" | "resize";
@@ -58,6 +61,7 @@ export function ImageBar({
     episodePath,
     onSaved,
     onEditRequested,
+    highlightedId,
 }: Props) {
     const [zoom, setZoom] = useState(1);
     const [panStartPct, setPanStartPct] = useState(0);
@@ -196,6 +200,22 @@ export function ImageBar({
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
     }, [selectedImageId, onEditRequested]);
+
+    // Seeds selection from an AI chat edit (#54) and re-centers the view on
+    // it — mirrors MomentBar's own highlightedId effect.
+    useEffect(() => {
+        if (!highlightedId) return;
+        const entry = resolved.find((r) => r.image.id === highlightedId);
+        if (!entry) return;
+        setSelectedImageId(highlightedId);
+        onSeek(entry.startFrame);
+        const nextZoom = clamp(zoom > 1 ? zoom : 4, MIN_ZOOM, MAX_ZOOM);
+        const nextWindowFrames = totalFrames / nextZoom;
+        setZoom(nextZoom);
+        setPanStartPct(entry.startFrame / totalFrames - nextWindowFrames / totalFrames / 2);
+        trackRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [highlightedId]);
 
     // Direct field update against scene-plan.json (no separate source-of-
     // truth file for image scenes, unlike moments/beats) — see api.ts's

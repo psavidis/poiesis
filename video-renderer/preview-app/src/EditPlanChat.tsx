@@ -5,7 +5,11 @@ import { editPlan, type EditPlanResult } from "./api";
 
 interface Props {
     episodePath: string;
-    onApplied: () => void;
+    // touchedIds (#54) — scene ids actually changed/created by this edit,
+    // so the caller can highlight and scroll them into view on the
+    // relevant timeline bar(s) instead of leaving the user to hunt for
+    // what the AI just did.
+    onApplied: (touchedIds: string[]) => void;
     // Set by EpisodeWorkspace when a scene chip in ActiveSceneBar is
     // clicked (see #29) — passed to the backend as structured context
     // (#51), not typed text, so "make this bigger" can resolve to the
@@ -67,7 +71,7 @@ export function EditPlanChat({ episodePath, onApplied, selectedSceneId, scenePla
             setInstruction("");
 
             if (editResult.applied.length > 0 || editResult.created.length > 0 || editResult.createdMoments.length > 0) {
-                onApplied();
+                onApplied(editResult.createdSceneIds);
             }
         } catch (e) {
             setError(String(e));

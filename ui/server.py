@@ -605,6 +605,16 @@ def edit_scene_plan(path: str, body: EditPlanRequest):
             # already only snapshots files that actually exist — simpler
             # than predicting exactly which of the four this particular
             # instruction will end up touching.
+            # Resolved child scene ids (#54) — filled in by do_write below,
+            # once existing_beats'/existing_moments' lengths are known.
+            # Kept OUT of the created_beats/created_moments dicts themselves:
+            # each entry's own "sceneId" field means the PARENT scene it
+            # attaches to (consumed by merge_beat_scenes/merge_moment_scenes
+            # to place it — see generate_emphasis.py/generate_moments.py),
+            # so overwriting it here would silently break placement.
+            resolved_beat_ids: list[str] = []
+            resolved_moment_ids: list[str] = []
+
             def do_write():
                 removed_ids = {op["sceneId"] for op in valid_ops if op["op"] == "remove"}
                 if removed_ids:
@@ -619,6 +629,14 @@ def edit_scene_plan(path: str, body: EditPlanRequest):
                         with beats_path.open("r", encoding="utf-8") as f:
                             existing_beats = json.load(f).get("beats", [])
 
+                    # scene-beat-{N} is exactly the array index (see
+                    # merge_beat_scenes) — resolvable here, before the new
+                    # entries are actually written, since existing_beats'
+                    # current length is where they'll land.
+                    resolved_beat_ids.extend(
+                        f"scene-beat-{len(existing_beats) + i}" for i in range(len(created_beats))
+                    )
+
                     all_beats = existing_beats + created_beats
                     plan_to_write = merge_beat_scenes(plan_to_write, all_beats)
                     write_json_atomic(beats_path, {"beats": all_beats})
@@ -628,6 +646,12 @@ def edit_scene_plan(path: str, body: EditPlanRequest):
                     if moments_path.exists():
                         with moments_path.open("r", encoding="utf-8") as f:
                             existing_moments = json.load(f).get("moments", [])
+
+                    # scene-moment-{N} — same array-index convention as
+                    # beats above (see merge_moment_scenes).
+                    resolved_moment_ids.extend(
+                        f"scene-moment-{len(existing_moments) + i}" for i in range(len(created_moments))
+                    )
 
                     all_moments = existing_moments + created_moments
                     plan_to_write = merge_moment_scenes(plan_to_write, all_moments)
@@ -645,11 +669,18 @@ def edit_scene_plan(path: str, body: EditPlanRequest):
     except EpisodeBusyError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
+    # createdSceneIds (#54) — the resolved scene-beat-{N}/scene-moment-{N}
+    # ids for created_beats/created_moments, in the same order, plus every
+    # remove/update op's own sceneId — everything the frontend needs to
+    # highlight what this instruction actually touched.
+    created_scene_ids = [op["sceneId"] for op in valid_ops] + resolved_beat_ids + resolved_moment_ids
+
     return {
         "applied": valid_ops,
         "rejected": rejected,
         "created": created_beats,
         "createdMoments": created_moments,
+        "createdSceneIds": created_scene_ids,
     }
 
 
