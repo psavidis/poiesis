@@ -1,7 +1,41 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ScenePlan } from "video-renderer-src/episode/types";
 import { sceneLabel } from "./ActiveSceneBar";
 import { editPlan, type EditPlanResult } from "./api";
+
+// Minimal shape of the Web Speech API this component actually uses — no
+// @types/dom-speech-recognition dependency, since only a handful of
+// members are needed and the full lib.dom types for this API are still
+// inconsistently shipped across TS/lib versions. webkitSpeechRecognition
+// is the only implementation Chrome ships (this project's own tooling and
+// target browser — see #56's own scoping), so that's the only vendor
+// prefix checked.
+interface SpeechRecognitionResultLike {
+    isFinal: boolean;
+    [index: number]: { transcript: string };
+}
+interface SpeechRecognitionEventLike {
+    resultIndex: number;
+    results: ArrayLike<SpeechRecognitionResultLike>;
+}
+interface SpeechRecognitionLike extends EventTarget {
+    continuous: boolean;
+    interimResults: boolean;
+    lang: string;
+    start(): void;
+    stop(): void;
+    onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+    onerror: ((event: { error: string }) => void) | null;
+    onend: (() => void) | null;
+}
+
+function getSpeechRecognitionCtor(): (new () => SpeechRecognitionLike) | null {
+    const w = window as unknown as {
+        SpeechRecognition?: new () => SpeechRecognitionLike;
+        webkitSpeechRecognition?: new () => SpeechRecognitionLike;
+    };
+    return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
+}
 
 interface Props {
     episodePath: string;
@@ -42,12 +76,72 @@ export function EditPlanChat({ episodePath, onApplied, selectedSceneId, scenePla
     // a track/timeline click elsewhere to deselect.
     const [dismissed, setDismissed] = useState(false);
 
+    // Voice input (#56) — push-to-talk only: click to start, click again
+    // (or the browser auto-stops on silence) to stop. Populates the same
+    // `instruction` state live/incrementally as speech is recognized, so
+    // it's visible and editable before Apply, same as typed text — never
+    // auto-submitted on its own.
+    const [listening, setListening] = useState(false);
+    const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+    const speechSupported = useRef(getSpeechRecognitionCtor() !== null).current;
+
+    const stopListening = () => {
+        recognitionRef.current?.stop();
+    };
+
+    const startListening = () => {
+        const Ctor = getSpeechRecognitionCtor();
+        if (!Ctor || listening) return;
+
+        setError(null);
+        const recognition = new Ctor();
+        recognition.continuous = false;
+        recognition.interimResults = true;
+        recognition.lang = "en-US";
+
+        recognition.onresult = (event) => {
+            let transcript = "";
+            for (let i = 0; i < event.results.length; i++) {
+                transcript += event.results[i][0].transcript;
+            }
+            setInstruction(transcript);
+        };
+
+        recognition.onerror = (event) => {
+            setError(
+                event.error === "not-allowed" || event.error === "permission-denied"
+                    ? "Microphone permission denied — allow microphone access to use voice input."
+                    : event.error === "no-speech"
+                    ? "No speech detected — try again."
+                    : `Voice input error: ${event.error}`
+            );
+        };
+
+        recognition.onend = () => {
+            setListening(false);
+            recognitionRef.current = null;
+        };
+
+        recognitionRef.current = recognition;
+        setListening(true);
+        recognition.start();
+    };
+
     // A newly clicked chip should reappear as "Editing: ..." even if a
     // previous selection was dismissed — dismiss only suppresses THIS
     // particular selection, not selection indicators in general.
     useEffect(() => {
         setDismissed(false);
     }, [selectedSceneId]);
+
+    // Stops any in-flight recognition if the component unmounts mid-listen
+    // (e.g. the user navigates away) — onend firing after unmount would
+    // otherwise touch state on a gone component.
+    useEffect(() => {
+        return () => {
+            recognitionRef.current?.stop();
+        };
+    }, []);
 
     const selectedScene = scenePlan?.scenes.find((s) => s.id === selectedSceneId);
     const showSelection = selectedSceneId && selectedScene && !dismissed;
@@ -111,6 +205,18 @@ export function EditPlanChat({ episodePath, onApplied, selectedSceneId, scenePla
                     style={styles.input}
                     disabled={status === "submitting"}
                 />
+                {speechSupported && (
+                    <button
+                        type="button"
+                        className="secondary"
+                        onClick={listening ? stopListening : startListening}
+                        disabled={status === "submitting"}
+                        title={listening ? "Stop listening" : "Speak an instruction"}
+                        style={listening ? styles.micButtonListening : undefined}
+                    >
+                        {listening ? "● Listening…" : "🎤"}
+                    </button>
+                )}
                 <button type="submit" disabled={status === "submitting" || !instruction.trim()}>
                     {status === "submitting" ? "Thinking…" : "Apply"}
                 </button>
@@ -216,6 +322,11 @@ const styles: Record<string, React.CSSProperties> = {
     error: {
         color: "#ff8f8f",
         fontSize: 13,
+    },
+    micButtonListening: {
+        background: "#c94a3c",
+        borderColor: "#c94a3c",
+        color: "#fff",
     },
     resultBox: {
         display: "flex",
