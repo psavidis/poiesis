@@ -393,7 +393,13 @@ export function EpisodeWorkspace() {
                     totalFrames={totalFrames}
                     currentFrame={currentFrame}
                     onSeek={seekToAbsoluteFrame}
-                    onSelectMoment={openInlineMomentEditor}
+                    episodePath={episodePath}
+                    onSaved={reloadScenePlan}
+                    onEditRequested={openInlineMomentEditor}
+                    onOpenStructuredEditor={(sceneId) => {
+                        setInlineEditTarget(null);
+                        setSelectedEditor({ kind: "moment", sceneId });
+                    }}
                 />
             </div>
 
