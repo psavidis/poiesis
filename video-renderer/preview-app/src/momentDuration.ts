@@ -16,7 +16,19 @@ const TREATMENT_DURATION_FRAMES: Record<string, number> = {
     "side-image": 150,
 };
 
-export function normalizeMoment<T extends { treatment: string; maxDurationInParentFrames: number }>(raw: T): T {
+export function normalizeMoment<
+    T extends { treatment: string; maxDurationInParentFrames: number; overriddenFields?: string[] }
+>(raw: T): T {
+    // A human-lengthened duration (drag-to-resize past the treatment's
+    // fixed default — see merge_moment_scenes' own docstring on this being
+    // a legitimate, supported edit) is by definition ABOVE `fixed`. Without
+    // this check, this stale-data clamp would silently discard that exact
+    // edit on every fetch/save round-trip — which is precisely what
+    // overriddenFields exists to prevent (#57).
+    if (raw.overriddenFields?.includes("maxDurationInParentFrames")) {
+        return raw;
+    }
+
     const fixed = TREATMENT_DURATION_FRAMES[raw.treatment] ?? raw.maxDurationInParentFrames;
 
     return {

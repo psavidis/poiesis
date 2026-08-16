@@ -963,6 +963,112 @@ def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, pr
     return proposals
 
 
+# Fields a human can actually change through the editor (MomentEditorPanel/
+# MomentBar), and therefore worth tracking provenance for (see #57).
+# "windowId"/"reason" are bookkeeping the AI attaches to its own proposal,
+# never user-facing content — they're excluded so re-saving an untouched
+# moment (which still round-trips these fields verbatim) never produces a
+# spurious override. "sceneId"/"treatment"/"videoId" identify what the
+# moment fundamentally is, the same reasoning edit_plan.py's EDITABLE_FIELDS
+# already applies to other scene types — not something a "field edit"
+# changes.
+OVERRIDABLE_MOMENT_FIELDS = {
+    "offsetInParentFrames", "maxDurationInParentFrames", "presenterSide",
+    "fullVisualKind", "text", "assetId", "codeAssetId", "diagram",
+    "comparison", "terms", "sideTextStyle", "caption",
+}
+
+
+def compute_overridden_fields(old_moment, new_moment):
+    """Field names on new_moment whose value differs from old_moment (the
+    same array-position entry currently on disk in moments.json) — the
+    human-edit save paths in ui/server.py's update_moments always send the
+    ENTIRE moments array back, in the same order it was fetched, so a
+    positional comparison against what's currently on disk is the only
+    reliable way to tell "the user actually changed this field" apart from
+    "this field just round-tripped unchanged" (see #57 — sceneId+treatment
+    alone can't identify a single moment, since two non-overlapping
+    moments can share both on a long presenter scene).
+
+    Starts from new_moment's OWN overriddenFields, not old_moment's — the
+    client (MomentEditorPanel's "Reset to Automatic") is the one place a
+    field is meant to be REMOVED from this set, by omitting it from the
+    array it sends back; starting from old_moment's set instead would
+    silently re-add it every time and make Reset a permanent no-op. A
+    field the client didn't think to touch but that was overridden before
+    still survives, though: anything in old_moment's set that new_moment's
+    own set doesn't explicitly drop is carried forward below, same as
+    before. Then anything ACTUALLY changed in value gets added on top,
+    regardless of what either side's overriddenFields said, since a value
+    change is itself definitive proof of an override."""
+
+    overridden = set(new_moment.get("overriddenFields", old_moment.get("overriddenFields", [])))
+
+    for field in OVERRIDABLE_MOMENT_FIELDS:
+        if new_moment.get(field) != old_moment.get(field):
+            overridden.add(field)
+
+    return sorted(overridden)
+
+
+def preserve_overridden_fields(old_moments, new_proposals):
+    """Before a --force regeneration overwrites moments.json, copy forward
+    any human-overridden field value from an old moment onto whichever new
+    proposal is its best match — otherwise re-running the AI stage would
+    silently discard a manually dragged duration or edited callout text
+    (see #57). Unlike compute_overridden_fields (a same-array positional
+    diff against a just-fetched copy), a fresh proposal batch has no
+    positional correspondence to the old one at all: different windows get
+    discovered, in a different order, possibly a different count. The best
+    available signal is sceneId (which parent presenter scene) plus,
+    when more than one old/new moment shares a sceneId, the closest
+    offsetInParentFrames — approximate, but better than losing the edit
+    outright, and only engaged for moments that actually have overrides to
+    protect (an old moment with no overriddenFields is left alone; the AI
+    is free to drop or reshape it same as any fully-automatic moment)."""
+
+    old_by_scene = {}
+    for old_moment in old_moments:
+        if old_moment.get("overriddenFields"):
+            old_by_scene.setdefault(old_moment["sceneId"], []).append(old_moment)
+
+    if not old_by_scene:
+        return new_proposals
+
+    new_by_scene = {}
+    for proposal in new_proposals:
+        new_by_scene.setdefault(proposal["sceneId"], []).append(proposal)
+
+    claimed_new_ids = set()
+
+    for scene_id, old_candidates in old_by_scene.items():
+
+        new_candidates = [p for p in new_by_scene.get(scene_id, []) if id(p) not in claimed_new_ids]
+
+        if not new_candidates:
+            continue
+
+        for old_moment in old_candidates:
+
+            best = min(
+                new_candidates,
+                key=lambda p: abs(p["offsetInParentFrames"] - old_moment["offsetInParentFrames"]),
+            )
+
+            for field in old_moment["overriddenFields"]:
+                if field in old_moment:
+                    best[field] = old_moment[field]
+
+            best["overriddenFields"] = sorted(
+                set(best.get("overriddenFields", [])) | set(old_moment["overriddenFields"])
+            )
+
+            claimed_new_ids.add(id(best))
+            new_candidates.remove(best)
+
+    return new_proposals
+
+
 def dedupe_overlapping_windows(proposals, style=None):
     """The presenter's on-screen window for a moment is its own span padded
     by TRANSITION_FRAMES on both sides for the slide animation (see
@@ -1158,6 +1264,11 @@ def main():
         print(output_file)
         return
 
+    # Loaded before the fresh proposal overwrites output_file, so a
+    # --force regeneration can carry forward any human-overridden field
+    # from the moments this run is about to replace (see #57).
+    previous_moments = load_json(output_file)["moments"] if output_file.exists() else []
+
     llm = LLMClient(PROJECT_ROOT / "config.json")
     prompt_template = load_prompt(PROMPT_FILE)
 
@@ -1184,6 +1295,8 @@ def main():
             episode_context=load_episode_narrative_text(episode),
             storyboard_chapters=storyboard_chapters
         )
+
+        proposals = preserve_overridden_fields(previous_moments, proposals)
 
         write_json_atomic(output_file, {"moments": proposals})
 

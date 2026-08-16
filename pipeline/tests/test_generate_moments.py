@@ -4,6 +4,7 @@ from generate_moments import (
     cap_full_visual_ratio,
     chapter_for_absolute_frame,
     chapters_from_scene_plan,
+    compute_overridden_fields,
     dedupe_overlapping_windows,
     format_assets_for_prompt,
     format_storyboard_for_prompt,
@@ -13,6 +14,7 @@ from generate_moments import (
     is_grounded,
     is_terms_grounded,
     merge_moment_scenes,
+    preserve_overridden_fields,
     propose_moments,
 )
 from style import load_style
@@ -1818,6 +1820,153 @@ def test_propose_moments_does_not_double_propose_same_window():
     # only the first-seen proposal for a claimed window should win
     assert len(proposals) == 1
     assert proposals[0]["treatment"] == "bottom-callout"
+
+
+# compute_overridden_fields / preserve_overridden_fields (#57) — AI-vs-
+# human provenance tracking, first slice (moments only).
+def test_compute_overridden_fields_detects_a_changed_field():
+    old = {"sceneId": "scene-001", "treatment": "bottom-callout", "text": "before", "offsetInParentFrames": 0}
+    new = {"sceneId": "scene-001", "treatment": "bottom-callout", "text": "after", "offsetInParentFrames": 0}
+
+    assert compute_overridden_fields(old, new) == ["text"]
+
+
+def test_compute_overridden_fields_ignores_unchanged_fields():
+    old = {"sceneId": "scene-001", "treatment": "bottom-callout", "text": "same", "offsetInParentFrames": 0}
+    new = {"sceneId": "scene-001", "treatment": "bottom-callout", "text": "same", "offsetInParentFrames": 0}
+
+    assert compute_overridden_fields(old, new) == []
+
+
+def test_compute_overridden_fields_ignores_non_editable_fields():
+    # sceneId/treatment identify what the moment fundamentally is (same
+    # reasoning edit_plan.py's EDITABLE_FIELDS already applies elsewhere)
+    # — not something a "field edit" changes, so a difference here must
+    # never appear in overriddenFields.
+    old = {"sceneId": "scene-001", "treatment": "bottom-callout", "windowId": "w0", "reason": "AI reason"}
+    new = {"sceneId": "scene-002", "treatment": "side-text", "windowId": "w1", "reason": "different"}
+
+    assert compute_overridden_fields(old, new) == []
+
+
+def test_compute_overridden_fields_accumulates_across_saves():
+    # A field overridden in a PRIOR save stays overridden even when THIS
+    # save doesn't touch it again — as long as the new payload round-trips
+    # that same overriddenFields set, which every real client does (see
+    # ui/server.py's MomentProposal — a save that omits the field entirely
+    # falls back to old_moment's set below, but a real client always sends
+    # what it fetched).
+    old = {"sceneId": "scene-001", "treatment": "bottom-callout", "text": "same", "overriddenFields": ["offsetInParentFrames"]}
+    new = {
+        "sceneId": "scene-001", "treatment": "bottom-callout", "text": "same",
+        "offsetInParentFrames": old.get("offsetInParentFrames"), "overriddenFields": ["offsetInParentFrames"],
+    }
+
+    assert compute_overridden_fields(old, new) == ["offsetInParentFrames"]
+
+
+def test_compute_overridden_fields_reset_actually_clears_the_marker():
+    # The bug this guards against: an early implementation always started
+    # from old_moment's own overriddenFields and unioned in, which meant
+    # "Reset to Automatic" (send the same value, minus the field from the
+    # array) could never actually take effect — the server kept re-adding
+    # it from the old state regardless of what the client explicitly sent.
+    old = {
+        "sceneId": "scene-001", "treatment": "side-image", "maxDurationInParentFrames": 377,
+        "overriddenFields": ["maxDurationInParentFrames"],
+    }
+    new = {
+        "sceneId": "scene-001", "treatment": "side-image", "maxDurationInParentFrames": 377,
+        "overriddenFields": [],
+    }
+
+    assert compute_overridden_fields(old, new) == []
+
+
+def test_compute_overridden_fields_against_empty_old_moment():
+    # A position beyond the old array's length (see update_moments in
+    # ui/server.py) has nothing to diff against — every present field on
+    # new counts as "changed from nothing", which is correct: there's no
+    # AI proposal at this position to have been overridden FROM.
+    new = {"sceneId": "scene-001", "treatment": "bottom-callout", "text": "brand new"}
+
+    assert compute_overridden_fields({}, new) == ["text"]
+
+
+def test_preserve_overridden_fields_copies_forward_a_manually_set_duration():
+    old_moments = [
+        {
+            "sceneId": "scene-001", "treatment": "bottom-callout", "text": "old text",
+            "offsetInParentFrames": 0, "maxDurationInParentFrames": 200,
+            "overriddenFields": ["maxDurationInParentFrames"],
+        }
+    ]
+    fresh_proposals = [
+        {
+            "sceneId": "scene-001", "treatment": "bottom-callout", "text": "freshly regenerated text",
+            "offsetInParentFrames": 5, "maxDurationInParentFrames": 90,
+        }
+    ]
+
+    result = preserve_overridden_fields(old_moments, fresh_proposals)
+
+    assert len(result) == 1
+    # The overridden field's value survives...
+    assert result[0]["maxDurationInParentFrames"] == 200
+    # ...but a field that was NOT overridden is free to regenerate.
+    assert result[0]["text"] == "freshly regenerated text"
+    assert result[0]["overriddenFields"] == ["maxDurationInParentFrames"]
+
+
+def test_preserve_overridden_fields_leaves_non_overridden_moments_untouched():
+    old_moments = [
+        {"sceneId": "scene-001", "treatment": "bottom-callout", "text": "old", "offsetInParentFrames": 0},
+    ]
+    fresh_proposals = [
+        {"sceneId": "scene-001", "treatment": "bottom-callout", "text": "new", "offsetInParentFrames": 10},
+    ]
+
+    result = preserve_overridden_fields(old_moments, fresh_proposals)
+
+    assert result[0]["text"] == "new"
+    assert result[0]["offsetInParentFrames"] == 10
+
+
+def test_preserve_overridden_fields_matches_closest_offset_among_same_scene_duplicates():
+    # Two old moments share sceneId (legitimate — dedupe_overlapping_windows
+    # only forbids OVERLAPPING windows on the same parent, not same-parent
+    # entirely). Each override should land on the new proposal closest to
+    # its own original offset, not the first one found.
+    old_moments = [
+        {
+            "sceneId": "scene-001", "treatment": "bottom-callout", "text": "first",
+            "offsetInParentFrames": 0, "overriddenFields": ["text"],
+        },
+        {
+            "sceneId": "scene-001", "treatment": "bottom-callout", "text": "second",
+            "offsetInParentFrames": 500, "overriddenFields": ["text"],
+        },
+    ]
+    fresh_proposals = [
+        {"sceneId": "scene-001", "treatment": "bottom-callout", "text": "regenerated near 500", "offsetInParentFrames": 480},
+        {"sceneId": "scene-001", "treatment": "bottom-callout", "text": "regenerated near 0", "offsetInParentFrames": 20},
+    ]
+
+    result = preserve_overridden_fields(old_moments, fresh_proposals)
+
+    by_offset = {p["offsetInParentFrames"]: p["text"] for p in result}
+    assert by_offset[20] == "first"
+    assert by_offset[480] == "second"
+
+
+def test_preserve_overridden_fields_with_no_prior_overrides_returns_proposals_unchanged():
+    fresh_proposals = [
+        {"sceneId": "scene-001", "treatment": "bottom-callout", "text": "new", "offsetInParentFrames": 0},
+    ]
+
+    result = preserve_overridden_fields([], fresh_proposals)
+
+    assert result is fresh_proposals
 
 
 def test_dedupe_overlapping_windows_drops_moment_overlapping_earlier_one():

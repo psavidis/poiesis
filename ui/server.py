@@ -19,7 +19,7 @@ from undo import restore_latest, wrap_with_checkpoint
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
 
 from generate_title_scenes import merge_title_scenes, write_json_atomic  # noqa: E402
-from generate_moments import merge_moment_scenes  # noqa: E402
+from generate_moments import compute_overridden_fields, merge_moment_scenes  # noqa: E402
 from generate_emphasis import merge_beat_scenes  # noqa: E402
 from generate_scene_plan_ts import generate_scene_plan_ts  # noqa: E402
 from edit_plan import (  # noqa: E402
@@ -279,6 +279,12 @@ class MomentProposal(BaseModel):
     sideTextStyle: str | None = None
     caption: str | None = None
     reason: str = ""
+    # Field names a human has explicitly changed since the AI last proposed
+    # this moment (see #57) — a save's own diff against what's currently on
+    # disk RECOMPUTES this in update_moments below, so a client never needs
+    # to compute or send it correctly itself; it only needs to round-trip
+    # whatever getMoments() returned (same as every other field here).
+    overriddenFields: list[str] = []
 
 
 class MomentsUpdate(BaseModel):
@@ -309,6 +315,24 @@ def update_moments(path: str, body: MomentsUpdate):
         raise HTTPException(status_code=404, detail="scene-plan.json not found — run the pipeline first")
 
     moments = [m.model_dump() for m in body.moments]
+
+    # overriddenFields (#57) is recomputed here, not trusted from the
+    # request body — a positional diff against what's currently on disk
+    # in moments.json is the only reliable "did the human actually change
+    # this field" signal (see compute_overridden_fields' own docstring for
+    # why sceneId+treatment can't identify a single moment). Positions
+    # beyond the old array's length (a newly-created moment via this same
+    # save, e.g. from the panel's own add-flow if one exists) have no old
+    # entry to diff against, so they start with an empty override set —
+    # correct, since there's nothing "AI-proposed-then-changed" yet.
+    old_moments = []
+    if moments_path.exists():
+        with moments_path.open("r", encoding="utf-8") as f:
+            old_moments = json.load(f).get("moments", [])
+
+    for i, moment in enumerate(moments):
+        old_moment = old_moments[i] if i < len(old_moments) else {}
+        moment["overriddenFields"] = compute_overridden_fields(old_moment, moment)
 
     def do_write():
         with scene_plan_path.open("r", encoding="utf-8") as f:

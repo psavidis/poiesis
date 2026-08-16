@@ -315,6 +315,104 @@ def test_update_moments_writes_file_and_merges_scene_plan(tmp_path):
     assert moment_scenes[0]["offsetInParentFrames"] == 15
 
 
+def test_update_moments_marks_changed_field_as_overridden(tmp_path):
+    # #57 — a save that actually changes a field's value from what's on
+    # disk records that field name in overriddenFields, so a later --force
+    # regeneration knows not to clobber it.
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+    (episode / "processing" / "moments.json").write_text(
+        json.dumps({"moments": [_bottom_callout_payload(text="AI proposed this")]})
+    )
+
+    response = client.put(
+        "/api/episode/moments",
+        params={"path": str(episode)},
+        json={"moments": [_bottom_callout_payload(text="Human edited this")]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["moments"][0]["overriddenFields"] == ["text"]
+
+    moments_on_disk = json.loads((episode / "processing" / "moments.json").read_text())
+    assert moments_on_disk["moments"][0]["overriddenFields"] == ["text"]
+
+
+def test_update_moments_unchanged_resave_does_not_add_spurious_overrides(tmp_path):
+    # A save that round-trips the SAME values (e.g. clicking Save without
+    # editing anything) must not mark fields as overridden — only an
+    # actual value change should.
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+    (episode / "processing" / "moments.json").write_text(
+        json.dumps({"moments": [_bottom_callout_payload(text="AI proposed this")]})
+    )
+
+    response = client.put(
+        "/api/episode/moments",
+        params={"path": str(episode)},
+        json={"moments": [_bottom_callout_payload(text="AI proposed this")]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["moments"][0]["overriddenFields"] == []
+
+
+def test_update_moments_preserves_prior_overrides_across_an_unrelated_save(tmp_path):
+    # A field overridden in an earlier save stays overridden even when a
+    # LATER save only changes some other field.
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+    (episode / "processing" / "moments.json").write_text(
+        json.dumps({"moments": [_bottom_callout_payload(text="edited earlier", overriddenFields=["text"])]})
+    )
+
+    # A real client (MomentBar's drag commit, MomentEditorPanel's save)
+    # always round-trips the full fetched moment — including whatever
+    # overriddenFields it already had — before patching only the field(s)
+    # it actually changed, same as this payload does.
+    response = client.put(
+        "/api/episode/moments",
+        params={"path": str(episode)},
+        json={
+            "moments": [
+                _bottom_callout_payload(text="edited earlier", offsetInParentFrames=99, overriddenFields=["text"])
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert set(response.json()["moments"][0]["overriddenFields"]) == {"text", "offsetInParentFrames"}
+
+
+def test_update_moments_reset_to_automatic_clears_a_prior_override(tmp_path):
+    # #57's "Reset to Automatic" affordance sends the SAME value back but
+    # with the field removed from overriddenFields — this must actually
+    # clear it (a value-unchanged diff must not silently re-add it from
+    # the old on-disk state, which was this feature's first, broken
+    # implementation — a reset that could never take effect).
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+    (episode / "processing" / "moments.json").write_text(
+        json.dumps(
+            {"moments": [_bottom_callout_payload(offsetInParentFrames=99, overriddenFields=["offsetInParentFrames"])]}
+        )
+    )
+
+    response = client.put(
+        "/api/episode/moments",
+        params={"path": str(episode)},
+        json={"moments": [_bottom_callout_payload(offsetInParentFrames=99, overriddenFields=[])]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["moments"][0]["overriddenFields"] == []
+
+    moments_on_disk = json.loads((episode / "processing" / "moments.json").read_text())
+    assert moments_on_disk["moments"][0]["overriddenFields"] == []
+
+
 def test_update_moments_round_trips_edited_side_terms(tmp_path):
     # Regression for #22: MomentProposal used to be missing the `terms`
     # field entirely, so any save through this endpoint on a side-terms

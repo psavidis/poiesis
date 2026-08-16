@@ -91,6 +91,33 @@ export function MomentEditorPanel({ episodePath, sceneId, scenePlan, currentFram
         setMoments((prev) => (prev ? prev.map((m, i) => (i === index ? { ...m, ...patch } : m)) : prev));
     };
 
+    // Reset to Automatic (#57): clears the field from overriddenFields so
+    // it's eligible for the AI to change again on the next --force
+    // regeneration — does NOT recompute a value right now (no scoped
+    // "re-propose just this one field" endpoint exists, and the value
+    // sitting here is still a perfectly valid current value either way).
+    // The user sees no visible field-value change from clicking this; what
+    // changes is only whether a future regeneration is allowed to touch it.
+    const resetField = (field: string) => {
+        const overriddenFields = (moment.overriddenFields || []).filter((f: string) => f !== field);
+        update({ overriddenFields });
+    };
+
+    const isOverridden = (field: string) => (moment.overriddenFields || []).includes(field);
+
+    const resetButton = (field: string) =>
+        isOverridden(field) ? (
+            <button
+                type="button"
+                className="secondary small"
+                onClick={() => resetField(field)}
+                title={`This field was manually edited — reset to let the AI decide it again next time`}
+                style={styles.resetButton}
+            >
+                Reset to Automatic
+            </button>
+        ) : null;
+
     const updateTerm = (termIndex: number, patch: Record<string, unknown>) => {
         const terms = (moment.terms || []).map((t: any, ti: number) =>
             ti === termIndex ? { ...t, ...patch } : t
@@ -140,7 +167,13 @@ export function MomentEditorPanel({ episodePath, sceneId, scenePlan, currentFram
         setStatus("Saving…");
         setError(null);
         try {
-            await saveMoments(episodePath, moments);
+            // The response's own moments (not the request's) carry
+            // server-recomputed overriddenFields (#57) — using it, rather
+            // than leaving local state as whatever was sent, means the
+            // "Reset to Automatic" affordance appears immediately after a
+            // save that just created an override, with no extra fetch.
+            const result = await saveMoments(episodePath, moments);
+            setMoments((result.moments ?? moments).map(normalizeMoment));
             setStatus("Saved — the next render will pick this up.");
         } catch (e) {
             setError(String(e));
@@ -205,31 +238,41 @@ export function MomentEditorPanel({ episodePath, sceneId, scenePlan, currentFram
 
             {!["side-image", "side-terms"].includes(moment.treatment) &&
                 !NO_TEXT_EDIT_TREATMENTS.has(moment.treatment) && (
-                    <input
-                        type="text"
-                        value={moment.text || ""}
-                        onChange={(e) => update({ text: e.target.value })}
-                        style={styles.input}
-                    />
+                    <div style={styles.fieldRow}>
+                        <input
+                            type="text"
+                            value={moment.text || ""}
+                            onChange={(e) => update({ text: e.target.value })}
+                            style={{ ...styles.input, flex: 1 }}
+                        />
+                        {resetButton("text")}
+                    </div>
                 )}
 
             {moment.treatment === "side-text" && (
-                <select
-                    value={moment.sideTextStyle || "quote"}
-                    onChange={(e) => update({ sideTextStyle: e.target.value })}
-                    style={styles.input}
-                >
-                    <option value="quote">quote</option>
-                    <option value="title">title</option>
-                </select>
+                <div style={styles.fieldRow}>
+                    <select
+                        value={moment.sideTextStyle || "quote"}
+                        onChange={(e) => update({ sideTextStyle: e.target.value })}
+                        style={{ ...styles.input, flex: 1 }}
+                    >
+                        <option value="quote">quote</option>
+                        <option value="title">title</option>
+                    </select>
+                    {resetButton("sideTextStyle")}
+                </div>
             )}
 
             {moment.reason && <p style={styles.reason}>{moment.reason}</p>}
 
             {parentScene && (
-                <button className="secondary small" onClick={() => setTimingExpanded((v) => !v)} style={styles.timingToggle}>
-                    {timingExpanded ? "Adjust timing ▾" : "Adjust timing ▸"}
-                </button>
+                <div style={styles.fieldRow}>
+                    <button className="secondary small" onClick={() => setTimingExpanded((v) => !v)} style={styles.timingToggle}>
+                        {timingExpanded ? "Adjust timing ▾" : "Adjust timing ▸"}
+                    </button>
+                    {resetButton("offsetInParentFrames")}
+                    {resetButton("maxDurationInParentFrames")}
+                </div>
             )}
 
             {timingExpanded && parentScene && (
@@ -286,6 +329,17 @@ const styles: Record<string, React.CSSProperties> = {
         borderRadius: 6,
         color: "#e8edf2",
         fontSize: 14,
+    },
+    fieldRow: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+    },
+    resetButton: {
+        flexShrink: 0,
+        fontSize: 11,
+        color: "#e8a23a",
+        borderColor: "#e8a23a",
     },
     termsList: {
         display: "flex",
