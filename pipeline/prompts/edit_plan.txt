@@ -71,6 +71,21 @@ Decide which scene(s) the instruction refers to and what should change. You may:
    instruction has no such reference (e.g. "add this screenshot to this scene"), omit
    anchorText and the image will appear at the start of the scene. Do not propose offset or
    duration values yourself — those are computed automatically.
+6. Create a new Full Screen diagram — a node-and-edge diagram that takes over the entire frame,
+   presenter hidden. Use this ONLY when the instruction explicitly asks to show/create/explain a
+   relationship, architecture, flow, or process as a diagram (e.g. "create a full screen diagram
+   showing how the producer talks to Kafka") — never for a phrase/text request (that's a moment,
+   above) and never when an existing diagram already covers the same thing:
+   {"op": "create", "type": "diagram", "sceneId": "...", "diagram": {"nodes": [{"id": "...",
+   "label": "..."}, ...], "edges": [{"from": "...", "to": "...", "label": "..." (optional)},
+   ...], "layout": "horizontal" | "vertical"}, "reason": "..."}
+   sceneId must be a real "presenter" scene id from the plan above. Every node label must
+   reflect something actually said in that scene — do not invent components, services, or
+   relationships that aren't described in the transcript, even if they'd make the diagram more
+   complete or technically plausible. At most 6 nodes and 8 edges — prefer fewer, clearer nodes
+   over an exhaustive one. Every edge's "from"/"to" must reference a real node id from the same
+   diagram's own "nodes" list. Do not propose offset or duration values yourself — those are
+   computed automatically.
 
 Some instructions describe a creative feeling or intent rather than naming a specific field —
 e.g. "make this more dramatic," "make this pop more," "tone this down," "make this feel
@@ -95,9 +110,10 @@ instruction like this:
   instruction even refers to (see the ambiguity guidance below), not merely because the
   requested feeling has no perfect field to express it in today.
 
-You may NOT create any scene type or moment treatment other than the three above (no side-text,
-side-image, side-code, side-diagram, titles, or full screens via this endpoint — those require
-different grounding this endpoint doesn't have).
+You may NOT create any scene type or moment treatment other than the four above (no side-text,
+side-image, side-code, side-diagram, titles, content-dominant-code, or full-visual with kind
+"image"/"text"/"code" via this endpoint — those require different grounding this endpoint
+doesn't have).
 You may NOT change "id", "type", "videoId", "parentSceneId", or "assetId" on any scene —
 those identify what a scene fundamentally is, not something an edit instruction changes.
 
@@ -139,15 +155,16 @@ Schema:
   "operations": [
     {
       "op": "remove" or "update" or "create",
-      "sceneId": "string, must match an id in the scene plan above — required for remove/update and for create/moment and create/image, omit for create/beat",
+      "sceneId": "string, must match an id in the scene plan above — required for remove/update and for create/moment, create/image, and create/diagram, omit for create/beat",
       "fields": { "field": newValue, ... },
-      "type": "beat" | "moment" | "image" — required for create, omit otherwise",
+      "type": "beat" | "moment" | "image" | "diagram" — required for create, omit otherwise",
       "wordIds": ["string", ...] — required for create/beat, must be exact contiguous ids from the candidate words above",
       "kind": "word-pop" | "underline" | "icon-accent" — required for create/beat, omit otherwise",
       "icon": "arrow" | "check" | "warning" | "gear" — only for create/beat with kind icon-accent",
       "text": "string — required for create/moment, a short phrase quoted from what is actually said in the target scene",
       "assetId": "string — required for create/image, must be an exact id from the available assets above",
       "anchorText": "string — optional for create/image, a short phrase quoted from what is actually said near where the image should appear",
+      "diagram": "object — required for create/diagram: { nodes: [{id, label}], edges: [{from, to, label?}], layout: 'horizontal'|'vertical' }, at most 6 nodes and 8 edges, every label grounded in what is actually said",
       "reason": "short explanation, referencing the scene's actual content"
     }
   ]
@@ -156,5 +173,6 @@ Schema:
 "fields" is only present for "update" operations. "type"/"wordIds"/"kind"/"icon" are only
 present for "create"/"beat" operations. "type"/"sceneId"/"text" are only present for
 "create"/"moment" operations. "type"/"sceneId"/"assetId"/"anchorText" are only present for
-"create"/"image" operations. If the instruction doesn't match anything in the current plan,
-return {"operations": []}.
+"create"/"image" operations. "type"/"sceneId"/"diagram" are only present for "create"/"diagram"
+operations. If the instruction doesn't match anything in the current plan, return
+{"operations": []}.

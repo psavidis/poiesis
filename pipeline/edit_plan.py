@@ -25,6 +25,7 @@ from generate_moments import (  # noqa: E402
     duration_for_treatment,
     format_assets_for_prompt,
     group_transcript_by_clip,
+    is_diagram_grounded,
     is_grounded,
 )
 from visual_placement import filter_segments_in_window  # noqa: E402
@@ -606,19 +607,109 @@ def resolve_bottom_callout_creation(op, scene_plan, transcript, manifest, style=
     }
 
 
+def resolve_full_screen_diagram_creation(op, scene_plan, transcript, manifest, style=None):
+    """Resolves a single "create"/"diagram" operation into a full-visual
+    moment proposal (treatment "full-visual", fullVisualKind "diagram") —
+    the spec's own worked example (docs/specs/ai-assisted-editing-and-
+    conversational-control.md, section 5: "Create a Full Screen diagram
+    explaining how the producer communicates with Kafka"). Unlike
+    resolve_image_creation (which references a real, pre-existing asset),
+    a diagram has no asset to ground against — its nodes/edges are
+    AI-authored structured data the model invents from the instruction,
+    which is a fundamentally different (harder) fabrication risk: nothing
+    stops the model from inventing an architecture that was never
+    described. Reuses generate_moments.py's own is_diagram_grounded — the
+    SAME check an AI-pipeline-proposed side-diagram/full-visual diagram is
+    held to (loose per-node-label stem matching against the source
+    window's transcript text, plus MAX_DIAGRAM_NODES/MAX_DIAGRAM_EDGES
+    caps) — rather than inventing a second, looser standard for the
+    chat-creation path specifically."""
+
+    if style is None:
+        style = load_style()
+
+    scene_id = op.get("sceneId")
+    diagram = op.get("diagram")
+
+    if not scene_id or not isinstance(diagram, dict):
+        return None
+
+    if diagram.get("layout") not in ("horizontal", "vertical"):
+        return None
+
+    scenes_by_id = {scene["id"]: scene for scene in scene_plan["scenes"]}
+    parent = scenes_by_id.get(scene_id)
+
+    if not parent or parent["type"] != "presenter":
+        return None
+
+    if not transcript or not manifest:
+        return None
+
+    clips = group_transcript_by_clip(transcript, manifest)
+    segments = clips.get(parent["videoId"], [])
+
+    window = {"sourceStartFrame": parent["sourceStartFrame"], "sourceEndFrame": parent["sourceEndFrame"]}
+    matching_segments = filter_segments_in_window(segments, window, scene_plan["fps"])
+
+    if not matching_segments:
+        return None
+
+    full_window_text = " ".join(segment["text"] for segment in matching_segments)
+
+    if not is_diagram_grounded(diagram, full_window_text):
+        return None
+
+    # A full-visual moment (unlike a bottom-callout) isn't anchored to
+    # where a specific phrase is spoken — it takes over the whole frame
+    # for its own window, same as an AI-pipeline-proposed full-visual
+    # moment starts at the candidate window's own offset rather than a
+    # matched segment's position. Placed at the start of the scene, same
+    # "no more specific anchor available" default resolve_image_creation
+    # uses for an image with no anchorText.
+    offset = 0
+
+    duration = min(
+        duration_for_treatment("full-visual", style),
+        max(0, parent["durationInFrames"] - offset),
+    )
+
+    if duration <= 0:
+        return None
+
+    if _bottom_callout_overlaps_existing_moment(scene_plan, scene_id, offset, duration):
+        return None
+
+    return {
+        "sceneId": scene_id,
+        "videoId": parent["videoId"],
+        "treatment": "full-visual",
+        "fullVisualKind": "diagram",
+        "diagram": diagram,
+        "presenterSide": None,
+        "offsetInParentFrames": offset,
+        "maxDurationInParentFrames": duration,
+        "reason": op.get("reason", ""),
+    }
+
+
 def edit_plan(
     scene_plan, instruction, llm: LLMClient, prompt_template: str,
     selected_scene_id=None, transcript=None, manifest=None, assets=None,
 ):
     """transcript/manifest are optional — only pass them when both are
     available (an episode with no word-level transcript data can't ground
-    a beat/moment creation, same as generate_emphasis.py's own pipeline
-    stage). When present, they enable "create" operations: "beat" (#52,
-    resolve_beat_creation, reuses generate_emphasis.py's own word-matching)
-    and "moment"/bottom-callout (#53, resolve_bottom_callout_creation,
-    reuses generate_moments.py's own text-grounding). assets is likewise
-    optional (an episode with no indexed graphics can't ground an inset
-    image creation) and enables "create"/"image" (resolve_image_creation —
+    a beat/moment/diagram creation, same as generate_emphasis.py's own
+    pipeline stage). When present, they enable "create" operations:
+    "beat" (#52, resolve_beat_creation, reuses generate_emphasis.py's own
+    word-matching), "moment"/bottom-callout (#53,
+    resolve_bottom_callout_creation, reuses generate_moments.py's own
+    text-grounding), and "diagram" (resolve_full_screen_diagram_creation —
+    a Full Screen diagram moment, reuses generate_moments.py's own
+    is_diagram_grounded; see docs/specs/ai-assisted-editing-and-
+    conversational-control.md section 5's own worked example). assets is
+    likewise optional (an episode with no indexed graphics can't ground an
+    inset image creation) and enables "create"/"image" (resolve_image_creation —
     the AI-creation path for ImageScene, previously unreachable by any
     real workflow; see docs/specs/content-types-and-presentation-editing.md).
     None of these are reimplemented here.
@@ -687,6 +778,7 @@ def edit_plan(
     create_beat_ops = [op for op in valid_ops if op["op"] == "create" and op.get("type") == "beat"]
     create_moment_ops = [op for op in valid_ops if op["op"] == "create" and op.get("type") == "moment"]
     create_image_ops = [op for op in valid_ops if op["op"] == "create" and op.get("type") == "image"]
+    create_diagram_ops = [op for op in valid_ops if op["op"] == "create" and op.get("type") == "diagram"]
 
     created_beats = []
 
@@ -709,6 +801,20 @@ def edit_plan(
             continue
 
         created_moments.append(moment)
+
+    # A "diagram" create is also a moment proposal (treatment full-visual,
+    # fullVisualKind diagram) — same created_moments list, same
+    # moments.json write path (see do_write below) as a bottom-callout,
+    # just resolved by a different function since the grounding discipline
+    # is different (is_diagram_grounded, not is_grounded).
+    for op in create_diagram_ops:
+        diagram_moment = resolve_full_screen_diagram_creation(op, scene_plan, transcript, manifest)
+
+        if diagram_moment is None:
+            rejected.append({"operation": op, "reason": "could not ground this diagram against the target scene's transcript, or it exceeds node/edge limits"})
+            continue
+
+        created_moments.append(diagram_moment)
 
     created_images = []
 
@@ -774,7 +880,15 @@ def main():
     if created_moments:
         print(f"\nCreated {len(created_moments)} moment(s):")
         for moment in created_moments:
-            print(f"  {moment['treatment']} on {moment['sceneId']}: \"{moment['text']}\"")
+            # A diagram-created moment (treatment "full-visual", see
+            # resolve_full_screen_diagram_creation) has no "text" field —
+            # summarize its node labels instead.
+            summary = (
+                moment["text"]
+                if "text" in moment
+                else ", ".join(n["label"] for n in moment["diagram"]["nodes"])
+            )
+            print(f"  {moment['treatment']} on {moment['sceneId']}: \"{summary}\"")
 
     if created_images:
         print(f"\nCreated {len(created_images)} image(s):")

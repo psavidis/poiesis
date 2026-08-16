@@ -1619,6 +1619,64 @@ def test_edit_scene_plan_creates_an_image_scene_directly_in_scene_plan(tmp_path)
     assert body["createdSceneIds"] == ["scene-image-0"]
 
 
+def test_edit_scene_plan_creates_a_full_screen_diagram_moment(tmp_path):
+    # A diagram-created moment (resolve_full_screen_diagram_creation) feeds
+    # into the SAME created_moments list/write path as a bottom-callout —
+    # this exercises that shape end to end rather than assuming it, since
+    # the field shape differs (diagram/fullVisualKind instead of text).
+    episode = _make_episode(tmp_path)
+    scene_plan_before = _make_scene_plan(episode, video_ids=("001",))
+    _make_word_level_transcript_fixtures(episode, video_ids=("001",))
+
+    fake_result = (
+        scene_plan_before,
+        [],
+        [],
+        [],
+        [
+            {
+                "sceneId": "scene-001",
+                "videoId": "001",
+                "treatment": "full-visual",
+                "fullVisualKind": "diagram",
+                "diagram": {
+                    "nodes": [{"id": "a", "label": "Producer"}, {"id": "b", "label": "Kafka"}],
+                    "edges": [{"from": "a", "to": "b"}],
+                    "layout": "horizontal",
+                },
+                "presenterSide": None,
+                "offsetInParentFrames": 0,
+                "maxDurationInParentFrames": 300,
+                "reason": "explains the flow",
+            }
+        ],
+        [],
+    )
+
+    with patch("server.edit_plan", return_value=fake_result):
+        response = client.post(
+            "/api/episode/edit-plan",
+            params={"path": str(episode)},
+            json={"instruction": "create a full screen diagram of the producer talking to kafka"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["createdMoments"]) == 1
+    assert body["createdMoments"][0]["treatment"] == "full-visual"
+    assert body["createdMoments"][0]["fullVisualKind"] == "diagram"
+
+    moments_on_disk = json.loads((episode / "processing" / "moments.json").read_text())
+    assert moments_on_disk["moments"][0]["treatment"] == "full-visual"
+    assert moments_on_disk["moments"][0]["diagram"]["nodes"][0]["label"] == "Producer"
+
+    scene_plan_on_disk = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    moment_scenes = [s for s in scene_plan_on_disk["scenes"] if s["type"] == "moment"]
+    assert len(moment_scenes) == 1
+    assert moment_scenes[0]["treatment"] == "full-visual"
+    assert moment_scenes[0]["fullVisualKind"] == "diagram"
+
+
 def test_edit_scene_plan_appends_created_moment_to_existing_moments(tmp_path):
     episode = _make_episode(tmp_path)
     scene_plan_before = _make_scene_plan(episode, video_ids=("001",))

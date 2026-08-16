@@ -262,15 +262,21 @@ export function EditPlanChat({ episodePath, onApplied, selectedSceneId, scenePla
                         </div>
                     ))}
 
-                    {result.createdMoments.map((moment, i) => (
-                        <div key={`created-moment-${i}`} style={styles.appliedRow}>
-                            <span style={styles.opBadge}>CREATED</span>
-                            <span>
-                                {moment.treatment} on {moment.sceneId}: "{moment.text}"
-                                {moment.reason ? ` — ${moment.reason}` : ""}
-                            </span>
-                        </div>
-                    ))}
+                    {result.createdMoments.map((moment, i) => {
+                        // A diagram-created moment has no "text" — summarize
+                        // its node labels instead (mirrors edit_plan.py's
+                        // own CLI summary for the same case).
+                        const summary = moment.text ?? moment.diagram?.nodes.map((n) => n.label).join(", ") ?? "";
+                        return (
+                            <div key={`created-moment-${i}`} style={styles.appliedRow}>
+                                <span style={styles.opBadge}>CREATED</span>
+                                <span>
+                                    {moment.treatment} on {moment.sceneId}: "{summary}"
+                                    {moment.reason ? ` — ${moment.reason}` : ""}
+                                </span>
+                            </div>
+                        );
+                    })}
 
                     {result.createdImages.map((image, i) => (
                         <div key={`created-image-${i}`} style={styles.appliedRow}>

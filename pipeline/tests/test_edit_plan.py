@@ -9,6 +9,7 @@ from edit_plan import (
     reflow_timeline,
     resolve_beat_creation,
     resolve_bottom_callout_creation,
+    resolve_full_screen_diagram_creation,
     resolve_image_creation,
     validate_operations,
 )
@@ -780,6 +781,185 @@ def test_edit_plan_without_assets_cannot_create_images():
     )
 
     assert created_images == []
+    assert len(rejected) == 1
+
+
+# resolve_full_screen_diagram_creation — AI creation of Full Screen diagram
+# moments via chat (docs/specs/ai-assisted-editing-and-conversational-
+# control.md section 5's own worked example: "Create a Full Screen diagram
+# explaining how the producer communicates with Kafka").
+def _grounded_diagram():
+    # Labels drawn from _transcript_with_segments()'s actual words
+    # ("dependency injection", "testing") so is_diagram_grounded accepts it.
+    return {
+        "nodes": [
+            {"id": "a", "label": "dependency injection"},
+            {"id": "b", "label": "testing"},
+        ],
+        "edges": [{"from": "a", "to": "b", "label": "enables"}],
+        "layout": "horizontal",
+    }
+
+
+def test_resolve_full_screen_diagram_creation_accepts_a_grounded_diagram():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    op = {
+        "op": "create", "type": "diagram", "sceneId": "scene-001",
+        "diagram": _grounded_diagram(), "reason": "explains the relationship",
+    }
+
+    moment = resolve_full_screen_diagram_creation(op, scene_plan, _transcript_with_segments(), _manifest_single_video())
+
+    assert moment["sceneId"] == "scene-001"
+    assert moment["treatment"] == "full-visual"
+    assert moment["fullVisualKind"] == "diagram"
+    assert moment["diagram"] == _grounded_diagram()
+    assert moment["presenterSide"] is None
+    assert "text" not in moment
+
+
+def test_resolve_full_screen_diagram_creation_rejects_a_hallucinated_diagram():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    diagram = {
+        "nodes": [{"id": "a", "label": "kubernetes cluster"}, {"id": "b", "label": "service mesh"}],
+        "edges": [{"from": "a", "to": "b"}],
+        "layout": "horizontal",
+    }
+    op = {"op": "create", "type": "diagram", "sceneId": "scene-001", "diagram": diagram, "reason": "x"}
+
+    assert resolve_full_screen_diagram_creation(op, scene_plan, _transcript_with_segments(), _manifest_single_video()) is None
+
+
+def test_resolve_full_screen_diagram_creation_rejects_too_many_nodes():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    diagram = {
+        "nodes": [{"id": str(i), "label": "dependency injection"} for i in range(7)],
+        "edges": [],
+        "layout": "horizontal",
+    }
+    op = {"op": "create", "type": "diagram", "sceneId": "scene-001", "diagram": diagram, "reason": "x"}
+
+    assert resolve_full_screen_diagram_creation(op, scene_plan, _transcript_with_segments(), _manifest_single_video()) is None
+
+
+def test_resolve_full_screen_diagram_creation_rejects_an_edge_referencing_an_unknown_node():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    diagram = {
+        "nodes": [{"id": "a", "label": "dependency injection"}],
+        "edges": [{"from": "a", "to": "does-not-exist"}],
+        "layout": "horizontal",
+    }
+    op = {"op": "create", "type": "diagram", "sceneId": "scene-001", "diagram": diagram, "reason": "x"}
+
+    assert resolve_full_screen_diagram_creation(op, scene_plan, _transcript_with_segments(), _manifest_single_video()) is None
+
+
+def test_resolve_full_screen_diagram_creation_rejects_invalid_layout():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    diagram = {**_grounded_diagram(), "layout": "diagonal"}
+    op = {"op": "create", "type": "diagram", "sceneId": "scene-001", "diagram": diagram, "reason": "x"}
+
+    assert resolve_full_screen_diagram_creation(op, scene_plan, _transcript_with_segments(), _manifest_single_video()) is None
+
+
+def test_resolve_full_screen_diagram_creation_rejects_a_non_presenter_scene():
+    scene_plan = {"fps": 30, "scenes": [_title("scene-title-0", "Hello", 0)]}
+
+    op = {"op": "create", "type": "diagram", "sceneId": "scene-title-0", "diagram": _grounded_diagram(), "reason": "x"}
+
+    assert resolve_full_screen_diagram_creation(op, scene_plan, _transcript_with_segments(), _manifest_single_video()) is None
+
+
+def test_resolve_full_screen_diagram_creation_requires_scene_id_and_diagram():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    missing_scene_id = {"op": "create", "type": "diagram", "diagram": _grounded_diagram(), "reason": "x"}
+    assert resolve_full_screen_diagram_creation(
+        missing_scene_id, scene_plan, _transcript_with_segments(), _manifest_single_video()
+    ) is None
+
+    missing_diagram = {"op": "create", "type": "diagram", "sceneId": "scene-001", "reason": "x"}
+    assert resolve_full_screen_diagram_creation(
+        missing_diagram, scene_plan, _transcript_with_segments(), _manifest_single_video()
+    ) is None
+
+
+def test_resolve_full_screen_diagram_creation_returns_none_without_transcript_or_manifest():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    op = {"op": "create", "type": "diagram", "sceneId": "scene-001", "diagram": _grounded_diagram(), "reason": "x"}
+
+    assert resolve_full_screen_diagram_creation(op, scene_plan, None, _manifest_single_video()) is None
+    assert resolve_full_screen_diagram_creation(op, scene_plan, _transcript_with_segments(), None) is None
+
+
+def test_edit_plan_creates_a_full_screen_diagram_grounded_against_scene_transcript():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    llm = _FakeLLMClient(
+        {
+            "operations": [
+                {
+                    "op": "create", "type": "diagram", "sceneId": "scene-001",
+                    "diagram": _grounded_diagram(), "reason": "explains the relationship",
+                }
+            ]
+        }
+    )
+
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+        scene_plan, "create a full screen diagram of how DI relates to testing", llm, PROMPT_TEMPLATE,
+        transcript=_transcript_with_segments(), manifest=_manifest_single_video(),
+    )
+
+    assert len(created_moments) == 1
+    assert created_moments[0]["treatment"] == "full-visual"
+    assert created_moments[0]["fullVisualKind"] == "diagram"
+    assert rejected == []
+
+
+def test_edit_plan_rejects_an_ungroundable_diagram_creation():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    diagram = {
+        "nodes": [{"id": "a", "label": "kubernetes"}, {"id": "b", "label": "service mesh"}],
+        "edges": [{"from": "a", "to": "b"}],
+        "layout": "horizontal",
+    }
+    llm = _FakeLLMClient(
+        {"operations": [{"op": "create", "type": "diagram", "sceneId": "scene-001", "diagram": diagram, "reason": "x"}]}
+    )
+
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+        scene_plan, "create a full screen diagram about kubernetes", llm, PROMPT_TEMPLATE,
+        transcript=_transcript_with_segments(), manifest=_manifest_single_video(),
+    )
+
+    assert created_moments == []
+    assert len(rejected) == 1
+
+
+def test_edit_plan_without_transcript_cannot_create_diagrams():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    llm = _FakeLLMClient(
+        {
+            "operations": [
+                {"op": "create", "type": "diagram", "sceneId": "scene-001", "diagram": _grounded_diagram(), "reason": "x"}
+            ]
+        }
+    )
+
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+        scene_plan, "create a diagram", llm, PROMPT_TEMPLATE
+    )
+
+    assert created_moments == []
     assert len(rejected) == 1
 
 

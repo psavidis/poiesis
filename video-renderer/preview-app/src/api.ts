@@ -237,18 +237,23 @@ export interface CreatedBeat {
     reason?: string;
 }
 
-// A bottom-callout moment created via chat (#53) — grounded against what's
-// actually said in the target presenter scene's own transcript, the same
-// discipline generate_moments.py's own bottom-callout proposals use.
-// Written to moments.json server-side, same shape as any other moment
-// proposal there.
+// A moment created via chat — either a bottom-callout (#53, grounded
+// against what's actually said in the target scene's transcript) or a
+// Full Screen diagram (treatment "full-visual", fullVisualKind "diagram" —
+// grounded the same way generate_moments.py's own full-visual diagram
+// proposals are, via is_diagram_grounded; see docs/specs/ai-assisted-
+// editing-and-conversational-control.md section 5). Written to
+// moments.json server-side, same shape as any other moment proposal
+// there — text/diagram are mutually exclusive depending on treatment.
 export interface CreatedMoment {
     // The PARENT presenter scene this moment attaches to — NOT the
     // moment's own id (see EditPlanResult.createdSceneIds below).
     sceneId: string;
     videoId: string;
-    treatment: "bottom-callout";
-    text: string;
+    treatment: "bottom-callout" | "full-visual";
+    text?: string;
+    diagram?: { nodes: { id: string; label: string }[]; edges: { from: string; to: string; label?: string }[]; layout: "horizontal" | "vertical" };
+    fullVisualKind?: "diagram";
     presenterSide: null;
     offsetInParentFrames: number;
     maxDurationInParentFrames: number;
