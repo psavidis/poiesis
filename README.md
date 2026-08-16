@@ -12,46 +12,53 @@ For a guided walkthrough of the current pipeline state — what each stage does,
 parameterize resolution/LLM provider/AI sparsity, and what's deliberately not built yet —
 see [`docs/pipeline-guide.md`](docs/pipeline-guide.md).
 
-# Control Panel UI
+# The Poiesis App
 
-A local web UI for driving the pipeline without the terminal — every stage, the full
-pipeline, render, and QA check are all buttons that stream real-time output, and any AI-
-proposed scene (titles, moment overlays) is shown for review with the model's
-stated reasoning. It runs the exact same scripts as the CLI, using your Claude Code CLI login
-(`config.json`'s `llm.provider: "claude-code"`) — no separate API key required.
+A local, video-centric web app for driving the pipeline without the terminal. Instead of a
+list of pipeline stages, the player sits at the center of the experience: pick an episode,
+the preview lands automatically as soon as there's a scene plan to show (even before every AI
+stage has finished — see below), and every AI-proposed scene (titles, moment overlays,
+storyboard reasoning) is editable by clicking directly on the player or through a chat box
+that turns a plain-English instruction into a validated edit. It runs the exact same scripts
+as the CLI, using your Claude Code CLI login (`config.json`'s `llm.provider: "claude-code"`)
+— no separate API key required.
 
 ```bash
 ./start_ui.sh
 ```
 
-This opens http://127.0.0.1:8000 in your browser automatically — enter the path to an
-episode folder to get started. Pass a different port with `./start_ui.sh 8080` if 8000 is
-taken. (For development with auto-reload on code changes, run
-`cd ui && ../.venv/bin/uvicorn server:app --reload` instead.)
+This starts the backend (`ui/server.py`, on :8000) and the app itself (on :5173), opening
+:5173 in your browser automatically. Pick an episode folder from the list, or paste a path.
+Pass a different backend port with `./start_ui.sh 8080` if 8000 is taken — the app itself
+always runs on :5173. (For backend development with auto-reload on code changes, run
+`cd ui && ../.venv/bin/uvicorn server:app --reload` in a separate terminal instead of
+`start_ui.sh`, then run `cd video-renderer/preview-app && npm run dev` for the app.)
 
-## Adjusting moment overlay timing
+The first time, install the app's dependencies: `cd video-renderer/preview-app && npm install`.
 
-The control panel's "Propose moment scenes (AI)" review lets you edit a moment's text
-(bottom-callout/side-text) or which asset is shown (side-image) directly. Timing — when a
-moment appears and how long it shows — is adjusted in a separate scrubbable preview instead
-of typing frame numbers: click "Adjust timing" on any moment row. That link only works if the
-preview app's own dev server is also running (it's a separate process from the control panel):
+## Running the pipeline and reviewing AI decisions
 
-```bash
-./start_preview.sh
-```
-
-This starts it at http://127.0.0.1:5173. Keep it running alongside `./start_ui.sh` — the
-first time, install its dependencies: `cd video-renderer/preview-app && npm install`.
+The default view is a collapsed progress indicator (Ingest / Understand / Draft edit /
+Finalize) with a "Start" button — click it to run the full pipeline. The preview lands as
+soon as `analyze_scenes` produces a scene plan (well before every AI stage has finished) and
+fills in automatically as titles, moments, captions, and other proposals complete, with no
+manual reload. Click any title or moment directly in the player (via the scene chips under
+it) to open its editor — edit the text, remove it, or (for moments) expand "Adjust timing" to
+drag its window against the real footage right there, no separate tab. Chapter-level
+storyboard reasoning and the full AI episode-analysis pass are available as collapsible
+panels above the player. Individual stage run/re-run, QA check, and render (including the
+DaVinci Resolve export format) are one level down, behind the "Advanced" toggle, alongside a
+live log of whatever's currently running.
 
 ## Natural-language editing
 
-The preview app (both "Preview episode" full-episode mode and the scene-scoped "Adjust
-timing" view) has a text box under the player. Type an instruction and Claude proposes a
-structured edit to `scene-plan.json`, applied only after server-side validation — every scene
-id must be real, every field must be on that scene type's editable allowlist, or the operation
-is rejected and shown as such rather than silently ignored. Whatever was applied (or rejected,
-and why) shows immediately, and the player reloads with the change.
+Under the player there's a text box. Type an instruction and Claude proposes a structured
+edit to `scene-plan.json`, applied only after server-side validation — every scene id must be
+real, every field must be on that scene type's editable allowlist, or the operation is
+rejected and shown as such rather than silently ignored. Whatever was applied (or rejected,
+and why) shows immediately, and the player reloads with the change. Clicking a scene chip
+under the player both opens its structured editor and prefills this box with that scene's id,
+so you don't have to already know it.
 
 Deliberately scoped to editing/removing scenes that already exist — it won't invent a new
 scene from a description, since that requires the AI to make up valid offsets/durations from
@@ -78,10 +85,10 @@ touching for this, since they're positioned relative to their own parent scene, 
 absolute timeline frame.
 
 Like "Adjust timing", each instruction is applied straight to `processing/scene-plan.json`, and
-the control panel automatically regenerates `video-renderer/generated/episode/scene-plan.ts`
-right after — the next render already reflects the change, no separate manual codegen step.
-(Hand-editing `scene-plan.json` directly, outside the control panel, still needs a manual
-`generate_scene_plan_ts.py` run — see "Review" below.)
+the app automatically regenerates `video-renderer/generated/episode/scene-plan.ts` right after
+— the next render already reflects the change, no separate manual codegen step. (Hand-editing
+`scene-plan.json` directly, outside the app, still needs a manual `generate_scene_plan_ts.py`
+run — see "Review" below.)
 
 # Python Library Dependencies
 
@@ -157,13 +164,14 @@ plan — plain, human-readable JSON — and it's meant to be reviewed and adjust
   `qa_check.py` flags a mismatch there too.
 - **Clip trimming**: adjust `sourceStartFrame`/`sourceEndFrame` on any `type: "presenter"`
   scene if the automatic silence trim over- or under-cuts.
-- **In the app**: the preview app (`./start_preview.sh`, "Preview episode" from the control
-  panel) has a text box under the player — "remove the third title card", "trim 10 more frames
-  off the end of scene-009" — that asks Claude to propose the edit, shows what it did (or
-  rejected, and why) before applying, then reloads the player with the change. Scoped to
-  editing/removing existing scenes only (title/moment/caption/image text and timing,
-  presenter trim points) — it won't invent a new scene from a description. See "Natural-language
-  editing" below for exactly which fields are editable this way.
+- **In the app**: click a title/moment chip under the player to edit it directly (see
+  "Running the pipeline and reviewing AI decisions" above), or use the chat box under the
+  player — "remove the third title card", "trim 10 more frames off the end of scene-009" —
+  that asks Claude to propose the edit, shows what it did (or rejected, and why) before
+  applying, then reloads the player with the change. Scoped to editing/removing existing
+  scenes only (title/moment/caption/image text and timing, presenter trim points) — it won't
+  invent a new scene from a description. See "Natural-language editing" above for exactly
+  which fields are editable this way.
 - Or ask Claude directly (in a coding session, e.g. this repo's Claude Code setup) to make the
   same kind of edits — since the plan is just JSON, this requires no special tooling either.
 
@@ -267,7 +275,7 @@ Requires `pip install opentimelineio` (see Python Library Dependencies above). W
 `processing/davinci-export/timeline.otio` and `processing/davinci-export/clips/`. Open it in
 Resolve via **File → Import Timeline → OpenTimelineIO**. Same as `--transparent`:
 background/intro/outro/music are not part of this export — they stay a manual step on a
-project you build in Resolve. This is also available from the control panel UI's "Render"
+project you build in Resolve. This is also available from the app's Advanced panel's "Render"
 button via the **Output format** selector, alongside the existing MP4 render.
 
 Note: no interchange format (OTIO, AAF, EDL, FCPXML) reliably carries titles/text as

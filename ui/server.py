@@ -9,7 +9,6 @@ import sys
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from episode_locks import EpisodeBusyError, episode_lock
@@ -553,6 +552,3 @@ async def _stream_command(websocket: WebSocket, command):
             await cancel_task
         except asyncio.CancelledError:
             pass
-
-
-app.mount("/", StaticFiles(directory=str(UI_DIR / "static"), html=True), name="static")

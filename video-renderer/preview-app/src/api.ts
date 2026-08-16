@@ -126,6 +126,11 @@ export interface StoryboardChapter {
 export const getStoryboard = (episodePath: string) =>
     getArtifact(episodePath, "storyboard.json").then((data) => (data.chapters ?? []) as StoryboardChapter[]);
 
+// Read-only — ui/static/app.js's renderEpisodeAnalysis never offered editing,
+// just a pretty-printed dump of analyze_episode's output (AI narrative
+// summary + transcript QA).
+export const getEpisodeAnalysis = (episodePath: string) => getArtifact(episodePath, "episode_analysis.json");
+
 export async function saveStoryboard(episodePath: string, chapters: StoryboardChapter[]) {
     const res = await fetch(
         `${API_BASE}/api/episode/storyboard?path=${encodeURIComponent(episodePath)}`,

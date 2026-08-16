@@ -7,6 +7,7 @@ import { ActiveSceneBar } from "./ActiveSceneBar";
 import { AdvancedPanel } from "./AdvancedPanel";
 import { ChapterStrip } from "./ChapterStrip";
 import { EditPlanChat } from "./EditPlanChat";
+import { EpisodeAnalysisPanel } from "./EpisodeAnalysisPanel";
 import { manifestToEpisodeBaseProps } from "./episodeProps";
 import { MomentEditorPanel } from "./MomentEditorPanel";
 import { ProgressFlow } from "./ProgressFlow";
@@ -253,6 +254,7 @@ export function EpisodeWorkspace() {
                 onIncludeCaptionsChange={setIncludeCaptions}
             />
             <StoryboardPanel episodePath={episodePath} />
+            <EpisodeAnalysisPanel episodePath={episodePath} />
         </>
     ) : null;
 
