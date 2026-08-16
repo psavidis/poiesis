@@ -44,6 +44,8 @@ export const colors = {
     timelineVisual: "#8b5cf6",
     timelineImage: "#2ac9a0",
     timelineBeat: "#e8a23a",
+    timelinePresenter: "#2a7d6f",
+    timelineTitle: "#c98a2a",
 
     // Chapter strip's own rotating categorical palette (ChapterStrip.tsx) —
     // kept as its own named array (not folded into the flat token list

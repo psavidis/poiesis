@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import type { ImageScene, PresenterScene, ScenePlan, TitleScene } from "video-renderer-src/episode/types";
 import { updateSceneFields } from "./api";
+import { colors, radius, typography } from "./tokens";
 
 // A fourth, distinct color from SceneBar/MomentBar/BeatBar — image scenes
 // are their own scene type (not a moment treatment), and the spec (docs/
 // specs/content-types-and-presentation-editing.md) calls Full Screen a
 // first-class presentation deserving its own visible timeline surface, so
 // this gets its own bar rather than folding into MomentBar (#46).
-const IMAGE_COLOR = "#2ac9a0";
+const IMAGE_COLOR = colors.timelineImage;
 
 const ZOOM_STEP = 1.6;
 const MAX_ZOOM = 20;
@@ -344,8 +345,8 @@ const styles: Record<string, React.CSSProperties> = {
         gap: 8,
     },
     label: {
-        fontSize: 12,
-        color: "#9aa7b4",
+        fontSize: typography.size.sm,
+        color: colors.textSecondary,
     },
     zoomControls: {
         display: "flex",
@@ -354,9 +355,9 @@ const styles: Record<string, React.CSSProperties> = {
     track: {
         position: "relative",
         height: 28,
-        borderRadius: 6,
-        background: "#161d24",
-        border: "1px solid #2a333d",
+        borderRadius: radius.md,
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
         userSelect: "none",
         cursor: "pointer",
         overflow: "hidden",
@@ -380,7 +381,9 @@ const styles: Record<string, React.CSSProperties> = {
     segmentLabel: {
         padding: "0 5px",
         fontSize: 10,
-        fontWeight: 600,
+        fontWeight: typography.weight.semibold,
+        // Dark text on the teal image-bar background specifically — a
+        // computed contrast color for IMAGE_COLOR, not a reused UI color.
         color: "#04231a",
         whiteSpace: "nowrap",
         overflow: "hidden",
@@ -401,11 +404,11 @@ const styles: Record<string, React.CSSProperties> = {
         right: 0,
         marginBottom: 4,
         padding: "2px 6px",
-        background: "#0b0f14",
-        border: "1px solid #2a333d",
-        borderRadius: 4,
-        fontSize: 11,
-        color: "#e8edf2",
+        background: colors.background,
+        border: `1px solid ${colors.border}`,
+        borderRadius: radius.sm,
+        fontSize: typography.size.xs,
+        color: colors.textPrimary,
         whiteSpace: "nowrap",
         zIndex: 2,
     },
@@ -414,16 +417,16 @@ const styles: Record<string, React.CSSProperties> = {
         top: 0,
         bottom: 0,
         width: 2,
-        background: "#ff5a3c",
+        background: colors.playhead,
         pointerEvents: "none",
         boxShadow: "0 0 4px rgba(255,90,60,0.8)",
     },
     error: {
-        fontSize: 12,
-        color: "#ff8f8f",
+        fontSize: typography.size.sm,
+        color: colors.error,
     },
     hint: {
-        fontSize: 11,
-        color: "#6b7683",
+        fontSize: typography.size.xs,
+        color: colors.textMuted,
     },
 };

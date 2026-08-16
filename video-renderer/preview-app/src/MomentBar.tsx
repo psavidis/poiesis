@@ -3,6 +3,7 @@ import type { MomentScene, PresenterScene, ScenePlan, TitleScene } from "video-r
 import { getMoments, saveMoments } from "./api";
 import { isTextEligible } from "./InlineTextEditor";
 import { momentIndexFromSceneId } from "./momentDuration";
+import { colors, radius, typography } from "./tokens";
 
 // Two-category color scheme, not per-treatment — the question this strip
 // answers is "where does text appear on screen" (see #35), not "what
@@ -12,8 +13,8 @@ import { momentIndexFromSceneId } from "./momentDuration";
 // any, is secondary). "full-visual" is data-driven (fullVisualKind), not
 // a fixed treatment->category mapping, so it needs the whole moment, not
 // just its treatment string.
-const TEXT_COLOR = "#3a9bd5";
-const VISUAL_COLOR = "#8b5cf6";
+const TEXT_COLOR = colors.timelineText;
+const VISUAL_COLOR = colors.timelineVisual;
 
 const TEXT_TREATMENTS = new Set(["bottom-callout", "side-text", "side-terms", "comparison"]);
 
@@ -470,14 +471,14 @@ const styles: Record<string, React.CSSProperties> = {
         gap: 8,
     },
     label: {
-        fontSize: 12,
-        color: "#9aa7b4",
+        fontSize: typography.size.sm,
+        color: colors.textSecondary,
     },
     legend: {
         display: "flex",
         gap: 12,
-        fontSize: 11,
-        color: "#6b7683",
+        fontSize: typography.size.xs,
+        color: colors.textMuted,
     },
     legendItem: {
         display: "flex",
@@ -497,9 +498,9 @@ const styles: Record<string, React.CSSProperties> = {
     track: {
         position: "relative",
         height: 28,
-        borderRadius: 6,
-        background: "#161d24",
-        border: "1px solid #2a333d",
+        borderRadius: radius.md,
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
         userSelect: "none",
         cursor: "pointer",
         overflow: "hidden",
@@ -522,7 +523,7 @@ const styles: Record<string, React.CSSProperties> = {
     segmentLabel: {
         padding: "0 6px",
         fontSize: 10,
-        fontWeight: 600,
+        fontWeight: typography.weight.semibold,
         color: "#fff",
         whiteSpace: "nowrap",
         overflow: "hidden",
@@ -544,11 +545,11 @@ const styles: Record<string, React.CSSProperties> = {
         right: 0,
         marginBottom: 4,
         padding: "2px 6px",
-        background: "#0b0f14",
-        border: "1px solid #2a333d",
-        borderRadius: 4,
-        fontSize: 11,
-        color: "#e8edf2",
+        background: colors.background,
+        border: `1px solid ${colors.border}`,
+        borderRadius: radius.sm,
+        fontSize: typography.size.xs,
+        color: colors.textPrimary,
         whiteSpace: "nowrap",
         zIndex: 2,
     },
@@ -557,16 +558,16 @@ const styles: Record<string, React.CSSProperties> = {
         top: 0,
         bottom: 0,
         width: 2,
-        background: "#ff5a3c",
+        background: colors.playhead,
         pointerEvents: "none",
         boxShadow: "0 0 4px rgba(255,90,60,0.8)",
     },
     error: {
-        fontSize: 12,
-        color: "#ff8f8f",
+        fontSize: typography.size.sm,
+        color: colors.error,
     },
     hint: {
-        fontSize: 11,
-        color: "#6b7683",
+        fontSize: typography.size.xs,
+        color: colors.textMuted,
     },
 };

@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import type { PresenterScene, ScenePlan, TitleScene } from "video-renderer-src/episode/types";
+import { colors, radius, typography } from "./tokens";
 
 // Distinct from ChapterStrip's per-chapter color cycle (which groups scenes
 // by topic) — this strip shows the actual scene boundaries underneath that
 // grouping, so a fixed two-color-by-type scheme keeps the two strips
 // visually distinguishable at a glance.
-const PRESENTER_COLOR = "#2a7d6f";
-const TITLE_COLOR = "#c98a2a";
+const PRESENTER_COLOR = colors.timelinePresenter;
+const TITLE_COLOR = colors.timelineTitle;
 
 // Display-only label for the edit shortcut's hint text — mirrors BeatBar's
 // own MOD_KEY_LABEL constant.
@@ -157,16 +158,16 @@ const styles: Record<string, React.CSSProperties> = {
         gap: 6,
     },
     label: {
-        fontSize: 12,
-        color: "#9aa7b4",
+        fontSize: typography.size.sm,
+        color: colors.textSecondary,
     },
     track: {
         position: "relative",
         height: 28,
         display: "flex",
-        borderRadius: 6,
+        borderRadius: radius.md,
         overflow: "hidden",
-        border: "1px solid #2a333d",
+        border: `1px solid ${colors.border}`,
         userSelect: "none",
         cursor: "pointer",
     },
@@ -186,7 +187,7 @@ const styles: Record<string, React.CSSProperties> = {
     segmentLabel: {
         padding: "0 6px",
         fontSize: 10,
-        fontWeight: 600,
+        fontWeight: typography.weight.semibold,
         color: "#fff",
         whiteSpace: "nowrap",
         overflow: "hidden",
@@ -198,7 +199,7 @@ const styles: Record<string, React.CSSProperties> = {
         top: 0,
         bottom: 0,
         width: 2,
-        background: "#ff5a3c",
+        background: colors.playhead,
         pointerEvents: "none",
         boxShadow: "0 0 4px rgba(255,90,60,0.8)",
     },

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ScenePlan, TitleScene } from "video-renderer-src/episode/types";
+import { colors, radius, typography } from "./tokens";
 
 // Display-only label for the edit shortcut's hint text — mirrors BeatBar's
 // own MOD_KEY_LABEL constant (kept per-file rather than shared since it's
@@ -45,7 +46,7 @@ function chaptersFromTitles(titles: TitleScene[], totalFrames: number): Chapter[
 // A pleasant, stable-per-index palette so adjacent chapters are visually
 // distinct without needing per-episode color assignment — cycles rather
 // than growing unboundedly for episodes with many chapters.
-const CHAPTER_COLORS = ["#3a7bd5", "#c96f2a", "#3aa66d", "#8b5cf6", "#d5473a", "#2aa1a1"];
+const CHAPTER_COLORS = colors.chapterPalette;
 
 interface Props {
     scenePlan: ScenePlan;
@@ -155,7 +156,7 @@ export function ChapterStrip({
             <div ref={trackRef} style={styles.track} onMouseDown={onTrackClick}>
                 {chapters.map((chapter, i) => {
                     const widthPct = ((chapter.endFrame - chapter.startFrame) / totalFrames) * 100;
-                    const color = chapter.title === null ? "#3a4552" : CHAPTER_COLORS[i % CHAPTER_COLORS.length];
+                    const color = chapter.title === null ? colors.borderStrong : CHAPTER_COLORS[i % CHAPTER_COLORS.length];
 
                     const selectable = chapter.title !== null && !!onSelectTitle;
                     const isSelected = selectable && selectedTitle === chapter.title;
@@ -229,16 +230,16 @@ const styles: Record<string, React.CSSProperties> = {
         gap: 6,
     },
     label: {
-        fontSize: 12,
-        color: "#9aa7b4",
+        fontSize: typography.size.sm,
+        color: colors.textSecondary,
     },
     track: {
         position: "relative",
         height: 44,
         display: "flex",
-        borderRadius: 6,
+        borderRadius: radius.md,
         overflow: "hidden",
-        border: "1px solid #2a333d",
+        border: `1px solid ${colors.border}`,
         userSelect: "none",
         cursor: "pointer",
     },
@@ -259,8 +260,8 @@ const styles: Record<string, React.CSSProperties> = {
     },
     chapterLabel: {
         padding: "0 8px",
-        fontSize: 11,
-        fontWeight: 600,
+        fontSize: typography.size.xs,
+        fontWeight: typography.weight.semibold,
         color: "#fff",
         whiteSpace: "nowrap",
         overflow: "hidden",
@@ -272,12 +273,12 @@ const styles: Record<string, React.CSSProperties> = {
         top: 0,
         bottom: 0,
         width: 2,
-        background: "#ff5a3c",
+        background: colors.playhead,
         pointerEvents: "none",
         boxShadow: "0 0 4px rgba(255,90,60,0.8)",
     },
     hint: {
-        fontSize: 12,
-        color: "#6b7683",
+        fontSize: typography.size.sm,
+        color: colors.textMuted,
     },
 };
