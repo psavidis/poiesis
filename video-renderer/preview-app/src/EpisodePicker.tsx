@@ -96,7 +96,7 @@ export function EpisodePicker() {
 
 const styles: Record<string, React.CSSProperties> = {
     container: {
-        fontFamily: "system-ui, sans-serif",
+        fontFamily: typography.fontFamily,
         color: colors.textPrimary,
         padding: 12,
         display: "flex",

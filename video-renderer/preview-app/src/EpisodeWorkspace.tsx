@@ -19,6 +19,7 @@ import { ProgressFlow } from "./ProgressFlow";
 import { SceneBar } from "./SceneBar";
 import { StoryboardPanel } from "./StoryboardPanel";
 import { TitleEditorPanel } from "./TitleEditorPanel";
+import { colors, typography } from "./tokens";
 
 // Display-only label for the undo shortcut's hint — mirrors BeatBar's own
 // MOD_KEY_LABEL constant.
@@ -456,17 +457,19 @@ export function EpisodeWorkspace() {
             {header}
 
             <div style={styles.playerWrap}>
-                <Player
-                    ref={playerRef}
-                    component={Episode as any}
-                    inputProps={playerProps}
-                    durationInFrames={totalFrames}
-                    compositionWidth={episodeProps.width}
-                    compositionHeight={episodeProps.height}
-                    fps={episodeProps.fps}
-                    style={{ width: "100%" }}
-                    controls
-                />
+                <div style={styles.playerFrame}>
+                    <Player
+                        ref={playerRef}
+                        component={Episode as any}
+                        inputProps={playerProps}
+                        durationInFrames={totalFrames}
+                        compositionWidth={episodeProps.width}
+                        compositionHeight={episodeProps.height}
+                        fps={episodeProps.fps}
+                        style={{ width: "100%", display: "block" }}
+                        controls
+                    />
+                </div>
             </div>
 
             <div style={styles.playerWrap}>
@@ -629,14 +632,26 @@ export function EpisodeWorkspace() {
     );
 }
 
+// Matches playerWrap's own maxWidth below — the workspace is centered as
+// ONE coherent column (video, timeline, editing controls, AI chat all
+// share this width), not just the player in isolation. Previously only
+// playerWrap had a maxWidth; the outer container had none and was never
+// centered (no margin: 0 auto), so the whole workspace sat flush against
+// the left edge of wide viewports — docs/specs/poiesis-product-theme-and-
+// ui-design-system.md section 2's "the current interface is visually
+// biased toward the left side of the screen."
+const WORKSPACE_MAX_WIDTH = 1280;
+
 const styles: Record<string, React.CSSProperties> = {
     container: {
-        fontFamily: "system-ui, sans-serif",
-        color: "#e8edf2",
+        fontFamily: typography.fontFamily,
+        color: colors.textPrimary,
         padding: 12,
         display: "flex",
         flexDirection: "column",
         gap: 12,
+        maxWidth: WORKSPACE_MAX_WIDTH,
+        margin: "0 auto",
     },
     brandBanner: {
         position: "relative",
@@ -657,8 +672,8 @@ const styles: Record<string, React.CSSProperties> = {
         gap: 10,
     },
     undoStatus: {
-        fontSize: 12,
-        color: "#9aa7b4",
+        fontSize: typography.size.sm,
+        color: colors.textSecondary,
         maxWidth: 260,
         overflow: "hidden",
         textOverflow: "ellipsis",
@@ -672,17 +687,28 @@ const styles: Record<string, React.CSSProperties> = {
     },
     brandText: {
         fontSize: 26,
-        fontWeight: 700,
-        color: "#e8edf2",
+        fontWeight: typography.weight.bold,
+        color: colors.textPrimary,
         letterSpacing: 0.3,
     },
     playerWrap: {
         width: "100%",
-        maxWidth: 1280,
+        maxWidth: WORKSPACE_MAX_WIDTH,
+    },
+    // The video is the "primary visual focus" (spec section 12/15) — a
+    // deliberate frame (border, radius, shadow) distinguishes it from
+    // every other section below, which share plain playerWrap with no
+    // framing of their own. overflow: hidden clips the Player's own
+    // corners to match the frame's borderRadius.
+    playerFrame: {
+        borderRadius: 10,
+        overflow: "hidden",
+        border: `1px solid ${colors.border}`,
+        boxShadow: "0 8px 28px rgba(0,0,0,0.45)",
     },
     message: {
-        fontFamily: "system-ui, sans-serif",
-        color: "#e8edf2",
+        fontFamily: typography.fontFamily,
+        color: colors.textPrimary,
         padding: 24,
         fontSize: 15,
         lineHeight: 1.5,
@@ -690,15 +716,15 @@ const styles: Record<string, React.CSSProperties> = {
     },
     messageTitle: {
         fontSize: 18,
-        fontWeight: 600,
+        fontWeight: typography.weight.semibold,
         marginBottom: 8,
     },
     checkboxRow: {
         display: "flex",
         alignItems: "center",
         gap: 8,
-        fontSize: 13,
-        color: "#9aa7b4",
+        fontSize: typography.size.md,
+        color: colors.textSecondary,
         cursor: "pointer",
     },
 };
