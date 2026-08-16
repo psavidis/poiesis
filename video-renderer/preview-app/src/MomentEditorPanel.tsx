@@ -3,6 +3,7 @@ import type { PresenterScene, ScenePlan } from "video-renderer-src/episode/types
 import { getAssets, getMoments, saveMoments, switchMomentTreatment } from "./api";
 import { momentIndexFromSceneId, normalizeMoment } from "./momentDuration";
 import { OverlayStrip, type EditableOverlay } from "./OverlayStrip";
+import { colors, radius, typography } from "./tokens";
 
 interface Asset {
     id: string;
@@ -386,32 +387,32 @@ const styles: Record<string, React.CSSProperties> = {
         flexDirection: "column",
         gap: 8,
         padding: "12px 14px",
-        background: "#161d24",
-        border: "1px solid #2a333d",
-        borderRadius: 8,
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderRadius: radius.lg,
     },
     header: {
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        fontSize: 12,
-        fontWeight: 700,
+        fontSize: typography.size.sm,
+        fontWeight: typography.weight.bold,
         textTransform: "uppercase",
         letterSpacing: 0.5,
-        color: "#9aa7b4",
+        color: colors.textSecondary,
     },
     hint: {
-        fontSize: 12,
-        color: "#9aa7b4",
+        fontSize: typography.size.sm,
+        color: colors.textSecondary,
         margin: 0,
     },
     input: {
         padding: "8px 12px",
-        background: "#0b0f14",
-        border: "1px solid #2a333d",
-        borderRadius: 6,
-        color: "#e8edf2",
-        fontSize: 14,
+        background: colors.background,
+        border: `1px solid ${colors.border}`,
+        borderRadius: radius.md,
+        color: colors.textPrimary,
+        fontSize: typography.size.base,
     },
     fieldRow: {
         display: "flex",
@@ -419,15 +420,15 @@ const styles: Record<string, React.CSSProperties> = {
         gap: 8,
     },
     presentationLabel: {
-        fontSize: 12,
-        color: "#9aa7b4",
+        fontSize: typography.size.sm,
+        color: colors.textSecondary,
         flexShrink: 0,
     },
     resetButton: {
         flexShrink: 0,
-        fontSize: 11,
-        color: "#e8a23a",
-        borderColor: "#e8a23a",
+        fontSize: typography.size.xs,
+        color: colors.accent,
+        borderColor: colors.accent,
     },
     termsList: {
         display: "flex",
@@ -441,33 +442,33 @@ const styles: Record<string, React.CSSProperties> = {
     termInput: {
         flex: 1,
         padding: "6px 10px",
-        background: "#0b0f14",
-        border: "1px solid #2a333d",
-        borderRadius: 6,
-        color: "#e8edf2",
-        fontSize: 13,
+        background: colors.background,
+        border: `1px solid ${colors.border}`,
+        borderRadius: radius.md,
+        color: colors.textPrimary,
+        fontSize: typography.size.md,
     },
     termSelect: {
         padding: "6px 10px",
-        background: "#0b0f14",
-        border: "1px solid #2a333d",
-        borderRadius: 6,
-        color: "#e8edf2",
-        fontSize: 13,
+        background: colors.background,
+        border: `1px solid ${colors.border}`,
+        borderRadius: radius.md,
+        color: colors.textPrimary,
+        fontSize: typography.size.md,
     },
     readonly: {
-        fontSize: 13,
-        color: "#9aa7b4",
+        fontSize: typography.size.md,
+        color: colors.textSecondary,
         fontStyle: "italic",
     },
     reason: {
-        fontSize: 12,
-        color: "#6b7683",
+        fontSize: typography.size.sm,
+        color: colors.textMuted,
         margin: 0,
     },
     timingToggle: {
         alignSelf: "flex-start",
-        fontSize: 12,
+        fontSize: typography.size.sm,
     },
     actions: {
         display: "flex",
@@ -475,11 +476,11 @@ const styles: Record<string, React.CSSProperties> = {
         gap: 10,
     },
     status: {
-        fontSize: 12,
-        color: "#9aa7b4",
+        fontSize: typography.size.sm,
+        color: colors.textSecondary,
     },
     error: {
-        fontSize: 12,
-        color: "#ff8f8f",
+        fontSize: typography.size.sm,
+        color: colors.error,
     },
 };

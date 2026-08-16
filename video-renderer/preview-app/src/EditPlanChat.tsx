@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ScenePlan } from "video-renderer-src/episode/types";
 import { sceneLabel } from "./ActiveSceneBar";
 import { editPlan, type EditPlanResult } from "./api";
+import { colors, radius, typography } from "./tokens";
 
 // Minimal shape of the Web Speech API this component actually uses — no
 // @types/dom-speech-recognition dependency, since only a handful of
@@ -317,13 +318,13 @@ const styles: Record<string, React.CSSProperties> = {
         justifyContent: "space-between",
         gap: 8,
         padding: "6px 10px",
-        background: "#161d24",
-        border: "1px solid #3a4552",
-        borderRadius: 6,
-        fontSize: 12,
+        background: colors.surface,
+        border: `1px solid ${colors.borderStrong}`,
+        borderRadius: radius.md,
+        fontSize: typography.size.sm,
     },
     selectionLabel: {
-        color: "#9aa7b4",
+        color: colors.textSecondary,
         overflow: "hidden",
         textOverflow: "ellipsis",
         whiteSpace: "nowrap",
@@ -331,16 +332,20 @@ const styles: Record<string, React.CSSProperties> = {
     input: {
         flex: 1,
         padding: "8px 12px",
-        background: "#161d24",
-        border: "1px solid #2a333d",
-        borderRadius: 6,
-        color: "#e8edf2",
-        fontSize: 14,
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderRadius: radius.md,
+        color: colors.textPrimary,
+        fontSize: typography.size.base,
     },
     error: {
-        color: "#ff8f8f",
-        fontSize: 13,
+        color: colors.error,
+        fontSize: typography.size.md,
     },
+    // Single-use recording-active/rejected-text reds — not promoted to
+    // tokens.ts since nothing else in the app currently reuses these
+    // exact shades (see tokens.ts's own comment: only genuinely shared
+    // values belong there).
     micButtonListening: {
         background: "#c94a3c",
         borderColor: "#c94a3c",
@@ -350,13 +355,13 @@ const styles: Record<string, React.CSSProperties> = {
         display: "flex",
         flexDirection: "column",
         gap: 4,
-        fontSize: 13,
+        fontSize: typography.size.md,
     },
     appliedRow: {
         display: "flex",
         gap: 8,
         alignItems: "baseline",
-        color: "#e8edf2",
+        color: colors.textPrimary,
     },
     rejectedRow: {
         display: "flex",
@@ -366,14 +371,14 @@ const styles: Record<string, React.CSSProperties> = {
     },
     opBadge: {
         flexShrink: 0,
-        fontSize: 11,
-        fontWeight: 700,
+        fontSize: typography.size.xs,
+        fontWeight: typography.weight.bold,
         letterSpacing: 0.5,
-        color: "#9aa7b4",
+        color: colors.textSecondary,
     },
     hint: {
-        fontSize: 12,
-        color: "#6b7683",
+        fontSize: typography.size.sm,
+        color: colors.textMuted,
         marginTop: 4,
     },
 };

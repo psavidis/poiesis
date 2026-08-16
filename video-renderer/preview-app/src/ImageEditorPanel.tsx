@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ImageScene, ScenePlan } from "video-renderer-src/episode/types";
 import { getAssets, updateSceneFields } from "./api";
+import { colors, radius, typography } from "./tokens";
 
 interface Asset {
     id: string;
@@ -140,39 +141,39 @@ const styles: Record<string, React.CSSProperties> = {
         flexDirection: "column",
         gap: 8,
         padding: "12px 14px",
-        background: "#161d24",
-        border: "1px solid #2a333d",
-        borderRadius: 8,
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderRadius: radius.lg,
     },
     header: {
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        fontSize: 12,
-        fontWeight: 700,
+        fontSize: typography.size.sm,
+        fontWeight: typography.weight.bold,
         textTransform: "uppercase",
         letterSpacing: 0.5,
-        color: "#9aa7b4",
+        color: colors.textSecondary,
     },
     hint: {
-        fontSize: 12,
-        color: "#9aa7b4",
+        fontSize: typography.size.sm,
+        color: colors.textSecondary,
         margin: 0,
     },
     fieldLabel: {
         display: "flex",
         flexDirection: "column",
         gap: 4,
-        fontSize: 12,
-        color: "#9aa7b4",
+        fontSize: typography.size.sm,
+        color: colors.textSecondary,
     },
     input: {
         padding: "8px 12px",
-        background: "#0b0f14",
-        border: "1px solid #2a333d",
-        borderRadius: 6,
-        color: "#e8edf2",
-        fontSize: 14,
+        background: colors.background,
+        border: `1px solid ${colors.border}`,
+        borderRadius: radius.md,
+        color: colors.textPrimary,
+        fontSize: typography.size.base,
     },
     actions: {
         display: "flex",
@@ -180,11 +181,11 @@ const styles: Record<string, React.CSSProperties> = {
         gap: 10,
     },
     status: {
-        fontSize: 12,
-        color: "#9aa7b4",
+        fontSize: typography.size.sm,
+        color: colors.textSecondary,
     },
     error: {
-        fontSize: 12,
-        color: "#ff8f8f",
+        fontSize: typography.size.sm,
+        color: colors.error,
     },
 };

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getBeats, getMoments, getTitleScenes, saveBeats, saveMoments, saveTitleScenes } from "./api";
 import { momentIndexFromSceneId } from "./momentDuration";
+import { colors, radius, shadow, typography } from "./tokens";
 
 // Moment treatments with a single plain-text field — matches
 // MomentEditorPanel's own condition for rendering its free-text input
@@ -256,35 +257,35 @@ const styles: Record<string, React.CSSProperties> = {
         gap: 6,
         width: 280,
         padding: 10,
-        background: "#161d24",
-        border: "1px solid #3a4552",
-        borderRadius: 8,
-        boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
+        background: colors.surface,
+        border: `1px solid ${colors.borderStrong}`,
+        borderRadius: radius.lg,
+        boxShadow: shadow.elevated,
     },
     input: {
         width: "100%",
         boxSizing: "border-box",
         padding: "6px 10px",
-        background: "#0b0f14",
-        border: "1px solid #2a333d",
-        borderRadius: 6,
-        color: "#e8edf2",
-        fontSize: 13,
+        background: colors.background,
+        border: `1px solid ${colors.border}`,
+        borderRadius: radius.md,
+        color: colors.textPrimary,
+        fontSize: typography.size.md,
     },
     actions: {
         display: "flex",
         gap: 8,
     },
     saveBtn: {
-        fontSize: 12,
+        fontSize: typography.size.sm,
         padding: "4px 10px",
     },
     hint: {
-        fontSize: 12,
-        color: "#9aa7b4",
+        fontSize: typography.size.sm,
+        color: colors.textSecondary,
     },
     error: {
-        fontSize: 12,
-        color: "#ff8f8f",
+        fontSize: typography.size.sm,
+        color: colors.error,
     },
 };
