@@ -599,3 +599,71 @@ def test_merge_beat_scenes_is_idempotent_on_rerun():
 
     beat_scenes = [s for s in twice["scenes"] if s["type"] == "beat"]
     assert len(beat_scenes) == 1
+
+
+def test_merge_beat_scenes_clamps_duration_that_overflows_parent_scene():
+    # Regression for #38: a human drag-resizing a beat on BeatBar has no
+    # LLM-proposal-time bounds check upstream of this merge (unlike a
+    # freshly-proposed beat, which propose_emphasis already validated) —
+    # merge_beat_scenes itself must not place a beat past its own parent
+    # scene's end.
+    scene_plan = {"fps": 30, "scenes": [_presenter_scene({"durationInFrames": 300})]}
+
+    proposals = [
+        {
+            "sceneId": "scene-001",
+            "kind": "word-pop",
+            "text": "dependency injection",
+            "icon": None,
+            "offsetInParentFrames": 280,
+            "durationInFrames": 60,  # would end at 340, past the scene's 300
+            "reason": "key term",
+        }
+    ]
+
+    result = merge_beat_scenes(scene_plan, proposals)
+    beat_scene = next(s for s in result["scenes"] if s["type"] == "beat")
+
+    assert beat_scene["durationInFrames"] == 20  # clamped to exactly what's left (300 - 280)
+
+
+def test_merge_beat_scenes_drops_beat_with_no_room_left_in_parent_scene():
+    scene_plan = {"fps": 30, "scenes": [_presenter_scene({"durationInFrames": 300})]}
+
+    proposals = [
+        {
+            "sceneId": "scene-001",
+            "kind": "word-pop",
+            "text": "dependency injection",
+            "icon": None,
+            "offsetInParentFrames": 300,  # already at the scene's own end
+            "durationInFrames": 60,
+            "reason": "key term",
+        }
+    ]
+
+    result = merge_beat_scenes(scene_plan, proposals)
+    beat_scenes = [s for s in result["scenes"] if s["type"] == "beat"]
+
+    assert beat_scenes == []
+
+
+def test_merge_beat_scenes_does_not_clamp_a_duration_that_already_fits():
+    scene_plan = {"fps": 30, "scenes": [_presenter_scene({"durationInFrames": 300})]}
+
+    proposals = [
+        {
+            "sceneId": "scene-001",
+            "kind": "word-pop",
+            "text": "dependency injection",
+            "icon": None,
+            "offsetInParentFrames": 0,
+            "durationInFrames": 60,
+            "reason": "key term",
+        }
+    ]
+
+    result = merge_beat_scenes(scene_plan, proposals)
+    beat_scene = next(s for s in result["scenes"] if s["type"] == "beat")
+
+    assert beat_scene["durationInFrames"] == 60

@@ -93,6 +93,24 @@ export async function saveMoments(episodePath: string, moments: unknown[]) {
     return res.json();
 }
 
+export const getBeats = (episodePath: string) => getArtifact(episodePath, "emphasis.json");
+
+export async function saveBeats(episodePath: string, beats: unknown[]) {
+    const res = await fetch(
+        `${API_BASE}/api/episode/beats?path=${encodeURIComponent(episodePath)}`,
+        {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ beats }),
+        }
+    );
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || "Save failed");
+    }
+    return res.json();
+}
+
 export interface TitleSceneProposal {
     segmentId: string;
     text: string;

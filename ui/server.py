@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
 
 from generate_title_scenes import merge_title_scenes, write_json_atomic  # noqa: E402
 from generate_moments import merge_moment_scenes  # noqa: E402
+from generate_emphasis import merge_beat_scenes  # noqa: E402
 from generate_scene_plan_ts import generate_scene_plan_ts  # noqa: E402
 from edit_plan import edit_plan, load_prompt as load_edit_plan_prompt, PROMPT_FILE as EDIT_PLAN_PROMPT_FILE  # noqa: E402
 from llm.client import LLMClient  # noqa: E402
@@ -131,6 +132,7 @@ def episode_artifact(path: str, name: str):
         "title_scenes.json",
         "storyboard.json",
         "moments.json",
+        "emphasis.json",
         "captions.json",
         "assets.json",
         "code_assets.json",
@@ -308,6 +310,60 @@ def update_moments(path: str, body: MomentsUpdate):
         raise HTTPException(status_code=409, detail=str(e))
 
     return {"moments": moments}
+
+
+class BeatProposal(BaseModel):
+    sceneId: str
+    kind: str
+    text: str
+    icon: str | None = None
+    offsetInParentFrames: int
+    durationInFrames: int
+    reason: str = ""
+
+
+class BeatsUpdate(BaseModel):
+    beats: list[BeatProposal]
+
+
+@app.put("/api/episode/beats")
+def update_beats(path: str, body: BeatsUpdate):
+    """Human edits to AI-proposed beat overlays — today, only duration
+    (BeatBar's drag-to-resize, see #38). Writes the edited proposals back
+    to emphasis.json, then deterministically re-merges them into
+    scene-plan.json the same way generate_emphasis.py does after the LLM
+    call — no LLM involved here. merge_beat_scenes clamps (not rejects)
+    any beat whose duration would now push it past its own parent
+    scene's end, so a slightly-too-far drag still saves successfully,
+    just shortened to whatever room is actually left — see its own
+    docstring for why that check has to live there rather than only at
+    LLM-proposal time."""
+
+    episode = resolve_episode(path)
+    processing = episode / "processing"
+
+    scene_plan_path = processing / "scene-plan.json"
+    beats_path = processing / "emphasis.json"
+
+    if not scene_plan_path.exists():
+        raise HTTPException(status_code=404, detail="scene-plan.json not found — run the pipeline first")
+
+    beats = [b.model_dump() for b in body.beats]
+
+    try:
+        with episode_lock(episode, wait=False):
+            with scene_plan_path.open("r", encoding="utf-8") as f:
+                scene_plan = json.load(f)
+
+            scene_plan = merge_beat_scenes(scene_plan, beats)
+
+            write_json_atomic(beats_path, {"beats": beats})
+            write_json_atomic(scene_plan_path, scene_plan)
+            regenerate_codegen(episode)
+    except EpisodeBusyError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    return {"beats": beats}
 
 
 class EditPlanRequest(BaseModel):

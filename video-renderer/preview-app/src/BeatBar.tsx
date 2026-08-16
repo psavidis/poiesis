@@ -1,4 +1,6 @@
+import { useEffect, useRef, useState } from "react";
 import type { BeatScene, PresenterScene, ScenePlan } from "video-renderer-src/episode/types";
+import { getBeats, saveBeats } from "./api";
 
 // A third, distinct color from SceneBar/MomentBar — beats are a
 // genuinely different scene type (word-pop/underline/icon-accent, not a
@@ -6,21 +8,77 @@ import type { BeatScene, PresenterScene, ScenePlan } from "video-renderer-src/ep
 // text/visual categories.
 const BEAT_COLOR = "#e8a23a";
 
+// How far a single +/- zoom click moves — geometric (not linear) steps
+// feel more natural for zoom than fixed increments (matches how
+// map/image zoom controls typically step). Capped at 20x: beyond that,
+// a 60-frame (2s) beat is already comfortably wide even at the widest
+// realistic episode length, and panning would start feeling tedious.
+const ZOOM_STEP = 1.6;
+const MAX_ZOOM = 20;
+const MIN_ZOOM = 1;
+
 interface Props {
     scenePlan: ScenePlan;
     totalFrames: number;
     currentFrame: number;
     onSeek: (absoluteFrame: number) => void;
+    episodePath: string;
+    onSaved: () => void;
 }
 
-// Every beat's resolved window across the full episode — beats are
-// higher-frequency than moments (a light, constant rhythm rather than a
-// rare event, per BeatScene's own doc comment in types.ts) and were
-// previously invisible in the app entirely: no chip in ActiveSceneBar, no
-// marker anywhere, discoverable only by scrubbing into one by accident
-// (see #36). View-only, same as SceneBar/MomentBar — no click-to-edit yet
-// (beats have no structured editor), just click-to-seek.
-export function BeatBar({ scenePlan, totalFrames, currentFrame, onSeek }: Props) {
+type DragState = {
+    beatId: string;
+    startX: number;
+    startDuration: number;
+    liveDuration: number;
+};
+
+// Mirrors DragState but lives in a ref, not useState — onMouseMove reads
+// and writes this directly instead of going through setDragging on every
+// pixel of movement. Both OverlayStrip.tsx (the moment-timing-adjustment
+// equivalent this ports the pattern from) and an earlier version of this
+// component put the whole drag object in useState with the effect
+// depending on it — since onMouseMove called setDragging on every pixel,
+// that made the drag effect (which does window.addEventListener) tear
+// down and re-subscribe on every single mousemove event during a drag.
+// That's harmless when mouseup only does setDragging(null) (OverlayStrip's
+// case — double-firing a no-op is invisible), but this component's
+// mouseup also PUTs to the server: the same tear-down/re-subscribe race
+// let two mouseup listeners end up registered at once, firing two
+// concurrent saves for one drag (confirmed via a live test against
+// Episode 9 — one request got a real 409 Conflict from the two racing
+// for the same episode's lock). The ref carries the mutable state the
+// effect never needs to react to; dragBeatId (state) is the only piece
+// that needs to trigger a re-render, and the effect depends on THAT
+// (which only changes at drag start/end, not every pixel) instead of the
+// whole mutable object.
+
+// Every beat's resolved window across the full episode, so sparse,
+// easy-to-miss beats are visible and jumpable at a glance instead of
+// only discoverable by scrubbing into one (see #36). Zoom + drag-to-
+// resize (see #38) let a beat's duration be lengthened/shortened
+// directly here — at 1x (full episode), a 2s beat is too thin a sliver
+// to grab reliably, so zooming narrows the visible window (in frames)
+// around the current pan position until the target beat is a
+// comfortable drag target. Saves live on drag-end, matching
+// OverlayStrip's moment-timing-adjustment interaction — no separate
+// "Save changes" step.
+export function BeatBar({ scenePlan, totalFrames, currentFrame, onSeek, episodePath, onSaved }: Props) {
+    const [zoom, setZoom] = useState(1);
+    // Fraction of totalFrames where the visible window starts — 0 at full
+    // zoom-out (whole episode), clamped so the window never extends past
+    // either end once zoomed in.
+    const [panStartPct, setPanStartPct] = useState(0);
+    // Which beat is being dragged, if any — the only piece of drag state
+    // that needs to be reactive (it controls which segment renders its
+    // "isDragging" styling/readout). See DragState's own comment above
+    // for why the rest of the drag's mutable state lives in a ref instead.
+    const [dragBeatId, setDragBeatId] = useState<string | null>(null);
+    const [liveDuration, setLiveDuration] = useState(0);
+    const [saveError, setSaveError] = useState<string | null>(null);
+    const trackRef = useRef<HTMLDivElement>(null);
+    const dragRef = useRef<DragState | null>(null);
+
     if (totalFrames <= 0) return null;
 
     const trackById = new Map<string, PresenterScene>();
@@ -33,32 +91,168 @@ export function BeatBar({ scenePlan, totalFrames, currentFrame, onSeek }: Props)
         .map((beat) => {
             const parent = trackById.get(beat.parentSceneId);
             if (!parent) return null;
-            return { beat, startFrame: parent.timelineStartFrame + beat.offsetInParentFrames };
+            return { beat, parent, startFrame: parent.timelineStartFrame + beat.offsetInParentFrames };
         })
-        .filter((b): b is { beat: BeatScene; startFrame: number } => b !== null)
+        .filter(
+            (b): b is { beat: BeatScene; parent: PresenterScene; startFrame: number } => b !== null
+        )
         .sort((a, b) => a.startFrame - b.startFrame);
 
     if (resolved.length === 0) return null;
 
-    const onTrackClick = (e: React.MouseEvent<HTMLDivElement>) => {
-        const rect = e.currentTarget.getBoundingClientRect();
-        const pct = clamp((e.clientX - rect.left) / rect.width, 0, 1);
-        onSeek(Math.round(pct * totalFrames));
+    // Visible window, in absolute frames — windowFrames shrinks as zoom
+    // increases; panStartFrame is clamped so windowStart+windowFrames
+    // never exceeds totalFrames (no dead space past the episode's end).
+    const windowFrames = totalFrames / zoom;
+    const maxPanStartPct = 1 - windowFrames / totalFrames;
+    const clampedPanStartPct = clamp(panStartPct, 0, Math.max(0, maxPanStartPct));
+    const windowStartFrame = clampedPanStartPct * totalFrames;
+
+    const frameToPct = (frame: number) => ((frame - windowStartFrame) / windowFrames) * 100;
+
+    // Re-centers the visible window on the player's current frame on
+    // every zoom step (in or out) — the fastest way to reach "zoomed in
+    // on whatever I'm currently looking at" without a separate manual
+    // pan after each click. Both state writes derive from the SAME
+    // nextZoom value computed once, rather than one handler reading a
+    // zoom state that might already be stale relative to the other.
+    const applyZoom = (nextZoom: number) => {
+        const clampedZoom = clamp(nextZoom, MIN_ZOOM, MAX_ZOOM);
+        const nextWindowFrames = totalFrames / clampedZoom;
+        setZoom(clampedZoom);
+        setPanStartPct(currentFrame / totalFrames - nextWindowFrames / totalFrames / 2);
     };
 
-    const playheadPct = clamp((currentFrame / totalFrames) * 100, 0, 100);
+    const zoomIn = () => applyZoom(zoom * ZOOM_STEP);
+    const zoomOut = () => applyZoom(zoom / ZOOM_STEP);
+    const resetZoom = () => {
+        setZoom(1);
+        setPanStartPct(0);
+    };
+
+    const onTrackClick = (e: React.MouseEvent<HTMLDivElement>) => {
+        if (dragBeatId) return;
+        const rect = e.currentTarget.getBoundingClientRect();
+        const pct = clamp((e.clientX - rect.left) / rect.width, 0, 1);
+        onSeek(Math.round(windowStartFrame + pct * windowFrames));
+    };
+
+    const startResize = (e: React.MouseEvent, beat: BeatScene) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setSaveError(null);
+        dragRef.current = {
+            beatId: beat.id,
+            startX: e.clientX,
+            startDuration: beat.durationInFrames,
+            liveDuration: beat.durationInFrames,
+        };
+        setDragBeatId(beat.id);
+        setLiveDuration(beat.durationInFrames);
+    };
+
+    // Subscribes exactly once per drag (dragBeatId only changes at
+    // start/end, never mid-drag) instead of once per pixel of movement —
+    // see DragState's comment for why that distinction is the actual fix,
+    // not just a performance nicety. onMouseMove mutates dragRef.current
+    // directly (no setState in the hot path) and only calls setLiveDuration
+    // for the visual readout; onMouseUp reads the ref once, commits
+    // whatever it holds, and clears both the ref and the state in one place.
+    useEffect(() => {
+        if (!dragBeatId) return;
+
+        const onMouseMove = (e: MouseEvent) => {
+            const drag = dragRef.current;
+            if (!drag || !trackRef.current) return;
+            const rect = trackRef.current.getBoundingClientRect();
+            const framesPerPixel = windowFrames / rect.width;
+            const deltaFrames = Math.round((e.clientX - drag.startX) * framesPerPixel);
+            const newDuration = Math.max(1, drag.startDuration + deltaFrames);
+
+            drag.liveDuration = newDuration;
+            setLiveDuration(newDuration);
+        };
+
+        const onMouseUp = () => {
+            const drag = dragRef.current;
+            dragRef.current = null;
+            setDragBeatId(null);
+            if (drag) commitResize(drag.beatId, drag.liveDuration);
+        };
+
+        window.addEventListener("mousemove", onMouseMove);
+        window.addEventListener("mouseup", onMouseUp);
+        return () => {
+            window.removeEventListener("mousemove", onMouseMove);
+            window.removeEventListener("mouseup", onMouseUp);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [dragBeatId, windowFrames]);
+
+    // Writes the FULL beats array back (matching saveMoments/
+    // saveTitleScenes's own "rewrite the whole file" contract) — fetches
+    // emphasis.json fresh rather than reconstructing it from scenePlan's
+    // already-merged beat scenes, since a beat scene has lost fields
+    // (reason) that only exist in emphasis.json and must round-trip
+    // unchanged. Server-side merge_beat_scenes clamps the new duration to
+    // whatever room is left in the parent scene, so a drag that
+    // overshoots still saves successfully rather than failing outright.
+    const commitResize = async (beatId: string, newDuration: number) => {
+        const match = /^scene-beat-(\d+)$/.exec(beatId);
+        const index = match ? Number(match[1]) : null;
+        if (index === null) return;
+
+        try {
+            const data = await getBeats(episodePath);
+            const beats = data.beats ?? [];
+            if (!beats[index]) return;
+
+            const next = beats.map((b: any, i: number) =>
+                i === index ? { ...b, durationInFrames: newDuration } : b
+            );
+
+            await saveBeats(episodePath, next);
+            onSaved();
+        } catch (e) {
+            setSaveError(String(e));
+        }
+    };
+
+    const playheadPct = clamp(frameToPct(currentFrame), 0, 100);
+    const playheadVisible = currentFrame >= windowStartFrame && currentFrame <= windowStartFrame + windowFrames;
 
     return (
         <div style={styles.wrap}>
-            <div style={styles.label}>Beats ({resolved.length})</div>
+            <div style={styles.labelRow}>
+                <span style={styles.label}>Beats ({resolved.length})</span>
+                <div style={styles.zoomControls}>
+                    <button className="secondary small" onClick={zoomIn} disabled={zoom >= MAX_ZOOM}>
+                        Zoom in
+                    </button>
+                    <button className="secondary small" onClick={zoomOut} disabled={zoom <= MIN_ZOOM}>
+                        Zoom out
+                    </button>
+                    <button className="secondary small" onClick={resetZoom} disabled={zoom === 1}>
+                        Reset
+                    </button>
+                </div>
+            </div>
 
-            <div style={styles.track} onMouseDown={onTrackClick}>
-                {resolved.map(({ beat, startFrame }) => {
-                    // Beats are very short (under a second) — a floor so
-                    // they stay clickable/visible instead of an invisible
-                    // sliver, same reasoning as MomentBar's floor.
-                    const widthPct = Math.max((beat.durationInFrames / totalFrames) * 100, 0.4);
-                    const leftPct = (startFrame / totalFrames) * 100;
+            <div ref={trackRef} style={styles.track} onMouseDown={onTrackClick}>
+                {resolved.map(({ beat, parent, startFrame }) => {
+                    const isDragging = dragBeatId === beat.id;
+                    const duration = isDragging ? liveDuration : beat.durationInFrames;
+
+                    const leftPct = frameToPct(startFrame);
+                    const rawWidthPct = (duration / windowFrames) * 100;
+
+                    // Skip segments entirely outside the visible window —
+                    // avoids rendering (and clamp-distorting into visible
+                    // slivers) hundreds of off-screen beats at high zoom.
+                    if (leftPct + rawWidthPct < 0 || leftPct > 100) return null;
+
+                    const widthPct = Math.max(rawWidthPct, 0.4);
+                    const maxDuration = Math.max(1, parent.durationInFrames - beat.offsetInParentFrames);
 
                     return (
                         <div
@@ -68,18 +262,35 @@ export function BeatBar({ scenePlan, totalFrames, currentFrame, onSeek }: Props)
                                 left: `${leftPct}%`,
                                 width: `${widthPct}%`,
                             }}
-                            title={`${beat.id} — ${beat.kind}: ${beat.text}`}
+                            title={`${beat.id} — ${beat.kind}: ${beat.text} (${duration}f)`}
                             onClick={(e) => {
+                                if (isDragging) return;
                                 e.stopPropagation();
                                 onSeek(startFrame);
                             }}
                         >
                             {widthPct > 3 && <span style={styles.segmentLabel}>{beat.text}</span>}
+                            <div
+                                style={styles.resizeHandle}
+                                onMouseDown={(e) => startResize(e, beat)}
+                                title={`Drag to resize (max ${maxDuration}f)`}
+                            />
+                            {isDragging && (
+                                <div style={styles.readout}>{(duration / 30).toFixed(1)}s</div>
+                            )}
                         </div>
                     );
                 })}
 
-                <div style={{ ...styles.playhead, left: `${playheadPct}%` }} />
+                {playheadVisible && <div style={{ ...styles.playhead, left: `${playheadPct}%` }} />}
+            </div>
+
+            {saveError && <div style={styles.error}>{saveError}</div>}
+
+            <div style={styles.hint}>
+                {zoom > 1
+                    ? "Drag a beat's right edge to change how long it shows. Click anywhere to seek."
+                    : "Zoom in to drag a beat's duration — at full-episode width a 2s beat is too thin to grab reliably."}
             </div>
         </div>
     );
@@ -95,18 +306,30 @@ const styles: Record<string, React.CSSProperties> = {
         flexDirection: "column",
         gap: 6,
     },
+    labelRow: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        flexWrap: "wrap",
+        gap: 8,
+    },
     label: {
         fontSize: 12,
         color: "#9aa7b4",
     },
+    zoomControls: {
+        display: "flex",
+        gap: 6,
+    },
     track: {
         position: "relative",
-        height: 22,
+        height: 28,
         borderRadius: 6,
         background: "#161d24",
         border: "1px solid #2a333d",
         userSelect: "none",
         cursor: "pointer",
+        overflow: "hidden",
     },
     segment: {
         position: "absolute",
@@ -116,7 +339,7 @@ const styles: Record<string, React.CSSProperties> = {
         background: BEAT_COLOR,
         display: "flex",
         alignItems: "center",
-        overflow: "hidden",
+        overflow: "visible",
         cursor: "pointer",
     },
     segmentLabel: {
@@ -128,6 +351,29 @@ const styles: Record<string, React.CSSProperties> = {
         overflow: "hidden",
         textOverflow: "ellipsis",
     },
+    resizeHandle: {
+        position: "absolute",
+        right: 0,
+        top: 0,
+        bottom: 0,
+        width: 8,
+        cursor: "ew-resize",
+        background: "rgba(0,0,0,0.25)",
+    },
+    readout: {
+        position: "absolute",
+        bottom: "100%",
+        right: 0,
+        marginBottom: 4,
+        padding: "2px 6px",
+        background: "#0b0f14",
+        border: "1px solid #2a333d",
+        borderRadius: 4,
+        fontSize: 11,
+        color: "#e8edf2",
+        whiteSpace: "nowrap",
+        zIndex: 2,
+    },
     playhead: {
         position: "absolute",
         top: 0,
@@ -136,5 +382,13 @@ const styles: Record<string, React.CSSProperties> = {
         background: "#ff5a3c",
         pointerEvents: "none",
         boxShadow: "0 0 4px rgba(255,90,60,0.8)",
+    },
+    error: {
+        fontSize: 12,
+        color: "#ff8f8f",
+    },
+    hint: {
+        fontSize: 11,
+        color: "#6b7683",
     },
 };

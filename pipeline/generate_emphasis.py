@@ -359,6 +359,15 @@ def propose_emphasis(scene_plan, transcript, manifest, llm: LLMClient, prompt_te
 
 
 def merge_beat_scenes(scene_plan, proposals):
+    """Rebuilds every beat scene from proposals — safe to call repeatedly,
+    same as merge_moment_scenes/merge_title_scenes. Unlike those, this is
+    also now a target for direct human edits (ui/server.py's PUT
+    /api/episode/beats, backing #38's drag-to-resize on BeatBar) with no
+    LLM-proposal-time validation upstream of it — propose_emphasis's own
+    bounds check (offset + duration <= parent's own durationInFrames)
+    only runs when the LLM proposes a beat, so a duration lengthened by a
+    human drag needs the same guarantee enforced here instead, or a
+    beat could end up positioned past its own parent scene's end."""
 
     existing_scenes = [
         scene
@@ -379,6 +388,17 @@ def merge_beat_scenes(scene_plan, proposals):
 
         offset = proposal["offsetInParentFrames"]
 
+        # Clamped, not rejected — same choice merge_moment_scenes already
+        # made for a duration that no longer fits (see its own
+        # maxDurationInParentFrames clamp): a save with one beat dragged
+        # slightly past its scene's end still succeeds, just shortened to
+        # whatever room is actually left, rather than losing every other
+        # edit in the same save because of one out-of-bounds beat.
+        duration = max(0, min(proposal["durationInFrames"], parent["durationInFrames"] - offset))
+
+        if duration <= 0:
+            continue
+
         beat_scene = {
             "id": f"scene-beat-{index}",
             "type": "beat",
@@ -386,7 +406,7 @@ def merge_beat_scenes(scene_plan, proposals):
             "text": proposal["text"],
             "parentSceneId": proposal["sceneId"],
             "offsetInParentFrames": offset,
-            "durationInFrames": proposal["durationInFrames"],
+            "durationInFrames": duration,
         }
 
         if proposal.get("icon"):

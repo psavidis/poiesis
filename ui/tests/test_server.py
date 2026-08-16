@@ -460,6 +460,95 @@ def test_update_moments_can_remove_scenes_by_omitting_them(tmp_path):
     assert overlay_scenes == []
 
 
+def _beat_payload(**overrides):
+    payload = {
+        "sceneId": "scene-001",
+        "kind": "word-pop",
+        "text": "dependency injection",
+        "icon": None,
+        "offsetInParentFrames": 10,
+        "durationInFrames": 60,
+        "reason": "key term",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_update_beats_returns_404_without_scene_plan(tmp_path):
+    episode = _make_episode(tmp_path)
+
+    response = client.put(
+        "/api/episode/beats",
+        params={"path": str(episode)},
+        json={"beats": [_beat_payload()]},
+    )
+
+    assert response.status_code == 404
+
+
+def test_update_beats_writes_file_and_merges_scene_plan(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    response = client.put(
+        "/api/episode/beats",
+        params={"path": str(episode)},
+        json={"beats": [_beat_payload(durationInFrames=75)]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["beats"][0]["durationInFrames"] == 75
+
+    beats_on_disk = json.loads((episode / "processing" / "emphasis.json").read_text())
+    assert beats_on_disk["beats"][0]["durationInFrames"] == 75
+
+    scene_plan_on_disk = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    beat_scene = next(s for s in scene_plan_on_disk["scenes"] if s["type"] == "beat")
+    assert beat_scene["durationInFrames"] == 75
+
+
+def test_update_beats_clamps_duration_that_overflows_parent_scene(tmp_path):
+    episode = _make_episode(tmp_path)
+    scene_plan = _make_scene_plan(episode)  # scene-001 has durationInFrames=100
+
+    response = client.put(
+        "/api/episode/beats",
+        params={"path": str(episode)},
+        json={"beats": [_beat_payload(offsetInParentFrames=90, durationInFrames=60)]},
+    )
+
+    assert response.status_code == 200
+
+    scene_plan_on_disk = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    beat_scene = next(s for s in scene_plan_on_disk["scenes"] if s["type"] == "beat")
+    parent = next(s for s in scene_plan["scenes"] if s["id"] == "scene-001")
+    assert beat_scene["durationInFrames"] == parent["durationInFrames"] - 90
+
+
+def test_update_beats_can_remove_beats_by_omitting_them(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    client.put(
+        "/api/episode/beats",
+        params={"path": str(episode)},
+        json={"beats": [_beat_payload()]},
+    )
+
+    response = client.put(
+        "/api/episode/beats",
+        params={"path": str(episode)},
+        json={"beats": []},
+    )
+
+    assert response.status_code == 200
+
+    scene_plan_on_disk = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    beat_scenes = [s for s in scene_plan_on_disk["scenes"] if s["type"] == "beat"]
+    assert beat_scenes == []
+
+
 def test_edit_scene_plan_returns_404_without_scene_plan(tmp_path):
     episode = _make_episode(tmp_path)
 

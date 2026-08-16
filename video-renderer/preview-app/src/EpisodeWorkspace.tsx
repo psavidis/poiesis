@@ -376,6 +376,8 @@ export function EpisodeWorkspace() {
                     totalFrames={totalFrames}
                     currentFrame={currentFrame}
                     onSeek={seekToAbsoluteFrame}
+                    episodePath={episodePath}
+                    onSaved={reloadScenePlan}
                 />
             </div>
 
