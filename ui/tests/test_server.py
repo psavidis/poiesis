@@ -499,6 +499,142 @@ def test_edit_scene_plan_applies_validated_operations(tmp_path):
     assert scene_plan_on_disk["scenes"][0]["id"] == "scene-001"
 
 
+def test_edit_scene_plan_removes_moment_from_moments_json(tmp_path):
+    # Regression for #33: edit_plan.py only ever writes scene-plan.json, so
+    # a chat-removed moment used to stay in moments.json — a later
+    # structured-editor save (which rewrites moments.json from scratch and
+    # re-merges via merge_moment_scenes) would silently resurrect it. The
+    # scene-plan.json fed to server.edit_plan (mocked here, same as
+    # test_edit_scene_plan_applies_validated_operations) must itself
+    # contain the moment scene being removed — that's where
+    # _sync_removed_moments reads which moments.json index to drop from.
+    episode = _make_episode(tmp_path)
+    base_scene_plan = _make_scene_plan(episode)
+
+    (episode / "processing" / "moments.json").write_text(
+        json.dumps({"moments": [_bottom_callout_payload(), _side_image_payload()]})
+    )
+
+    moment_scenes = [
+        {
+            "id": "scene-moment-0",
+            "type": "moment",
+            "treatment": "bottom-callout",
+            "parentSceneId": "scene-001",
+            "offsetInParentFrames": 10,
+            "durationInFrames": 90,
+        },
+        {
+            "id": "scene-moment-1",
+            "type": "moment",
+            "treatment": "side-image",
+            "parentSceneId": "scene-001",
+            "offsetInParentFrames": 20,
+            "durationInFrames": 120,
+        },
+    ]
+    scene_plan_before = {
+        **base_scene_plan,
+        "scenes": base_scene_plan["scenes"] + moment_scenes,
+    }
+    (episode / "processing" / "scene-plan.json").write_text(json.dumps(scene_plan_before))
+
+    fake_result = (
+        {
+            "fps": 30,
+            "scenes": [s for s in scene_plan_before["scenes"] if s["id"] != "scene-moment-0"],
+        },
+        [{"op": "remove", "sceneId": "scene-moment-0", "reason": "instruction said to remove it"}],
+        [],
+    )
+
+    with patch("server.edit_plan", return_value=fake_result):
+        response = client.post(
+            "/api/episode/edit-plan",
+            params={"path": str(episode)},
+            json={"instruction": "remove the bottom callout"},
+        )
+
+    assert response.status_code == 200
+
+    moments_on_disk = json.loads((episode / "processing" / "moments.json").read_text())
+    assert len(moments_on_disk["moments"]) == 1
+    assert moments_on_disk["moments"][0]["treatment"] == "side-image"
+
+    # The resurrection check: saving through update_moments now (as
+    # MomentEditorPanel would on any "Save changes" click) must not bring
+    # scene-moment-0 back, since moments.json no longer has it.
+    save_response = client.put(
+        "/api/episode/moments",
+        params={"path": str(episode)},
+        json={"moments": moments_on_disk["moments"]},
+    )
+    assert save_response.status_code == 200
+
+    scene_plan_on_disk = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    moment_scenes = [s for s in scene_plan_on_disk["scenes"] if s["type"] == "moment"]
+    assert len(moment_scenes) == 1
+    assert moment_scenes[0]["treatment"] == "side-image"
+
+
+def test_edit_scene_plan_removes_title_from_title_scenes_json(tmp_path):
+    # Same resurrection risk as moments, for titles — text-matched since
+    # title_scenes.json entries have no id shared with the merged
+    # TitleScene (see #32's known, accepted correlation limitation).
+    episode = _make_episode(tmp_path)
+    base_scene_plan = _make_scene_plan(episode)
+    _make_title_scene_fixtures(episode)
+
+    (episode / "processing" / "title_scenes.json").write_text(
+        json.dumps({"titles": [{"segmentId": "s0", "text": "Keep me"}, {"segmentId": "s1", "text": "Remove me"}]})
+    )
+
+    title_scenes = [
+        {"id": "scene-title-000", "type": "title", "text": "Keep me", "timelineStartFrame": 0, "durationInFrames": 60},
+        {"id": "scene-title-001", "type": "title", "text": "Remove me", "timelineStartFrame": 60, "durationInFrames": 60},
+    ]
+    scene_plan_before = {
+        **base_scene_plan,
+        "scenes": base_scene_plan["scenes"] + title_scenes,
+    }
+    (episode / "processing" / "scene-plan.json").write_text(json.dumps(scene_plan_before))
+
+    fake_result = (
+        {
+            "fps": 30,
+            "scenes": [s for s in scene_plan_before["scenes"] if s["id"] != "scene-title-001"],
+        },
+        [{"op": "remove", "sceneId": "scene-title-001", "reason": "instruction said to remove it"}],
+        [],
+    )
+
+    with patch("server.edit_plan", return_value=fake_result):
+        response = client.post(
+            "/api/episode/edit-plan",
+            params={"path": str(episode)},
+            json={"instruction": "remove the second title card"},
+        )
+
+    assert response.status_code == 200
+
+    titles_on_disk = json.loads((episode / "processing" / "title_scenes.json").read_text())
+    assert [t["text"] for t in titles_on_disk["titles"]] == ["Keep me"]
+
+    # The resurrection check: saving through update_title_scenes now (as
+    # TitleEditorPanel would on any "Save changes" click) must not bring
+    # "Remove me" back.
+    save_response = client.put(
+        "/api/episode/title-scenes",
+        params={"path": str(episode)},
+        json={"titles": titles_on_disk["titles"]},
+    )
+    assert save_response.status_code == 200
+
+    scene_plan_on_disk = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    title_texts = [s["text"] for s in scene_plan_on_disk["scenes"] if s["type"] == "title"]
+    assert title_texts == ["Keep me"]
+
+
 def test_edit_scene_plan_returns_502_when_llm_call_fails(tmp_path):
     episode = _make_episode(tmp_path)
     _make_scene_plan(episode)

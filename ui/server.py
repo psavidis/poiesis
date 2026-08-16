@@ -314,6 +314,79 @@ class EditPlanRequest(BaseModel):
     instruction: str
 
 
+MOMENT_SCENE_ID_PATTERN = re.compile(r"^scene-moment-(\d+)$")
+
+
+def _sync_removed_moments(processing: Path, scene_plan_before, removed_ids: set[str]):
+    """A chat-removed moment (edit_plan.py only ever writes scene-plan.json)
+    would otherwise be silently resurrected the next time anything calls
+    update_moments/merge_moment_scenes — that function unconditionally
+    rebuilds every moment scene in scene-plan.json from moments.json, and
+    the chat removal never touched moments.json in the first place (see
+    #33). Strips the same indices out of moments.json here so both
+    artifacts agree on which moments exist, keeping moments.json the
+    single source of truth for moment scenes rather than letting
+    scene-plan.json and moments.json silently diverge. No-ops (returns
+    None) if nothing removed was a moment, or moments.json doesn't exist —
+    an episode with no moments proposed yet has nothing to sync."""
+
+    moment_indices = set()
+    for scene in scene_plan_before["scenes"]:
+        if scene["id"] not in removed_ids:
+            continue
+        match = MOMENT_SCENE_ID_PATTERN.match(scene["id"])
+        if match:
+            moment_indices.add(int(match.group(1)))
+
+    if not moment_indices:
+        return None
+
+    moments_path = processing / "moments.json"
+    if not moments_path.exists():
+        return None
+
+    with moments_path.open("r", encoding="utf-8") as f:
+        moments = json.load(f).get("moments", [])
+
+    next_moments = [m for i, m in enumerate(moments) if i not in moment_indices]
+
+    write_json_atomic(moments_path, {"moments": next_moments})
+    return next_moments
+
+
+def _sync_removed_titles(processing: Path, scene_plan_before, removed_ids: set[str]):
+    """Same resurrection risk as moments (see _sync_removed_moments), but
+    title_scenes.json entries have no id shared with the merged
+    scene-plan.json TitleScene — only text (see #32's known, accepted
+    text-match correlation, same one TitleEditorPanel already relies on).
+    Removes any title_scenes.json entry whose text matches a removed
+    title scene's text. Fine in practice since title text is expected to
+    be unique per episode; if that assumption breaks, the match is
+    ambiguous, same known limitation as everywhere else this correlation
+    is used."""
+
+    removed_texts = {
+        scene["text"]
+        for scene in scene_plan_before["scenes"]
+        if scene["id"] in removed_ids and scene["type"] == "title"
+    }
+
+    if not removed_texts:
+        return None
+
+    title_scenes_path = processing / "title_scenes.json"
+    if not title_scenes_path.exists():
+        return None
+
+    with title_scenes_path.open("r", encoding="utf-8") as f:
+        titles = json.load(f).get("titles", [])
+
+    next_titles = [t for t in titles if t["text"] not in removed_texts]
+
+    write_json_atomic(title_scenes_path, {"titles": next_titles})
+    return next_titles
+
+
 @app.post("/api/episode/edit-plan")
 def edit_scene_plan(path: str, body: EditPlanRequest):
     """Applies a natural-language instruction to scene-plan.json — the
@@ -327,7 +400,13 @@ def edit_scene_plan(path: str, body: EditPlanRequest):
     timeline stays contiguous if a presenter trim changed a scene's
     duration. A plain (not async) def — FastAPI runs sync routes in a
     thread pool, so the LLM subprocess call here doesn't block the event
-    loop, same as every other route in this file."""
+    loop, same as every other route in this file.
+
+    Any removed moment/title scene is also stripped from moments.json/
+    title_scenes.json (see #33) — otherwise a later structured-editor save
+    (which rewrites its target file from scratch and re-merges) would
+    silently resurrect it, since those source files never learn about a
+    chat-only removal on their own."""
 
     episode = resolve_episode(path)
     processing = episode / "processing"
@@ -351,6 +430,11 @@ def edit_scene_plan(path: str, body: EditPlanRequest):
                 )
             except Exception as e:
                 raise HTTPException(status_code=502, detail=f"Edit request failed: {e}")
+
+            removed_ids = {op["sceneId"] for op in valid_ops if op["op"] == "remove"}
+            if removed_ids:
+                _sync_removed_moments(processing, scene_plan, removed_ids)
+                _sync_removed_titles(processing, scene_plan, removed_ids)
 
             write_json_atomic(scene_plan_path, updated_plan)
             regenerate_codegen(episode)
