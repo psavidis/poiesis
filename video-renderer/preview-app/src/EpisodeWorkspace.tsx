@@ -9,8 +9,11 @@ import { ChapterStrip } from "./ChapterStrip";
 import { EditPlanChat } from "./EditPlanChat";
 import { EpisodeAnalysisPanel } from "./EpisodeAnalysisPanel";
 import { manifestToEpisodeBaseProps } from "./episodeProps";
+import { InlineTextEditor, isTextEligible, type EditTarget } from "./InlineTextEditor";
+import { MomentBar } from "./MomentBar";
 import { MomentEditorPanel } from "./MomentEditorPanel";
 import { ProgressFlow } from "./ProgressFlow";
+import { SceneBar } from "./SceneBar";
 import { StoryboardPanel } from "./StoryboardPanel";
 import { TitleEditorPanel } from "./TitleEditorPanel";
 
@@ -81,6 +84,31 @@ export function EpisodeWorkspace() {
     // that exact text.
     const [prefillSceneId, setPrefillSceneId] = useState<string | undefined>(undefined);
     const [prefillKey, setPrefillKey] = useState(0);
+
+    // The floating text-only editor (see #34) — reached only from SceneBar/
+    // MomentBar/ChapterStrip's segment clicks, deliberately NOT from
+    // ActiveSceneBar's chips (those keep opening the full structured
+    // panel, unchanged, per the decision to avoid touching existing
+    // one-click behavior). Mutually exclusive with selectedEditor — opening
+    // one closes the other, so there's never two panels racing to save the
+    // same underlying array.
+    const [inlineEditTarget, setInlineEditTarget] = useState<EditTarget | null>(null);
+    const [inlineEditAnchor, setInlineEditAnchor] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+
+    const openInlineTitleEditor = (titleText: string, anchor: { x: number; y: number }) => {
+        setSelectedEditor(null);
+        setInlineEditAnchor(anchor);
+        setInlineEditTarget({ kind: "title", titleText });
+    };
+
+    const openInlineMomentEditor = (sceneId: string, anchor: { x: number; y: number }) => {
+        const scene = episodeProps?.scenePlan.scenes.find((s) => s.id === sceneId);
+        if (!scene || scene.type !== "moment") return;
+        if (!isTextEligible({ kind: "moment", sceneId, treatment: scene.treatment })) return;
+        setSelectedEditor(null);
+        setInlineEditAnchor(anchor);
+        setInlineEditTarget({ kind: "moment", sceneId, treatment: scene.treatment });
+    };
 
     const playerRef = useRef<PlayerRef>(null);
     const [currentFrame, setCurrentFrame] = useState(0);
@@ -317,8 +345,39 @@ export function EpisodeWorkspace() {
                     currentFrame={currentFrame}
                     fps={episodeProps.fps}
                     onSeek={seekToAbsoluteFrame}
+                    onSelectTitle={openInlineTitleEditor}
                 />
             </div>
+
+            <div style={styles.playerWrap}>
+                <SceneBar
+                    scenePlan={episodeProps.scenePlan}
+                    totalFrames={totalFrames}
+                    currentFrame={currentFrame}
+                    onSeek={seekToAbsoluteFrame}
+                    onSelectTitle={openInlineTitleEditor}
+                />
+            </div>
+
+            <div style={styles.playerWrap}>
+                <MomentBar
+                    scenePlan={episodeProps.scenePlan}
+                    totalFrames={totalFrames}
+                    currentFrame={currentFrame}
+                    onSeek={seekToAbsoluteFrame}
+                    onSelectMoment={openInlineMomentEditor}
+                />
+            </div>
+
+            {inlineEditTarget && (
+                <InlineTextEditor
+                    episodePath={episodePath}
+                    target={inlineEditTarget}
+                    anchor={inlineEditAnchor}
+                    onSaved={reloadScenePlan}
+                    onClose={() => setInlineEditTarget(null)}
+                />
+            )}
 
             <div style={styles.playerWrap}>
                 <label style={styles.checkboxRow}>
@@ -335,8 +394,14 @@ export function EpisodeWorkspace() {
                 <ActiveSceneBar
                     track={activeScenes.track}
                     overlays={activeScenes.overlays}
-                    onSelectTitle={(titleText) => setSelectedEditor({ kind: "title", titleText })}
-                    onSelectMoment={(momentSceneId) => setSelectedEditor({ kind: "moment", sceneId: momentSceneId })}
+                    onSelectTitle={(titleText) => {
+                        setInlineEditTarget(null);
+                        setSelectedEditor({ kind: "title", titleText });
+                    }}
+                    onSelectMoment={(momentSceneId) => {
+                        setInlineEditTarget(null);
+                        setSelectedEditor({ kind: "moment", sceneId: momentSceneId });
+                    }}
                     onSelectScene={(sceneId) => {
                         setPrefillSceneId(sceneId);
                         setPrefillKey((k) => k + 1);

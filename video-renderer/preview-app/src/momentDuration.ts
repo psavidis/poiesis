@@ -24,3 +24,14 @@ export function normalizeMoment<T extends { treatment: string; maxDurationInPare
         maxDurationInParentFrames: Math.min(fixed, raw.maxDurationInParentFrames),
     };
 }
+
+// merge_moment_scenes (pipeline/generate_moments.py) generates
+// "scene-moment-{N}" as exactly the array index of moments.json's
+// proposals list — an exact, non-heuristic correlation back to a moment's
+// position in that array. Shared by MomentEditorPanel and InlineTextEditor
+// (see #34) so both use the identical regex rather than risking silent
+// divergence between two copies of "the" correlation logic.
+export function momentIndexFromSceneId(sceneId: string): number | null {
+    const match = /^scene-moment-(\d+)$/.exec(sceneId);
+    return match ? Number(match[1]) : null;
+}

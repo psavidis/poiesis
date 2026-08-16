@@ -47,16 +47,25 @@ interface Props {
     currentFrame: number;
     fps: number;
     onSeek: (absoluteFrame: number) => void;
+    // Opens the inline text editor for a chapter's underlying TitleScene
+    // (see #34) — chapters ARE title scenes (chaptersFromTitles derives
+    // one chapter per TitleScene, see above). Same anchor-aware signature
+    // as SceneBar/MomentBar's onSelect* callbacks. Optional so ChapterStrip
+    // still works standalone without every caller needing to pass a no-op.
+    onSelectTitle?: (titleText: string, anchor: { x: number; y: number }) => void;
 }
 
 // A full-episode strip dividing the video into chapters at each title
 // card, so the shape of the whole episode is visible at a glance — how
 // long each topic runs, how many chapters there are, and where the
-// current playhead sits relative to all of them. This is view-only
-// (clicking seeks the player; nothing here edits scene-plan.json) and
-// only rendered in the full-episode preview, not the scene-scoped
-// "Adjust timing" view, which already has its own OverlayStrip.
-export function ChapterStrip({ scenePlan, totalFrames, currentFrame, fps, onSeek }: Props) {
+// current playhead sits relative to all of them. Clicking always seeks;
+// clicking a chapter (not the pre-title "Intro" segment) also opens that
+// chapter's underlying title text editor via onSelectTitle (see #34) —
+// chapters ARE title scenes, so this is the same click-to-edit path
+// ActiveSceneBar's title chips already use. Only rendered in the
+// full-episode preview, not the scene-scoped "Adjust timing" view, which
+// already has its own OverlayStrip.
+export function ChapterStrip({ scenePlan, totalFrames, currentFrame, fps, onSeek, onSelectTitle }: Props) {
     const titles = scenePlan.scenes.filter((s): s is TitleScene => s.type === "title");
 
     if (totalFrames <= 0) return null;
@@ -84,6 +93,8 @@ export function ChapterStrip({ scenePlan, totalFrames, currentFrame, fps, onSeek
                     const widthPct = ((chapter.endFrame - chapter.startFrame) / totalFrames) * 100;
                     const color = chapter.title === null ? "#3a4552" : CHAPTER_COLORS[i % CHAPTER_COLORS.length];
 
+                    const clickable = chapter.title !== null && !!onSelectTitle;
+
                     return (
                         <div
                             key={i}
@@ -91,8 +102,18 @@ export function ChapterStrip({ scenePlan, totalFrames, currentFrame, fps, onSeek
                                 ...styles.chapter,
                                 width: `${widthPct}%`,
                                 background: color,
+                                cursor: clickable ? "pointer" : "inherit",
                             }}
-                            title={chapter.title ?? "Intro (before first title card)"}
+                            title={
+                                clickable
+                                    ? `Click to seek here, or edit title: ${chapter.title}`
+                                    : chapter.title ?? "Intro (before first title card)"
+                            }
+                            onClick={
+                                clickable
+                                    ? (e) => onSelectTitle!(chapter.title!, { x: e.clientX, y: e.clientY })
+                                    : undefined
+                            }
                         >
                             {widthPct > 4 && (
                                 <span style={styles.chapterLabel}>
@@ -106,7 +127,10 @@ export function ChapterStrip({ scenePlan, totalFrames, currentFrame, fps, onSeek
                 <div style={{ ...styles.playhead, left: `${playheadPct}%` }} />
             </div>
 
-            <div style={styles.hint}>Click anywhere to jump the player there.</div>
+            <div style={styles.hint}>
+                Click anywhere to jump the player there
+                {onSelectTitle ? " — clicking a chapter also opens its title editor" : ""}.
+            </div>
         </div>
     );
 }
