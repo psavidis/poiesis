@@ -673,8 +673,26 @@ def _side_code_payload(**overrides):
     return payload
 
 
-# PUT /api/episode/moment-treatment (#62, first slice of #42) — switching
-# an existing moment among the three code presentations.
+def _side_image_moment_payload(**overrides):
+    payload = {
+        "windowId": "w5",
+        "sceneId": "scene-001",
+        "videoId": "001",
+        "offsetInParentFrames": 10,
+        "maxDurationInParentFrames": 60,
+        "treatment": "side-image",
+        "presenterSide": "left",
+        "assetId": "diagram-1.png",
+        "caption": "the architecture",
+        "reason": "shows the architecture",
+    }
+    payload.update(overrides)
+    return payload
+
+
+# PUT /api/episode/moment-treatment — switching an existing moment among
+# the treatments that present the same content at different prominence
+# (see docs/specs/content-types-and-presentation-editing.md).
 def test_update_moment_treatment_switches_side_code_to_full_visual(tmp_path):
     episode = _make_episode(tmp_path)
     _make_scene_plan(episode)
@@ -730,7 +748,59 @@ def test_update_moment_treatment_records_provenance_override(tmp_path):
     assert "maxDurationInParentFrames" in overridden
 
 
-def test_update_moment_treatment_rejects_target_outside_code_treatments(tmp_path):
+def test_update_moment_treatment_switches_side_image_to_full_visual(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    client.put(
+        "/api/episode/moments",
+        params={"path": str(episode)},
+        json={"moments": [_side_image_moment_payload()]},
+    )
+
+    response = client.put(
+        "/api/episode/moment-treatment",
+        params={"path": str(episode)},
+        json={"sceneId": "scene-moment-0", "newTreatment": "full-visual"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["moments"][0]["treatment"] == "full-visual"
+    assert body["moments"][0]["fullVisualKind"] == "image"
+    assert body["moments"][0]["presenterSide"] is None
+    assert body["moments"][0]["assetId"] == "diagram-1.png"
+
+
+def test_update_moment_treatment_switches_full_visual_image_back_to_side_image(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    client.put(
+        "/api/episode/moments",
+        params={"path": str(episode)},
+        json={"moments": [_side_image_moment_payload()]},
+    )
+    client.put(
+        "/api/episode/moment-treatment",
+        params={"path": str(episode)},
+        json={"sceneId": "scene-moment-0", "newTreatment": "full-visual"},
+    )
+
+    response = client.put(
+        "/api/episode/moment-treatment",
+        params={"path": str(episode)},
+        json={"sceneId": "scene-moment-0", "newTreatment": "side-image"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["moments"][0]["treatment"] == "side-image"
+    assert body["moments"][0]["fullVisualKind"] is None
+    assert body["moments"][0]["assetId"] == "diagram-1.png"
+
+
+def test_update_moment_treatment_rejects_target_outside_switchable_treatments(tmp_path):
     episode = _make_episode(tmp_path)
     _make_scene_plan(episode)
 
@@ -749,7 +819,7 @@ def test_update_moment_treatment_rejects_target_outside_code_treatments(tmp_path
     assert response.status_code == 422
 
 
-def test_update_moment_treatment_rejects_source_outside_code_treatments(tmp_path):
+def test_update_moment_treatment_rejects_source_outside_switchable_treatments(tmp_path):
     episode = _make_episode(tmp_path)
     _make_scene_plan(episode)
 
@@ -763,6 +833,27 @@ def test_update_moment_treatment_rejects_source_outside_code_treatments(tmp_path
         "/api/episode/moment-treatment",
         params={"path": str(episode)},
         json={"sceneId": "scene-moment-0", "newTreatment": "full-visual"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_update_moment_treatment_rejects_cross_content_type_switch(tmp_path):
+    # An image moment can become full-visual, but never side-code — see
+    # switch_moment_treatment's own docstring in generate_moments.py.
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    client.put(
+        "/api/episode/moments",
+        params={"path": str(episode)},
+        json={"moments": [_side_image_moment_payload()]},
+    )
+
+    response = client.put(
+        "/api/episode/moment-treatment",
+        params={"path": str(episode)},
+        json={"sceneId": "scene-moment-0", "newTreatment": "side-code"},
     )
 
     assert response.status_code == 422

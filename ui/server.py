@@ -24,10 +24,10 @@ from generate_title_scenes import (  # noqa: E402
     write_json_atomic,
 )
 from generate_moments import (  # noqa: E402
-    CODE_TREATMENTS,
+    SWITCHABLE_TREATMENTS,
     compute_overridden_fields,
     merge_moment_scenes,
-    switch_code_treatment,
+    switch_moment_treatment,
 )
 from generate_emphasis import (  # noqa: E402
     compute_overridden_fields as compute_overridden_beat_fields,
@@ -334,9 +334,11 @@ def update_moments(path: str, body: MomentsUpdate):
     the client already sent, same as any other field, with no
     treatment-aware recompute. The one supported way to actually SWITCH a
     moment's treatment with correct duration/field recomputation is PUT
-    /api/episode/moment-treatment (#62), scoped to the three code
-    treatments only. Writes the edited proposals back to moments.json,
-    then deterministically re-merges them into scene-plan.json the same
+    /api/episode/moment-treatment, scoped to treatments that share the
+    same underlying content (code/image/diagram, each side-* paired with
+    full-visual; code additionally has content-dominant-code). Writes the
+    edited proposals back to moments.json, then deterministically
+    re-merges them into scene-plan.json the same
     way generate_moments.py does after the LLM call — no LLM involved
     here.
     merge_moment_scenes rebuilds all moment scenes from scratch each call
@@ -400,16 +402,19 @@ class MomentTreatmentSwitch(BaseModel):
 
 @app.put("/api/episode/moment-treatment")
 def update_moment_treatment(path: str, body: MomentTreatmentSwitch):
-    """Switches an existing moment among the three code presentations
-    (side-code / content-dominant-code / full-visual+code) without
-    replacing its content — see #62, first slice of #42 (content-type-vs-
-    presentation epic). Deliberately a separate endpoint from PUT
-    /api/episode/moments rather than folding this into that endpoint's
-    generic field round-trip: a treatment switch needs real server-side
-    computation (new duration via switch_code_treatment, which
-    merge_moment_scenes will NOT re-derive on its own — see that
-    function's own docstring), not just a value the client already knows
-    to send, the way every other field on that endpoint works today.
+    """Switches an existing moment among the treatments that present the
+    SAME content at different prominence — code (side-code /
+    content-dominant-code / full-visual), image (side-image / full-visual),
+    or diagram (side-diagram / full-visual) — without replacing its
+    content. See docs/specs/content-types-and-presentation-editing.md
+    (the content-type-vs-presentation model this implements one slice of).
+    Deliberately a separate endpoint from PUT /api/episode/moments rather
+    than folding this into that endpoint's generic field round-trip: a
+    treatment switch needs real server-side computation (new duration via
+    switch_moment_treatment, which merge_moment_scenes will NOT re-derive
+    on its own — see that function's own docstring), not just a value the
+    client already knows to send, the way every other field on that
+    endpoint works today.
 
     sceneId resolves to a moments.json array index the same way
     MOMENT_SCENE_ID_PATTERN already does elsewhere in this file (moments
@@ -425,11 +430,11 @@ def update_moment_treatment(path: str, body: MomentTreatmentSwitch):
     if not scene_plan_path.exists():
         raise HTTPException(status_code=404, detail="scene-plan.json not found — run the pipeline first")
 
-    if body.newTreatment not in CODE_TREATMENTS:
+    if body.newTreatment not in SWITCHABLE_TREATMENTS:
         raise HTTPException(
             status_code=422,
-            detail=f"newTreatment must be one of {sorted(CODE_TREATMENTS)} — arbitrary treatment "
-                   "switching is not supported yet (see #62)",
+            detail=f"newTreatment must be one of {sorted(SWITCHABLE_TREATMENTS)} — arbitrary treatment "
+                   "switching is not supported yet",
         )
 
     match = MOMENT_SCENE_ID_PATTERN.match(body.sceneId)
@@ -453,14 +458,15 @@ def update_moment_treatment(path: str, body: MomentTreatmentSwitch):
     with scene_plan_path.open("r", encoding="utf-8") as f:
         scene_plan_for_switch = json.load(f)
 
-    switched = switch_code_treatment(old_moment, body.newTreatment, scene_plan_for_switch)
+    switched = switch_moment_treatment(old_moment, body.newTreatment, scene_plan_for_switch)
 
     if switched is None:
         raise HTTPException(
             status_code=422,
-            detail=f"Moment's current treatment ({old_moment.get('treatment')!r}) is not one of "
-                   f"{sorted(CODE_TREATMENTS)} — this endpoint only switches among the three code "
-                   "presentations (see #62)",
+            detail=f"Moment's current treatment ({old_moment.get('treatment')!r}) and newTreatment "
+                   f"({body.newTreatment!r}) don't present the same content — this endpoint only "
+                   "switches among treatments that share content (e.g. side-code <-> full-visual, "
+                   "not side-code <-> side-image)",
         )
 
     # A deliberate human override, same as any other field edit (#57) — so

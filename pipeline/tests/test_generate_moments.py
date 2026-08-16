@@ -1,7 +1,7 @@
 from episode_context import NO_CONTEXT_TEXT
 from generate_moments import (
-    CODE_TREATMENTS,
     TRANSITION_FRAMES,
+    TREATMENT_GROUPS,
     build_candidate_windows,
     cap_full_visual_ratio,
     chapter_for_absolute_frame,
@@ -19,7 +19,7 @@ from generate_moments import (
     merge_moment_scenes,
     preserve_overridden_fields,
     propose_moments,
-    switch_code_treatment,
+    switch_moment_treatment,
 )
 from style import load_style
 
@@ -2631,9 +2631,12 @@ def test_cap_full_visual_ratio_also_caps_content_dominant_code():
     assert sum(1 for p in kept if p["treatment"] == "side-text") == 4
 
 
-# switch_code_treatment (#62, first slice of #42) — switching an existing
-# moment among the three code presentations while keeping the same
-# codeAssetId.
+# switch_moment_treatment — switching an existing moment among the
+# treatments that present the SAME content at different prominence (code,
+# image, diagram — see docs/specs/content-types-and-presentation-editing.md).
+# Originally code-only (switch_code_treatment); generalized to cover image
+# and diagram too, since side-image/full-visual and side-diagram/full-visual
+# are the same "one content field, multiple presentations" shape code was.
 def _code_moment(treatment, **overrides):
     moment = {
         "sceneId": "scene-001",
@@ -2643,7 +2646,43 @@ def _code_moment(treatment, **overrides):
         "codeAssetId": "kafka-consumer.java",
         "caption": "the consumer loop",
         "presenterSide": None,
-        "fullVisualKind": None,
+        # A full-visual moment declares its content type via
+        # fullVisualKind, not the treatment string (which is shared across
+        # every group) — a fixture representing an already-full-visual
+        # CODE moment must set this, or _moment_treatment_group correctly
+        # can't tell what content it's showing (same as a real one
+        # wouldn't be able to).
+        "fullVisualKind": "code" if treatment == "full-visual" else None,
+    }
+    moment.update(overrides)
+    return moment
+
+
+def _image_moment(treatment, **overrides):
+    moment = {
+        "sceneId": "scene-001",
+        "treatment": treatment,
+        "offsetInParentFrames": 10,
+        "maxDurationInParentFrames": 60,
+        "assetId": "diagram-1.png",
+        "caption": "the architecture",
+        "presenterSide": None,
+        "fullVisualKind": "image" if treatment == "full-visual" else None,
+    }
+    moment.update(overrides)
+    return moment
+
+
+def _diagram_moment(treatment, **overrides):
+    moment = {
+        "sceneId": "scene-001",
+        "treatment": treatment,
+        "offsetInParentFrames": 10,
+        "maxDurationInParentFrames": 60,
+        "diagram": {"nodes": [{"id": "a", "label": "Client"}], "edges": [], "layout": "horizontal"},
+        "caption": None,
+        "presenterSide": None,
+        "fullVisualKind": "diagram" if treatment == "full-visual" else None,
     }
     moment.update(overrides)
     return moment
@@ -2657,74 +2696,135 @@ def _scene_plan_for_switch(parent_duration=600):
     }
 
 
-def test_switch_code_treatment_preserves_content():
+def test_switch_moment_treatment_preserves_code_content():
     moment = _code_moment("side-code", presenterSide="left")
 
-    switched = switch_code_treatment(moment, "content-dominant-code", _scene_plan_for_switch())
+    switched = switch_moment_treatment(moment, "content-dominant-code", _scene_plan_for_switch())
 
     assert switched["codeAssetId"] == "kafka-consumer.java"
     assert switched["caption"] == "the consumer loop"
     assert switched["treatment"] == "content-dominant-code"
 
 
-def test_switch_code_treatment_clears_presenter_side_when_leaving_side_code():
+def test_switch_moment_treatment_preserves_image_content():
+    moment = _image_moment("side-image", presenterSide="right")
+
+    switched = switch_moment_treatment(moment, "full-visual", _scene_plan_for_switch())
+
+    assert switched["assetId"] == "diagram-1.png"
+    assert switched["caption"] == "the architecture"
+    assert switched["treatment"] == "full-visual"
+    assert switched["fullVisualKind"] == "image"
+
+
+def test_switch_moment_treatment_preserves_diagram_content():
+    moment = _diagram_moment("side-diagram", presenterSide="left")
+
+    switched = switch_moment_treatment(moment, "full-visual", _scene_plan_for_switch())
+
+    assert switched["diagram"] == moment["diagram"]
+    assert switched["treatment"] == "full-visual"
+    assert switched["fullVisualKind"] == "diagram"
+
+
+def test_switch_moment_treatment_clears_presenter_side_when_leaving_side_treatment():
     moment = _code_moment("side-code", presenterSide="right")
 
-    switched = switch_code_treatment(moment, "full-visual", _scene_plan_for_switch())
+    switched = switch_moment_treatment(moment, "full-visual", _scene_plan_for_switch())
 
     assert switched["presenterSide"] is None
     assert switched["fullVisualKind"] == "code"
 
 
-def test_switch_code_treatment_clears_full_visual_kind_when_leaving_full_visual():
+def test_switch_moment_treatment_clears_full_visual_kind_when_leaving_full_visual():
     moment = _code_moment("full-visual", fullVisualKind="code")
 
-    switched = switch_code_treatment(moment, "content-dominant-code", _scene_plan_for_switch())
+    switched = switch_moment_treatment(moment, "content-dominant-code", _scene_plan_for_switch())
 
     assert switched["fullVisualKind"] is None
     assert switched["presenterSide"] is None
 
 
-def test_switch_code_treatment_recomputes_duration_to_new_treatments_default():
+def test_switch_moment_treatment_recomputes_duration_to_new_treatments_default():
     style = load_style()
     moment = _code_moment("side-code", maxDurationInParentFrames=60)
 
-    switched = switch_code_treatment(moment, "full-visual", _scene_plan_for_switch(), style)
+    switched = switch_moment_treatment(moment, "full-visual", _scene_plan_for_switch(), style)
 
     assert switched["maxDurationInParentFrames"] == duration_for_treatment("full-visual", style)
 
 
-def test_switch_code_treatment_clamps_duration_to_room_left_in_parent():
+def test_switch_moment_treatment_clamps_duration_to_room_left_in_parent():
     style = load_style()
     # Parent scene barely has room for anything past the moment's offset.
     scene_plan = _scene_plan_for_switch(parent_duration=40)
     moment = _code_moment("side-code", offsetInParentFrames=10)
 
-    switched = switch_code_treatment(moment, "full-visual", scene_plan, style)
+    switched = switch_moment_treatment(moment, "full-visual", scene_plan, style)
 
     room = 40 - 10 - TRANSITION_FRAMES
     assert switched["maxDurationInParentFrames"] == max(0, min(duration_for_treatment("full-visual", style), room))
 
 
-def test_switch_code_treatment_rejects_non_code_source_treatment():
+def test_switch_moment_treatment_rejects_source_treatment_with_no_group():
     moment = _code_moment("bottom-callout")
 
-    assert switch_code_treatment(moment, "full-visual", _scene_plan_for_switch()) is None
+    assert switch_moment_treatment(moment, "full-visual", _scene_plan_for_switch()) is None
 
 
-def test_switch_code_treatment_rejects_non_code_target_treatment():
+def test_switch_moment_treatment_rejects_target_treatment_with_no_group():
     moment = _code_moment("side-code")
 
-    assert switch_code_treatment(moment, "bottom-callout", _scene_plan_for_switch()) is None
+    assert switch_moment_treatment(moment, "bottom-callout", _scene_plan_for_switch()) is None
 
 
-def test_switch_code_treatment_all_six_directed_pairs_succeed():
-    for source in CODE_TREATMENTS:
-        for target in CODE_TREATMENTS:
+def test_switch_moment_treatment_rejects_cross_content_type_switch():
+    # An image moment can become full-visual, but never side-code — that
+    # would silently need to invent code content that was never there.
+    moment = _image_moment("side-image")
+
+    assert switch_moment_treatment(moment, "side-code", _scene_plan_for_switch()) is None
+
+
+def test_switch_moment_treatment_rejects_full_visual_of_a_different_content_type_as_source():
+    # A full-visual TEXT moment (fullVisualKind="text") has no sibling
+    # treatment in any group — switching it toward side-code must fail,
+    # not silently reinterpret it as a code moment.
+    moment = _code_moment("full-visual", fullVisualKind="text", codeAssetId=None)
+
+    assert switch_moment_treatment(moment, "side-code", _scene_plan_for_switch()) is None
+
+
+def test_switch_moment_treatment_all_six_directed_code_pairs_succeed():
+    for source in TREATMENT_GROUPS["code"]:
+        for target in TREATMENT_GROUPS["code"]:
             if source == target:
                 continue
             moment = _code_moment(source)
-            switched = switch_code_treatment(moment, target, _scene_plan_for_switch())
+            switched = switch_moment_treatment(moment, target, _scene_plan_for_switch())
             assert switched is not None
             assert switched["treatment"] == target
-            assert switched["codeAssetId"] == "kafka-consumer.java"
+
+
+def test_switch_moment_treatment_both_directed_image_pairs_succeed():
+    for source in TREATMENT_GROUPS["image"]:
+        for target in TREATMENT_GROUPS["image"]:
+            if source == target:
+                continue
+            moment = _image_moment(source)
+            switched = switch_moment_treatment(moment, target, _scene_plan_for_switch())
+            assert switched is not None
+            assert switched["treatment"] == target
+            assert switched["assetId"] == "diagram-1.png"
+
+
+def test_switch_moment_treatment_both_directed_diagram_pairs_succeed():
+    for source in TREATMENT_GROUPS["diagram"]:
+        for target in TREATMENT_GROUPS["diagram"]:
+            if source == target:
+                continue
+            moment = _diagram_moment(source)
+            switched = switch_moment_treatment(moment, target, _scene_plan_for_switch())
+            assert switched is not None
+            assert switched["treatment"] == target
+            assert switched["diagram"] == moment["diagram"]

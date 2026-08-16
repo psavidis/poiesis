@@ -982,38 +982,91 @@ OVERRIDABLE_MOMENT_FIELDS = {
     "comparison", "terms", "sideTextStyle", "caption", "treatment",
 }
 
-# The three MomentTreatment values that all present the SAME content
-# (codeAssetId) at different prominence — see #62, first slice of #42
-# (content-type-vs-presentation epic). Confirmed structurally compatible
-# by reading Episode.tsx's layoutWindowsForScene, which already resolves
-# all three to compatible presenter-layout states (side-code→presenterSide
-# left/right, content-dominant-code→corner, full-visual→hidden). Any
-# treatment outside this set is out of scope for switch_code_treatment —
-# #42's broader "arbitrary content/presentation" model is a separate,
-# larger future change, not this one.
-CODE_TREATMENTS = {"side-code", "content-dominant-code", "full-visual"}
+# Which MomentTreatment values all present the SAME underlying content at
+# different prominence, grouped by content type — see #62 (code, first
+# slice of #42, the content-type-vs-presentation epic) and its extension
+# to image/diagram. Confirmed structurally compatible by reading
+# Episode.tsx's layoutWindowsForScene, which already resolves every
+# "side-*" treatment to presenterSide left/right, "content-dominant-code"
+# to a corner PiP, and "full-visual" to hidden — all compatible presenter-
+# layout states regardless of which content type is involved. Code has
+# three siblings (it alone also has a Content Dominant treatment); image
+# and diagram each have exactly two (their own side-* treatment plus
+# full-visual). fullVisualKind is what full-visual uses to say WHICH
+# content type it's currently showing — not a separate axis to switch
+# independently here.
+TREATMENT_GROUPS = {
+    "code": {"side-code", "content-dominant-code", "full-visual"},
+    "image": {"side-image", "full-visual"},
+    "diagram": {"side-diagram", "full-visual"},
+}
+
+# Any treatment outside its own group is out of scope for
+# switch_moment_treatment — #42's broader "arbitrary content/presentation"
+# model (switching CONTENT TYPE, e.g. image to diagram, or reaching
+# treatments like bottom-callout/side-text/side-terms/comparison that
+# carry fundamentally different data) is a separate, larger future change,
+# not this one. Kept as a flat set (not the dict above) since checking
+# "is this treatment switchable AT ALL" doesn't need to know which group
+# it belongs to — switch_moment_treatment derives group membership itself,
+# from the MOMENT's own current content, not from the caller.
+SWITCHABLE_TREATMENTS = set().union(*TREATMENT_GROUPS.values())
 
 
-def switch_code_treatment(moment, new_treatment, scene_plan, style=None):
-    """Switches an existing moment among the three code treatments
-    (CODE_TREATMENTS), keeping the same codeAssetId/caption — the content
-    — while recomputing everything that's actually presentation-specific:
+def _moment_treatment_group(moment):
+    """Which TREATMENT_GROUPS key describes this MOMENT's current content
+    — not just its treatment string. "full-visual" alone is ambiguous
+    (every group contains it, since it's the shared "make it full-screen"
+    treatment for any of the three content types); the actual content type
+    a full-visual moment is showing is recorded in its OWN fullVisualKind
+    field, so that's what's checked for it specifically. Every other
+    treatment unambiguously belongs to exactly one group by string alone.
+    Returns None for a treatment that isn't in any group, or a full-visual
+    moment whose fullVisualKind isn't one of the three switchable groups
+    (e.g. "text", which has no side-* sibling to switch to/from)."""
+
+    treatment = moment.get("treatment")
+
+    if treatment == "full-visual":
+        kind = moment.get("fullVisualKind")
+        return kind if kind in TREATMENT_GROUPS else None
+
+    for group, treatments in TREATMENT_GROUPS.items():
+        if treatment in treatments:
+            return group
+
+    return None
+
+
+def switch_moment_treatment(moment, new_treatment, scene_plan, style=None):
+    """Switches an existing moment among the treatments that present the
+    SAME content at different prominence (TREATMENT_GROUPS), keeping that
+    content field (codeAssetId/assetId/diagram, plus caption) untouched
+    while recomputing everything that's actually presentation-specific:
     duration (merge_moment_scenes trusts maxDurationInParentFrames
     verbatim, it does NOT re-derive it from treatment — see that
     function's own docstring — so a switch that didn't recompute this
     would keep rendering at the OLD treatment's duration) and the
-    treatment-specific fields (presenterSide only applies to side-code;
-    fullVisualKind only applies to full-visual). Returns None (reject,
-    don't guess) if either the moment's current treatment or new_treatment
-    isn't one of the three — this function deliberately does not attempt
-    arbitrary treatment switching, only the one proven-compatible trio.
+    treatment-specific fields (presenterSide only applies to side-*
+    treatments; fullVisualKind only applies to full-visual). Returns None
+    (reject, don't guess) if the moment's CURRENT content type doesn't
+    have new_treatment as one of its own group's treatments — e.g. an
+    image moment can become full-visual, but not side-code, since that
+    would silently need to invent code content that was never there; a
+    full-visual TEXT moment can't become side-code either, despite
+    "full-visual" itself being a valid code-group treatment, since its
+    actual content isn't code (see _moment_treatment_group). This function
+    deliberately does not attempt cross-content-type switching, only
+    same-content presentation switching.
 
     style is accepted (not just loaded internally) so a caller that
     already has one loaded (e.g. a request handler serving many switches)
     doesn't reload style.json per call — same pattern duration_for_treatment
     itself already uses."""
 
-    if moment.get("treatment") not in CODE_TREATMENTS or new_treatment not in CODE_TREATMENTS:
+    current_group = _moment_treatment_group(moment)
+
+    if current_group is None or new_treatment not in TREATMENT_GROUPS[current_group]:
         return None
 
     if style is None:
@@ -1023,12 +1076,12 @@ def switch_code_treatment(moment, new_treatment, scene_plan, style=None):
     switched["treatment"] = new_treatment
 
     # Clear treatment-specific fields from the OLD treatment before
-    # setting the NEW treatment's own — codeAssetId/caption (the actual
-    # content) are deliberately left untouched below.
+    # setting the NEW treatment's own — the group's own content field
+    # (and caption) are deliberately left untouched below.
     switched["presenterSide"] = None
     switched["fullVisualKind"] = None
 
-    if new_treatment == "side-code":
+    if new_treatment.startswith("side-"):
         # No side preference implied by a fresh switch — same default
         # (None, meaning "let the layout choose") propose_moments itself
         # uses when nothing more specific is known; the user can still
@@ -1036,7 +1089,7 @@ def switch_code_treatment(moment, new_treatment, scene_plan, style=None):
         # exists.
         switched["presenterSide"] = moment.get("presenterSide")
     elif new_treatment == "full-visual":
-        switched["fullVisualKind"] = "code"
+        switched["fullVisualKind"] = current_group
 
     # Same clamp propose_moments applies once at proposal time (see its
     # own comment above): the new treatment's own fixed default, further
