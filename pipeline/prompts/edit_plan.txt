@@ -19,6 +19,13 @@ The current scene plan:
 
 {scene_plan}
 
+What is actually said in each presenter scene (use this to resolve script-anchored references
+like "after I mention CQRS" or "the scene where I talk about the anemic domain model" to the
+correct sceneId — a presenter scene's own entry in the scene plan above has no text field, so
+this is the only way to match spoken content to a scene id):
+
+{scene_transcripts}
+
 Decide which scene(s) the instruction refers to and what should change. You may:
 
 1. Remove a scene entirely: {"op": "remove", "sceneId": "...", "reason": "..."}
@@ -66,10 +73,11 @@ spoken word, in [wordId] text format):
 
 If the instruction is ambiguous about which scene it refers to (e.g. "remove the pause" when
 several scenes could match), pick the single best match based on context — text content,
-position in the video, scene type implied by the instruction, and the currently selected scene
-above if there is one — rather than proposing multiple uncertain operations. If you genuinely
-cannot identify which scene the instruction means, return an empty operations list rather than
-guessing at the wrong one.
+what is actually said (see the per-scene transcripts above), position in the video, scene type
+implied by the instruction, and the currently selected scene above if there is one — rather
+than proposing multiple uncertain operations. If a spoken phrase genuinely appears in more than
+one presenter scene, treat that as ambiguous too. If you genuinely cannot identify which scene
+the instruction means, return an empty operations list rather than guessing at the wrong one.
 
 Frame values (sourceStartFrame, sourceEndFrame, offsetInParentFrames, durationInFrames) are
 integers in frames, not seconds — the scene plan's "fps" field tells you the frame rate if you

@@ -282,6 +282,45 @@ def describe_selected_scene(scene_plan, selected_scene_id):
     return "\n".join(lines)
 
 
+def describe_scene_transcripts(scene_plan, transcript, manifest):
+    """Renders, per presenter scene, what is actually said in it — so a
+    script-anchored reference ("after I mention CQRS", "the scene where I
+    talk about the anemic domain model") can be resolved to the right
+    sceneId even though a presenter scene itself carries no text field
+    (see #55). Reuses generate_moments.py's group_transcript_by_clip +
+    visual_placement.py's filter_segments_in_window — the same
+    videoId-then-source-window narrowing resolve_bottom_callout_creation
+    already does for grounding a created moment — rather than
+    reimplementing transcript-window extraction here. Returns a fallback
+    string (not None) when transcript/manifest are unavailable, matching
+    candidate_words_text's own degrade-gracefully convention in edit_plan()."""
+
+    if not transcript or not manifest:
+        return "(no transcript available — script-anchored references like \"after I mention X\" cannot be resolved for this episode)"
+
+    clips = group_transcript_by_clip(transcript, manifest)
+    fps = scene_plan["fps"]
+
+    lines = []
+
+    for scene in scene_plan["scenes"]:
+
+        if scene["type"] != "presenter":
+            continue
+
+        segments = clips.get(scene["videoId"], [])
+        window = {"sourceStartFrame": scene["sourceStartFrame"], "sourceEndFrame": scene["sourceEndFrame"]}
+        matching = filter_segments_in_window(segments, window, fps)
+
+        if not matching:
+            continue
+
+        text = " ".join(segment["text"] for segment in matching)
+        lines.append(f"{scene['id']}: {text}")
+
+    return "\n".join(lines) if lines else "(no transcript segments matched any presenter scene)"
+
+
 def resolve_beat_creation(op, scene_plan, candidates_by_word_id, scenes_by_id, style=None):
     """Resolves a single "create"/"beat" operation into a beat proposal
     ready to append to emphasis.json — or None if it fails any of the same
@@ -483,6 +522,8 @@ def edit_plan(
         else "(no word-level transcript data available — beat creation is not possible for this episode)"
     )
 
+    scene_transcripts_text = describe_scene_transcripts(scene_plan, transcript, manifest)
+
     # Substitute the fixed, non-user-authored blocks first, then the
     # free-text instruction last — it's the one value that could plausibly
     # contain a literal "{scene_plan}"/"{editable_fields}" substring (e.g.
@@ -498,6 +539,8 @@ def edit_plan(
         "{selected_scene}", selected_scene_text
     ).replace(
         "{candidate_words}", candidate_words_text
+    ).replace(
+        "{scene_transcripts}", scene_transcripts_text
     ).replace(
         "{instruction}", instruction
     )

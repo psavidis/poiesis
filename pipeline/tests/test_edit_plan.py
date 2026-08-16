@@ -1,5 +1,6 @@
 from edit_plan import (
     apply_operations,
+    describe_scene_transcripts,
     describe_selected_scene,
     edit_plan,
     reflow_timeline,
@@ -729,6 +730,7 @@ PROMPT_TEMPLATE = (
     "fields: {editable_fields}\n"
     "selected: {selected_scene}\n"
     "words: {candidate_words}\n"
+    "transcripts: {scene_transcripts}\n"
 )
 
 
@@ -885,3 +887,85 @@ def test_edit_plan_degrades_to_nothing_selected_for_a_stale_selection():
     assert "(nothing selected)" in llm.last_prompt
     assert valid_ops == []
     assert rejected == []
+
+
+# describe_scene_transcripts (#55) — resolves script-anchored references
+# ("after I mention CQRS") by surfacing what's actually said in each
+# presenter scene, since a presenter scene itself has no text field.
+def test_describe_scene_transcripts_lists_what_each_presenter_scene_says():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    text = describe_scene_transcripts(scene_plan, _transcript_with_segments(), _manifest_single_video())
+
+    assert "scene-001:" in text
+    assert "dependency injection matters a lot" in text
+    assert "it makes testing much easier" in text
+
+
+def test_describe_scene_transcripts_only_includes_segments_within_the_scenes_source_window():
+    scene_plan = {
+        "fps": 30,
+        "scenes": [
+            # sourceEndFrame=90 at 30fps is 3.0s — only the first segment
+            # (0.0-3.0s) falls inside this scene's own source window, the
+            # second (3.0-6.0s) belongs to whatever scene comes after it.
+            _presenter("scene-001", 0, 90, 0),
+        ],
+    }
+
+    text = describe_scene_transcripts(scene_plan, _transcript_with_segments(), _manifest_single_video())
+
+    assert "dependency injection matters a lot" in text
+    assert "it makes testing much easier" not in text
+
+
+def test_describe_scene_transcripts_covers_every_presenter_scene_not_just_the_first():
+    scene_plan = {
+        "fps": 30,
+        "scenes": [
+            _presenter("scene-001", 0, 90, 0),
+            _presenter("scene-002", 90, 180, 90),
+        ],
+    }
+    transcript = {
+        "segments": [
+            {"source": "a.mp4", "start": 0.0, "end": 3.0, "text": "first scene content"},
+            {"source": "a.mp4", "start": 3.0, "end": 6.0, "text": "second scene content"},
+        ]
+    }
+
+    text = describe_scene_transcripts(scene_plan, transcript, _manifest_single_video())
+
+    assert "scene-001: first scene content" in text
+    assert "scene-002: second scene content" in text
+
+
+def test_describe_scene_transcripts_degrades_gracefully_without_transcript_or_manifest():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    text = describe_scene_transcripts(scene_plan, None, None)
+
+    assert "no transcript available" in text
+
+
+def test_edit_plan_injects_scene_transcripts_into_the_prompt():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    llm = _FakeLLMClient({"operations": []})
+
+    edit_plan(
+        scene_plan, "make the scene about testing bigger", llm, PROMPT_TEMPLATE,
+        transcript=_transcript_with_segments(), manifest=_manifest_single_video(),
+    )
+
+    assert "scene-001: dependency injection matters a lot it makes testing much easier" in llm.last_prompt
+
+
+def test_edit_plan_degrades_scene_transcripts_without_transcript_or_manifest():
+    scene_plan = {"scenes": [_title("scene-title-0", "Hello", 0)]}
+
+    llm = _FakeLLMClient({"operations": []})
+
+    edit_plan(scene_plan, "change the title", llm, PROMPT_TEMPLATE)
+
+    assert "no transcript available" in llm.last_prompt
