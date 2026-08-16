@@ -3,22 +3,33 @@ import type { Scene } from "video-renderer-src/episode/types";
 interface Props {
     track: Scene | undefined;
     overlays: Scene[];
+    // Clicking a title/moment chip opens that scene's editor (see #27) —
+    // other scene types (presenter, caption, image, beat) have no editor
+    // yet, so their chips stay inert.
+    onSelectTitle?: (titleText: string) => void;
+    onSelectMoment?: (sceneId: string) => void;
 }
 
 // Shows which scene(s) are on screen at the player's current frame, so a
 // scene id is always visible to type straight into an edit-plan
-// instruction ("shorten scene-caption-42") instead of having to guess or
-// open scene-plan.json separately.
-export function ActiveSceneBar({ track, overlays }: Props) {
+// instruction ("shorten scene-caption-42") without having to open
+// scene-plan.json separately.
+export function ActiveSceneBar({ track, overlays, onSelectTitle, onSelectMoment }: Props) {
     if (!track) {
         return <div style={styles.wrap}>No scene at this frame (gap in the timeline).</div>;
     }
 
     return (
         <div style={styles.wrap}>
-            <SceneChip scene={track} kind="track" />
+            <SceneChip scene={track} kind="track" onSelectTitle={onSelectTitle} onSelectMoment={onSelectMoment} />
             {overlays.map((s) => (
-                <SceneChip key={s.id} scene={s} kind="overlay" />
+                <SceneChip
+                    key={s.id}
+                    scene={s}
+                    kind="overlay"
+                    onSelectTitle={onSelectTitle}
+                    onSelectMoment={onSelectMoment}
+                />
             ))}
         </div>
     );
@@ -43,9 +54,36 @@ function truncate(text: string, max = 60): string {
     return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
-function SceneChip({ scene, kind }: { scene: Scene; kind: "track" | "overlay" }) {
+function SceneChip({
+    scene,
+    kind,
+    onSelectTitle,
+    onSelectMoment,
+}: {
+    scene: Scene;
+    kind: "track" | "overlay";
+    onSelectTitle?: (titleText: string) => void;
+    onSelectMoment?: (sceneId: string) => void;
+}) {
+    const clickable =
+        (scene.type === "title" && onSelectTitle) || (scene.type === "moment" && onSelectMoment);
+
+    const handleClick = () => {
+        if (scene.type === "title" && onSelectTitle) onSelectTitle(scene.text);
+        if (scene.type === "moment" && onSelectMoment) onSelectMoment(scene.id);
+    };
+
     return (
-        <div style={{ ...styles.chip, ...(kind === "overlay" ? styles.overlayChip : {}) }}>
+        <div
+            style={{
+                ...styles.chip,
+                ...(kind === "overlay" ? styles.overlayChip : {}),
+                ...(clickable ? styles.clickableChip : {}),
+            }}
+            onClick={clickable ? handleClick : undefined}
+            role={clickable ? "button" : undefined}
+            tabIndex={clickable ? 0 : undefined}
+        >
             <span style={styles.chipType}>{scene.type}</span>
             <span style={styles.chipId}>{scene.id}</span>
             <span style={styles.chipLabel}>{sceneLabel(scene)}</span>
@@ -72,6 +110,9 @@ const styles: Record<string, React.CSSProperties> = {
     },
     overlayChip: {
         borderStyle: "dashed",
+    },
+    clickableChip: {
+        cursor: "pointer",
     },
     chipType: {
         textTransform: "uppercase",

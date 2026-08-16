@@ -91,6 +91,55 @@ export async function saveMoments(episodePath: string, moments: unknown[]) {
     return res.json();
 }
 
+export interface TitleSceneProposal {
+    segmentId: string;
+    text: string;
+}
+
+export const getTitleScenes = (episodePath: string) =>
+    getArtifact(episodePath, "title_scenes.json").then((data) => (data.titles ?? []) as TitleSceneProposal[]);
+
+export async function saveTitleScenes(episodePath: string, titles: TitleSceneProposal[]) {
+    const res = await fetch(
+        `${API_BASE}/api/episode/title-scenes?path=${encodeURIComponent(episodePath)}`,
+        {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ titles }),
+        }
+    );
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || "Save failed");
+    }
+    return res.json();
+}
+
+export interface StoryboardChapter {
+    chapterId: string;
+    chapterText: string;
+    notes: string;
+}
+
+export const getStoryboard = (episodePath: string) =>
+    getArtifact(episodePath, "storyboard.json").then((data) => (data.chapters ?? []) as StoryboardChapter[]);
+
+export async function saveStoryboard(episodePath: string, chapters: StoryboardChapter[]) {
+    const res = await fetch(
+        `${API_BASE}/api/episode/storyboard?path=${encodeURIComponent(episodePath)}`,
+        {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ chapters }),
+        }
+    );
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || "Save failed");
+    }
+    return res.json();
+}
+
 export interface EditPlanOperation {
     op: "remove" | "update";
     sceneId: string;

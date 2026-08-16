@@ -8,9 +8,12 @@ import { AdvancedPanel } from "./AdvancedPanel";
 import { ChapterStrip } from "./ChapterStrip";
 import { EditPlanChat } from "./EditPlanChat";
 import { manifestToEpisodeBaseProps } from "./episodeProps";
+import { MomentEditorPanel } from "./MomentEditorPanel";
 import { normalizeMoment } from "./momentDuration";
 import { OverlayStrip, type EditableOverlay } from "./OverlayStrip";
 import { ProgressFlow } from "./ProgressFlow";
+import { StoryboardPanel } from "./StoryboardPanel";
+import { TitleEditorPanel } from "./TitleEditorPanel";
 
 function useQueryParams() {
     const params = new URLSearchParams(window.location.search);
@@ -38,6 +41,14 @@ export function EpisodeWorkspace() {
     // (not inside AdvancedPanel) since ProgressFlow's "Start" button needs
     // to read it too.
     const [includeCaptions, setIncludeCaptions] = useState(false);
+
+    // Which scene's editor panel is open, if any — set by clicking a
+    // title/moment chip in ActiveSceneBar (see #27). Storyboard has no
+    // click-to-open equivalent (chapter-keyed, not scene-anchored), so it
+    // isn't part of this state.
+    const [selectedEditor, setSelectedEditor] = useState<
+        { kind: "title"; titleText: string } | { kind: "moment"; sceneId: string } | null
+    >(null);
 
     const playerRef = useRef<PlayerRef>(null);
     const [currentFrame, setCurrentFrame] = useState(0);
@@ -221,6 +232,7 @@ export function EpisodeWorkspace() {
                 includeCaptions={includeCaptions}
                 onIncludeCaptionsChange={setIncludeCaptions}
             />
+            <StoryboardPanel episodePath={episodePath} />
         </>
     ) : null;
 
@@ -323,8 +335,33 @@ export function EpisodeWorkspace() {
             </div>
 
             <div style={playerWrapStyle}>
-                <ActiveSceneBar track={activeScenes.track} overlays={activeScenes.overlays} />
+                <ActiveSceneBar
+                    track={activeScenes.track}
+                    overlays={activeScenes.overlays}
+                    onSelectTitle={(titleText) => setSelectedEditor({ kind: "title", titleText })}
+                    onSelectMoment={(momentSceneId) => setSelectedEditor({ kind: "moment", sceneId: momentSceneId })}
+                />
             </div>
+
+            {selectedEditor?.kind === "title" && (
+                <div style={playerWrapStyle}>
+                    <TitleEditorPanel
+                        episodePath={episodePath}
+                        titleText={selectedEditor.titleText}
+                        onClose={() => setSelectedEditor(null)}
+                    />
+                </div>
+            )}
+
+            {selectedEditor?.kind === "moment" && (
+                <div style={playerWrapStyle}>
+                    <MomentEditorPanel
+                        episodePath={episodePath}
+                        sceneId={selectedEditor.sceneId}
+                        onClose={() => setSelectedEditor(null)}
+                    />
+                </div>
+            )}
 
             <div style={playerWrapStyle}>
                 <EditPlanChat episodePath={episodePath} onApplied={reloadScenePlan} />
