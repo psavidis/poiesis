@@ -190,6 +190,16 @@ export interface MomentScene {
     diagram?: DiagramData;
     caption?: string;
     presenterSide?: "left" | "right";
+    // When true, the presenter's slide-out to this moment's own side skips
+    // the center->side leading transition and instead holds continuously
+    // from wherever the IMMEDIATELY PRECEDING moment's layout window left
+    // off — see layoutWindowsForScene's merge pass. Only takes effect when
+    // that preceding moment already shares this moment's own presenterSide;
+    // otherwise this is a silent no-op and the moment slides in normally.
+    // Never inferred from timing alone (two side-image moments placed close
+    // together for unrelated reasons must not silently merge) — this is a
+    // deliberate signal set by a human or the chat edit-plan on their behalf.
+    holdFromPrevious?: boolean;
     // Only meaningful when treatment is "full-visual" — which of text/
     // assetId/diagram (already-present fields above) the full-frame
     // content should render from.

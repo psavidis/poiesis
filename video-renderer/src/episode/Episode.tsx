@@ -77,10 +77,34 @@ export const layoutWindowsForScene = (scene: PresenterScene, moments: MomentScen
                     : m.treatment === "content-dominant-code"
                     ? ("corner" as const)
                     : (m.presenterSide as "left" | "right"),
+            holdFromPrevious: m.holdFromPrevious ?? false,
         }))
         .sort((a, b) => a.start - b.start);
 
-    return windows;
+    // Merges a window into the immediately preceding one (in sorted order)
+    // when its own moment asked to holdFromPrevious AND the sides actually
+    // match — see MomentScene.holdFromPrevious's own comment. Merging
+    // collapses two independent center->side->side->center cycles into one
+    // continuous side hold spanning both moments (and the gap between
+    // them), since AnimatedPresenterFrame's interpolation only ever looks
+    // at a window's own start/end/side — it doesn't need to know two
+    // moments contributed to this one window. A mismatched side (or no
+    // preceding window at all) leaves the flag as a no-op: the moment
+    // keeps its own independent window exactly as if holdFromPrevious were
+    // unset, rather than erroring on an edit that doesn't actually chain.
+    const merged: { start: number; end: number; side: LayoutWindow["side"] }[] = [];
+
+    for (const w of windows) {
+        const prev = merged[merged.length - 1];
+
+        if (w.holdFromPrevious && prev && prev.side === w.side) {
+            prev.end = w.end;
+        } else {
+            merged.push({ start: w.start, end: w.end, side: w.side });
+        }
+    }
+
+    return merged;
 };
 
 // Frame ranges (local to a presenter scene) during which the transcript

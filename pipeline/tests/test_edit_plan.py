@@ -378,6 +378,28 @@ def test_validate_operations_accepts_moment_entrance_update():
     assert rejected == []
 
 
+def test_validate_operations_accepts_hold_from_previous_update():
+    # holdFromPrevious lets a chat instruction ("keep me on the right for
+    # the next image too") merge this moment's presenter-side window into
+    # the immediately preceding one at render time — see MomentScene in
+    # video-renderer's types.ts and Episode.tsx's layoutWindowsForScene.
+    scene_plan = {"scenes": [_moment("scene-moment-1", "scene-001", 400, 100, "second image")]}
+
+    ops = [
+        {
+            "op": "update",
+            "sceneId": "scene-moment-1",
+            "fields": {"holdFromPrevious": True},
+            "reason": "keep the presenter on the same side as the previous moment",
+        }
+    ]
+
+    valid, rejected = validate_operations(scene_plan, ops)
+
+    assert valid == ops
+    assert rejected == []
+
+
 def test_validate_operations_rejects_an_invalid_entrance_value():
     # Regression: field-NAME validation alone would let a hallucinated
     # entrance value (e.g. "bounce" — not one of the three real patterns

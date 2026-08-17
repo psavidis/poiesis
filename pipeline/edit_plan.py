@@ -67,7 +67,14 @@ EDITABLE_FIELDS = {
     # it's editable for every text-bearing treatment, not just one). A
     # field-level check for "does this treatment actually use this field"
     # isn't done anywhere else in this dict either.
-    "moment": {"text", "assetId", "caption", "offsetInParentFrames", "durationInFrames", "entrance"},
+    # "holdFromPrevious" (see MomentScene in video-renderer's types.ts)
+    # merges this moment's presenter-side layout window into the
+    # IMMEDIATELY PRECEDING moment's on the render side (Episode.tsx's
+    # layoutWindowsForScene) — only takes effect when that preceding
+    # moment already shares this one's own presenterSide, which stays
+    # read-only here (unchanged from every other side-* field: layout
+    # side is generate_moments.py's job, not a text edit).
+    "moment": {"text", "assetId", "caption", "offsetInParentFrames", "durationInFrames", "entrance", "holdFromPrevious"},
     "caption": {"text", "offsetInParentFrames", "durationInFrames"},
     # "assetId"/"display" are included here (unlike moment's "assetId",
     # which stays read-only) because changing which image is shown or

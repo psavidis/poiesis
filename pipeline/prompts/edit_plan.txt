@@ -152,6 +152,20 @@ those has no field to express it in (fall back to the general vague-instruction 
 or return no operations if genuinely nothing fits). Do not invent a fourth entrance value — pick
 the closest of the three.
 
+Some instructions ask to keep the presenter held on one side across two or more consecutive
+side-* moments instead of returning to center in between — e.g. "keep me on the right for the
+next image too," "don't come back to center between these two," "stay on the left through both
+of these." A "moment" scene supports a "holdFromPrevious" boolean field for exactly this: set
+"holdFromPrevious": true on the LATER moment in the pair to merge its presenter-side window into
+the one immediately before it, so the presenter holds continuously through the gap between them
+instead of sliding back to center and back out. Only propose this when the preceding moment
+ALREADY has the same presenterSide as the moment you're updating (check both moments' current
+presenterSide in the scene plan above) — if the sides differ, this field has no effect at render
+time, so either say no suitable moments were found or (if the instruction clearly implies moving
+one of them) explain that presenterSide itself isn't something this endpoint can change. Do not
+set holdFromPrevious on the FIRST moment in the pair — it has no preceding window to merge into,
+so the field would be a no-op there.
+
 You may NOT create any scene type or moment treatment other than the five above (no side-text,
 side-image, side-code, side-diagram, titles, or content-dominant-code via this endpoint — those
 require different grounding this endpoint doesn't have).

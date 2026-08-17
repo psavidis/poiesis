@@ -134,6 +134,76 @@ describe("layoutWindowsForScene", () => {
             { start: 300 - TRANSITION_FRAMES, end: 300 + 150 + TRANSITION_FRAMES, side: "right" },
         ]);
     });
+
+    it("merges two same-side moments into one continuous window when the second holds from the first", () => {
+        const scene = presenterScene({ durationInFrames: 2000 });
+        const first = sideMoment({
+            id: "m-first",
+            offsetInParentFrames: 100,
+            durationInFrames: 100,
+            presenterSide: "right",
+        });
+        const second = sideMoment({
+            id: "m-second",
+            offsetInParentFrames: 400,
+            durationInFrames: 100,
+            presenterSide: "right",
+            holdFromPrevious: true,
+        });
+
+        const windows = layoutWindowsForScene(scene, [first, second]);
+
+        // One merged window, not two — spans from the first moment's own
+        // padded start straight through to the second's own padded end,
+        // holding through the gap between them (400 - (100+100) = 200
+        // frames of otherwise-independent center time).
+        expect(windows).toEqual([
+            { start: 100 - TRANSITION_FRAMES, end: 400 + 100 + TRANSITION_FRAMES, side: "right" },
+        ]);
+    });
+
+    it("does not merge two same-side moments without holdFromPrevious (existing behavior unchanged)", () => {
+        const scene = presenterScene({ durationInFrames: 2000 });
+        const first = sideMoment({ id: "m-first", offsetInParentFrames: 100, durationInFrames: 100, presenterSide: "right" });
+        const second = sideMoment({ id: "m-second", offsetInParentFrames: 400, durationInFrames: 100, presenterSide: "right" });
+
+        const windows = layoutWindowsForScene(scene, [first, second]);
+
+        expect(windows).toHaveLength(2);
+    });
+
+    it("does not merge when holdFromPrevious is set but the preceding moment is on a different side", () => {
+        const scene = presenterScene({ durationInFrames: 2000 });
+        const first = sideMoment({ id: "m-first", offsetInParentFrames: 100, durationInFrames: 100, presenterSide: "left" });
+        const second = sideMoment({
+            id: "m-second",
+            offsetInParentFrames: 400,
+            durationInFrames: 100,
+            presenterSide: "right",
+            holdFromPrevious: true,
+        });
+
+        const windows = layoutWindowsForScene(scene, [first, second]);
+
+        expect(windows).toHaveLength(2);
+        expect(windows.map((w) => w.side)).toEqual(["left", "right"]);
+    });
+
+    it("treats holdFromPrevious as a no-op on the very first/only moment (no preceding window to merge into)", () => {
+        const scene = presenterScene({ durationInFrames: 900 });
+        const moment = sideMoment({
+            offsetInParentFrames: 300,
+            durationInFrames: 150,
+            presenterSide: "right",
+            holdFromPrevious: true,
+        });
+
+        const windows = layoutWindowsForScene(scene, [moment]);
+
+        expect(windows).toEqual([
+            { start: 300 - TRANSITION_FRAMES, end: 300 + 150 + TRANSITION_FRAMES, side: "right" },
+        ]);
+    });
 });
 
 describe("captionHiddenWindowsForScene", () => {
