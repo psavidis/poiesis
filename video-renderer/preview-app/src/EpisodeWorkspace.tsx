@@ -17,6 +17,7 @@ import { InlineTextEditor, isTextEligible, type EditTarget } from "./InlineTextE
 import { MomentBar } from "./MomentBar";
 import { MomentEditorPanel } from "./MomentEditorPanel";
 import { ProgressFlow } from "./ProgressFlow";
+import { RenderStatusBanner } from "./RenderStatusBanner";
 import { SceneBar } from "./SceneBar";
 import { StoryboardPanel } from "./StoryboardPanel";
 import { TitleEditorPanel } from "./TitleEditorPanel";
@@ -475,6 +476,12 @@ export function EpisodeWorkspace() {
                 </div>
             </div>
             <ProgressFlow episodePath={episodePath} skipCaptions={!includeCaptions} onStatusChange={setEpisodeStatus} />
+
+            <RenderStatusBanner
+                episodePath={episodePath}
+                advancedTabOpen={activeTab === "advanced"}
+                onOpenAdvanced={() => setActiveTab("advanced")}
+            />
 
             <div style={styles.tabStrip}>
                 <button
