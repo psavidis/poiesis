@@ -81,6 +81,13 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
     // to see it (#68). Defaults to shown once a run has produced any
     // output; the user can still collapse it.
     const [logVisible, setLogVisible] = useState(false);
+    // Explicit opt-in, not just inferred from "every stage already has
+    // output" — a user re-running only some stages (e.g. after a manual
+    // tweak upstream) still needs a way to force regeneration even when
+    // the pipeline isn't fully done, which allDone-only forcing can't
+    // express. Defaults off so a plain "Start"/accidental click never
+    // discards existing work.
+    const [forceRerun, setForceRerun] = useState(false);
     const runHandleRef = useRef<RunHandle | null>(null);
     const logRef = useRef<HTMLPreElement>(null);
 
@@ -109,6 +116,11 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
         if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
     }, [log]);
 
+    // Same complete === null handling as phaseState below — a stage with
+    // no artifact to check (generate_scene_plan_ts) must not permanently
+    // block "Re-run pipeline" from ever being offered.
+    const allDone = status ? status.stages.every((s) => s.complete !== false) : false;
+
     const start = () => {
         setError(null);
         setRunning(true);
@@ -117,7 +129,14 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
 
         runHandleRef.current = runOverWebSocket(
             "/ws/pipeline/run",
-            { path: episodePath, skipCaptions },
+            // force whenever this is a genuine RE-run (every stage already
+            // has output) — otherwise every stage's own existence check
+            // (Stage.is_complete) makes it skip immediately, which is
+            // exactly why "Re-run pipeline" previously did nothing at all:
+            // this param was never sent, so the button's two labels
+            // ("Start" vs "Re-run pipeline") described two identical
+            // requests under the hood.
+            { path: episodePath, skipCaptions, force: forceRerun || allDone },
             (msg: RunMessage) => {
                 if (msg.type === "start") {
                     setLog((prev) => prev + `$ ${msg.command}\n`);
@@ -157,11 +176,6 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
         runHandleRef.current?.cancel();
     };
 
-    // Same complete === null handling as phaseState above — a stage with
-    // no artifact to check (generate_scene_plan_ts) must not permanently
-    // block "Re-run pipeline" from ever being offered.
-    const allDone = status ? status.stages.every((s) => s.complete !== false) : false;
-
     return (
         <div style={styles.wrap}>
             <div style={styles.phases}>
@@ -186,7 +200,7 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
             <div style={styles.actions}>
                 {!running && (
                     <button onClick={start} disabled={!status}>
-                        {allDone ? "Re-run pipeline" : "Start"}
+                        {forceRerun ? "Force re-run" : allDone ? "Re-run pipeline" : "Start"}
                     </button>
                 )}
                 {running && (
@@ -205,6 +219,20 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
                     </button>
                 )}
             </div>
+
+            {!running && (
+                <label
+                    style={styles.forceRow}
+                    title="Regenerates every stage from scratch, ignoring existing output — including stages that already finished"
+                >
+                    <input
+                        type="checkbox"
+                        checked={forceRerun}
+                        onChange={(e) => setForceRerun(e.target.checked)}
+                    />
+                    Force regenerate all stages
+                </label>
+            )}
 
             {error && <div style={styles.error}>{error}</div>}
 
@@ -264,6 +292,13 @@ const styles: Record<string, React.CSSProperties> = {
         gap: 10,
     },
     runningLabel: {
+        fontSize: typography.size.md,
+        color: colors.textSecondary,
+    },
+    forceRow: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
         fontSize: typography.size.md,
         color: colors.textSecondary,
     },
