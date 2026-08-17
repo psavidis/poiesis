@@ -866,6 +866,23 @@ def edit_scene_plan(path: str, body: EditPlanRequest):
                         f"scene-moment-{len(existing_moments) + i}" for i in range(len(created_moments))
                     )
 
+                    # resolve_bottom_callout_creation (and the other
+                    # create/moment resolvers) never set windowId — it's a
+                    # generate_moments.py-only concept (a candidate window's
+                    # position within its own parent scene), meaningless for
+                    # a moment that didn't come from that windowing process.
+                    # But the MomentProposal Pydantic model requires it, so
+                    # a chat-created moment with no windowId broke every
+                    # LATER save of the full array (any drag/click-commit
+                    # elsewhere re-sends this same moment verbatim). Assign
+                    # one here, at append time, where the final index is
+                    # already known — chat-w{N}, not w{N}, so it can never
+                    # collide with a real candidate-window id from the same
+                    # parent scene.
+                    for i, moment in enumerate(created_moments):
+                        if not moment.get("windowId"):
+                            moment["windowId"] = f"chat-w{len(existing_moments) + i}"
+
                     all_moments = existing_moments + created_moments
                     plan_to_write = merge_moment_scenes(plan_to_write, all_moments)
                     write_json_atomic(moments_path, {"moments": all_moments})

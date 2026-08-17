@@ -1642,6 +1642,62 @@ def test_edit_scene_plan_creates_a_moment_in_moments_json_and_scene_plan(tmp_pat
     assert moment_scenes[0]["id"] == "scene-moment-0"
 
 
+def test_edit_scene_plan_assigns_window_id_to_created_moment(tmp_path):
+    # Regression: resolve_bottom_callout_creation (and the other create/
+    # moment resolvers) never set windowId — it's a generate_moments.py-
+    # only concept a chat-created moment doesn't go through. The
+    # MomentProposal model requires it though, so a moment saved without
+    # one broke every LATER full-array save (any drag/click-commit
+    # elsewhere re-sends this same moment verbatim and gets a 422).
+    episode = _make_episode(tmp_path)
+    scene_plan_before = _make_scene_plan(episode, video_ids=("001",))
+    _make_word_level_transcript_fixtures(episode, video_ids=("001",))
+
+    fake_result = (
+        scene_plan_before,
+        [],
+        [],
+        [],
+        [
+            {
+                "sceneId": "scene-001",
+                "videoId": "001",
+                "treatment": "bottom-callout",
+                "text": "dependency injection matters",
+                "presenterSide": None,
+                "offsetInParentFrames": 0,
+                "maxDurationInParentFrames": 90,
+                "reason": "the core idea",
+                # no windowId — matches what resolve_bottom_callout_creation
+                # actually produces.
+            }
+        ],
+        [],
+        None,  # explanation
+    )
+
+    with patch("server.edit_plan", return_value=fake_result):
+        response = client.post(
+            "/api/episode/edit-plan",
+            params={"path": str(episode)},
+            json={"instruction": "add a callout saying dependency injection matters"},
+        )
+
+    assert response.status_code == 200
+
+    moments_on_disk = json.loads((episode / "processing" / "moments.json").read_text())
+    assert moments_on_disk["moments"][0]["windowId"] == "chat-w0"
+
+    # The real-world failure mode: a later full-array save (e.g. dragging
+    # any moment on the timeline) must not reject on this moment anymore.
+    resave = client.put(
+        "/api/episode/moments",
+        params={"path": str(episode)},
+        json=moments_on_disk,
+    )
+    assert resave.status_code == 200
+
+
 def test_edit_scene_plan_loads_code_assets_and_passes_them_to_edit_plan(tmp_path):
     # code_assets.json (#64) is optional, same as assets.json — an episode
     # with no indexed code/ folder can't ground a Full Screen code
