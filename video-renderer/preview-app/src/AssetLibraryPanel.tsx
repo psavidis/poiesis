@@ -134,7 +134,21 @@ export function AssetLibraryPanel({ episodePath, scenePlan, selectedMomentSceneI
             const moments = (data.moments ?? []).map(normalizeMoment);
             if (!moments[index]) return;
 
-            moments[index] = { ...moments[index], [field]: assetId };
+            // A moment's caption is a static field copied from the asset
+            // at proposal time (generate_moments.py), not resolved live at
+            // render time the way codeAsset.description is — so swapping
+            // assetId alone leaves the OLD asset's caption showing under
+            // the NEW image, which reads as "the image wasn't applied"
+            // even though it was. Only image swaps carry this risk (code
+            // assets render their description live from codeAssetMap, no
+            // stored field to go stale).
+            const nextCaption = field === "assetId" ? images.find((a) => a.id === assetId)?.caption : undefined;
+
+            moments[index] = {
+                ...moments[index],
+                [field]: assetId,
+                ...(field === "assetId" ? { caption: nextCaption ?? null } : {}),
+            };
 
             await saveMoments(episodePath, moments);
             onSaved();
