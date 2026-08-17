@@ -29,10 +29,6 @@ const { renderMedia, selectComposition } = require("@remotion/renderer");
 
 const RENDERER_DIR = __dirname;
 
-// See the `concurrency` option passed to renderMedia() below for why this
-// is capped rather than using every core.
-const RENDER_CONCURRENCY = Math.min(4, require("os").cpus().length);
-
 // ui/server.py's _stream_command spawns this script without setting a cwd
 // (unlike export_davinci.py's own subprocess.run(..., cwd=RENDERER_DIR)
 // for ITS npx remotion render calls), so it inherits the server's cwd
@@ -124,16 +120,6 @@ async function main() {
         imageFormat: "jpeg",
         overwrite: true,
         outputLocation: output,
-        // Each unit of concurrency opens its own headless-Chromium tab to
-        // render frames in parallel (mirrors export_davinci.py's
-        // ThreadPoolExecutor clip parallelism, same idea applied at the
-        // frame level instead of the clip level — this path has only one
-        // composition, so there's no clip boundary to parallelize across).
-        // Capped well below the full core count: browser tabs are far
-        // heavier than the DaVinci path's CLI subprocesses (each one is a
-        // full Chromium renderer process), so naively using all 12 cores
-        // risks memory pressure/thrashing rather than a clean speedup.
-        concurrency: RENDER_CONCURRENCY,
         onProgress: ({ renderedFrames }) => {
             // renderMedia's onProgress fires far more often than once per
             // frame (encoding/muxing ticks too) — only emit a line when
