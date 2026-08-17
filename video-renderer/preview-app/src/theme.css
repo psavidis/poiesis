@@ -111,3 +111,45 @@ button:focus-visible {
         animation: none;
     }
 }
+
+/* StoryboardPanel's one-card-at-a-time carousel (#storyboard-cards) — the
+   incoming card slides in from whichever side matches the navigation
+   direction (right when paging forward, left when paging back), rather
+   than the previous "every chapter's textarea visible at once" layout,
+   which read as a wall of text instead of a reviewable sequence. */
+@keyframes storyboard-slide-in-right {
+    from {
+        opacity: 0;
+        transform: translateX(24px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes storyboard-slide-in-left {
+    from {
+        opacity: 0;
+        transform: translateX(-24px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+.storyboard-card-forward {
+    animation: storyboard-slide-in-right 0.22s ease-out;
+}
+
+.storyboard-card-back {
+    animation: storyboard-slide-in-left 0.22s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .storyboard-card-forward,
+    .storyboard-card-back {
+        animation: none;
+    }
+}
