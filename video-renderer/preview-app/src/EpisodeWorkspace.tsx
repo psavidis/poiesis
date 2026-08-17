@@ -429,13 +429,33 @@ export function EpisodeWorkspace() {
         </>
     ) : null;
 
+    // The chat sidebar (#65 — left-docked, always-visible AI panel instead
+    // of a footer strip, matching the left-panel convention other creative
+    // tools like Canva use) needs episodeProps for scenePlan context, but
+    // should still render even before the plan finishes loading, so the
+    // input isn't unavailable during that window — episodePath alone is
+    // enough for EditPlanChat's own effects to be safe.
+    const sidebar = episodePath ? (
+        <div style={styles.sidebar}>
+            <EditPlanChat
+                episodePath={episodePath}
+                onApplied={handleChatApplied}
+                selectedSceneId={selectedSceneIdForChat}
+                scenePlan={episodeProps?.scenePlan}
+            />
+        </div>
+    ) : null;
+
     if (error) {
         return (
-            <div style={styles.container}>
-                {header}
-                <div style={styles.message}>
-                    <div style={styles.messageTitle}>Preview unavailable</div>
-                    <div>{error}</div>
+            <div style={styles.shell}>
+                {sidebar}
+                <div style={styles.container}>
+                    {header}
+                    <div style={styles.message}>
+                        <div style={styles.messageTitle}>Preview unavailable</div>
+                        <div>{error}</div>
+                    </div>
                 </div>
             </div>
         );
@@ -443,12 +463,15 @@ export function EpisodeWorkspace() {
 
     if (!episodeProps) {
         return (
-            <div style={styles.container}>
-                {header}
-                <div style={styles.message}>
-                    {scenePlanExists
-                        ? "Loading preview…"
-                        : "Waiting for the first scene plan (Understand stage)… the preview will appear automatically as soon as it's ready."}
+            <div style={styles.shell}>
+                {sidebar}
+                <div style={styles.container}>
+                    {header}
+                    <div style={styles.message}>
+                        {scenePlanExists
+                            ? "Loading preview…"
+                            : "Waiting for the first scene plan (Understand stage)… the preview will appear automatically as soon as it's ready."}
+                    </div>
                 </div>
             </div>
         );
@@ -464,7 +487,9 @@ export function EpisodeWorkspace() {
     );
 
     return (
-        <div style={styles.container}>
+        <div style={styles.shell}>
+            {sidebar}
+            <div style={styles.container}>
             {header}
 
             <div style={styles.playerWrap}>
@@ -632,13 +657,6 @@ export function EpisodeWorkspace() {
                 </div>
             )}
 
-            <div style={styles.playerWrap}>
-                <EditPlanChat
-                    episodePath={episodePath}
-                    onApplied={handleChatApplied}
-                    selectedSceneId={selectedSceneIdForChat}
-                    scenePlan={episodeProps.scenePlan}
-                />
             </div>
         </div>
     );
@@ -654,7 +672,40 @@ export function EpisodeWorkspace() {
 // biased toward the left side of the screen."
 const WORKSPACE_MAX_WIDTH = 1280;
 
+// Fixed, not resizable — the chat instruction box/result summary never
+// needs more than this to stay readable, and a fixed width avoids adding
+// drag-to-resize state for a first version (#65).
+const SIDEBAR_WIDTH = 340;
+
 const styles: Record<string, React.CSSProperties> = {
+    // Top-level app shell: a fixed-width, always-visible AI chat sidebar on
+    // the left (#65 — Canva-style left panel, not a footer strip) plus the
+    // existing centered workspace column filling the rest of the width.
+    shell: {
+        display: "flex",
+        flexDirection: "row",
+        alignItems: "stretch",
+        minHeight: "100vh",
+    },
+    sidebar: {
+        width: SIDEBAR_WIDTH,
+        flexShrink: 0,
+        display: "flex",
+        flexDirection: "column",
+        padding: 16,
+        borderRight: `1px solid ${colors.border}`,
+        background: colors.surface,
+        // Sticky rather than a second independent scroll container — the
+        // sidebar's own content (instruction box + latest result) is short
+        // enough to never need its own scrollbar, so it just stays pinned
+        // in the viewport while the (much taller) main column scrolls past
+        // it, matching how Canva's left panel behaves relative to the canvas.
+        position: "sticky",
+        top: 0,
+        alignSelf: "flex-start",
+        height: "100vh",
+        overflowY: "auto",
+    },
     container: {
         fontFamily: typography.fontFamily,
         color: colors.textPrimary,
@@ -664,6 +715,8 @@ const styles: Record<string, React.CSSProperties> = {
         gap: 12,
         maxWidth: WORKSPACE_MAX_WIDTH,
         margin: "0 auto",
+        flex: 1,
+        minWidth: 0,
     },
     // Three-region row (spacer / brandGroup / undoWrap) instead of the
     // previous "justify-content: center + position: absolute undo button"

@@ -182,6 +182,8 @@ export function EditPlanChat({ episodePath, onApplied, selectedSceneId, scenePla
 
     return (
         <div style={styles.wrap}>
+            <div style={styles.heading}>Ask AI</div>
+
             {showSelection && (
                 <div style={styles.selectionRow}>
                     <span style={styles.selectionLabel}>
@@ -211,21 +213,27 @@ export function EditPlanChat({ episodePath, onApplied, selectedSceneId, scenePla
                     style={styles.input}
                     disabled={status === "submitting"}
                 />
-                {speechSupported && (
+                <div style={styles.formActions}>
+                    {speechSupported && (
+                        <button
+                            type="button"
+                            className="secondary"
+                            onClick={listening ? stopListening : startListening}
+                            disabled={status === "submitting"}
+                            title={listening ? "Stop listening" : "Speak an instruction"}
+                            style={listening ? styles.micButtonListening : undefined}
+                        >
+                            {listening ? "● Listening…" : "🎤"}
+                        </button>
+                    )}
                     <button
-                        type="button"
-                        className="secondary"
-                        onClick={listening ? stopListening : startListening}
-                        disabled={status === "submitting"}
-                        title={listening ? "Stop listening" : "Speak an instruction"}
-                        style={listening ? styles.micButtonListening : undefined}
+                        type="submit"
+                        style={styles.applyButton}
+                        disabled={status === "submitting" || !instruction.trim()}
                     >
-                        {listening ? "● Listening…" : "🎤"}
+                        {status === "submitting" ? "Thinking…" : "Apply"}
                     </button>
-                )}
-                <button type="submit" disabled={status === "submitting" || !instruction.trim()}>
-                    {status === "submitting" ? "Thinking…" : "Apply"}
-                </button>
+                </div>
             </form>
 
             {error && <div style={styles.error}>{error}</div>}
@@ -312,11 +320,24 @@ const styles: Record<string, React.CSSProperties> = {
     wrap: {
         display: "flex",
         flexDirection: "column",
-        gap: 8,
+        gap: 10,
+    },
+    heading: {
+        fontSize: typography.size.lg,
+        fontWeight: typography.weight.bold,
+        color: colors.textPrimary,
     },
     form: {
         display: "flex",
+        flexDirection: "column",
         gap: 8,
+    },
+    formActions: {
+        display: "flex",
+        gap: 8,
+    },
+    applyButton: {
+        flex: 1,
     },
     selectionRow: {
         display: "flex",
