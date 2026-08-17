@@ -638,6 +638,8 @@ export function EpisodeWorkspace() {
                     onSeek={seekToAbsoluteFrame}
                     onSelectTitle={openInlineTitleEditor}
                     highlightedTitleText={highlightedByType.titleText}
+                    episodePath={episodePath}
+                    onSaved={reloadScenePlan}
                 />
             </div>
 

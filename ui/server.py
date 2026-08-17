@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
 from generate_title_scenes import (  # noqa: E402
     compute_overridden_fields as compute_overridden_title_fields,
     merge_title_scenes,
+    resolvable_segment_positions,
     write_json_atomic,
 )
 from generate_moments import (  # noqa: E402
@@ -253,6 +254,39 @@ def update_title_scenes(path: str, body: TitleScenesUpdate):
         raise HTTPException(status_code=409, detail=str(e))
 
     return {"titles": titles}
+
+
+@app.get("/api/episode/chapter-boundary-positions")
+def chapter_boundary_positions(path: str):
+    """Every transcript segment's resolved timeline frame, for the
+    chapter-boundary drag UI (ChapterStrip.tsx) to snap a dragged pixel
+    position to the nearest one client-side, with no per-pixel server
+    round trip. Segment text is deliberately excluded — see
+    resolvable_segment_positions."""
+
+    episode = resolve_episode(path)
+    processing = episode / "processing"
+
+    scene_plan_path = processing / "scene-plan.json"
+    episode_transcript_path = processing / "episode_transcript.json"
+    manifest_path = processing / "manifest.json"
+
+    if not scene_plan_path.exists():
+        raise HTTPException(status_code=404, detail="scene-plan.json not found — run the pipeline first")
+
+    if not episode_transcript_path.exists() or not manifest_path.exists():
+        raise HTTPException(status_code=404, detail="episode_transcript.json/manifest.json not found — run the pipeline first")
+
+    with scene_plan_path.open("r", encoding="utf-8") as f:
+        scene_plan = json.load(f)
+
+    with episode_transcript_path.open("r", encoding="utf-8") as f:
+        episode_transcript = json.load(f)
+
+    with manifest_path.open("r", encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    return {"positions": resolvable_segment_positions(scene_plan, episode_transcript, manifest)}
 
 
 class StoryboardChapter(BaseModel):

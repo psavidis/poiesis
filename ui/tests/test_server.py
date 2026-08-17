@@ -176,6 +176,33 @@ def test_update_title_scenes_returns_404_without_scene_plan(tmp_path):
     assert response.status_code == 404
 
 
+def test_chapter_boundary_positions_returns_404_without_scene_plan(tmp_path):
+    episode = _make_episode(tmp_path)
+
+    response = client.get("/api/episode/chapter-boundary-positions", params={"path": str(episode)})
+
+    assert response.status_code == 404
+
+
+def test_chapter_boundary_positions_resolves_every_segment_to_a_timeline_frame(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+    _make_title_scene_fixtures(episode)
+
+    response = client.get("/api/episode/chapter-boundary-positions", params={"path": str(episode)})
+
+    assert response.status_code == 200
+    positions = response.json()["positions"]
+    # _make_scene_plan places scene-001 at timelineStartFrame 0 and
+    # scene-002 at timelineStartFrame 100 — each fixture segment sits at
+    # its own clip's own start (source frame 0), so each resolves to its
+    # containing presenter piece's own timelineStartFrame.
+    assert positions == [
+        {"segmentId": "s0", "timelineFrame": 0},
+        {"segmentId": "s1", "timelineFrame": 100},
+    ]
+
+
 def test_update_title_scenes_writes_titles_file_and_merges_scene_plan(tmp_path):
     episode = _make_episode(tmp_path)
     _make_scene_plan(episode)

@@ -250,6 +250,56 @@ def _snapped_split_frame(source_frame, segment_start, segment_end, min_piece_fra
     return source_frame
 
 
+def resolvable_segment_positions(scene_plan, transcript, manifest):
+    """Every transcript segment's absolute timeline position, resolved
+    against the CURRENT scene plan — the draggable-chapter-boundary
+    equivalent of indexed_segments's clip-relative list. A segment whose
+    clip isn't present as a presenter piece in this scene plan is skipped
+    (can't be resolved to a timeline frame). Returned in timeline order so
+    the frontend can snap a dragged pixel position to the nearest entry
+    with a simple linear/binary search, with no further transcript access
+    needed — segment TEXT is deliberately not included here, only
+    segmentId + the resolved frame, since this is for snapping a drag, not
+    for display."""
+
+    presenter_pieces = sorted(
+        (s for s in scene_plan["scenes"] if s["type"] == "presenter"),
+        key=lambda s: s["timelineStartFrame"],
+    )
+
+    fps = scene_plan.get("fps", 30)
+
+    positions = []
+
+    for segment in indexed_segments(transcript, manifest):
+
+        source_frame = round(segment["start"] * fps)
+
+        # A segment's clip may appear as several pieces (already split by
+        # earlier titles) — find whichever piece actually contains this
+        # segment's source frame so the resolved timeline frame accounts
+        # for title cards/splits already inserted before it.
+        containing = next(
+            (
+                p for p in presenter_pieces
+                if p["videoId"] == segment["videoId"]
+                and p["sourceStartFrame"] <= source_frame < p["sourceEndFrame"]
+            ),
+            None,
+        )
+
+        if containing is None:
+            continue
+
+        timeline_frame = containing["timelineStartFrame"] + (source_frame - containing["sourceStartFrame"])
+
+        positions.append({"segmentId": segment["segmentId"], "timelineFrame": timeline_frame})
+
+    positions.sort(key=lambda p: p["timelineFrame"])
+
+    return positions
+
+
 def merge_title_scenes(scene_plan, titles, transcript, manifest, style=None):
     """Resolves each title's segmentId to a real source-frame position
     (via the transcript/manifest) and splits the presenter scene it falls

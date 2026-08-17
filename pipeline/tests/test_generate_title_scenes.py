@@ -6,6 +6,7 @@ from generate_title_scenes import (
     merge_title_scenes,
     preserve_overridden_fields,
     propose_title_scenes,
+    resolvable_segment_positions,
 )
 from style import load_style
 
@@ -679,6 +680,126 @@ def test_merge_title_scenes_keeps_overlay_scenes_aligned_when_parent_splits():
 # human provenance tracking, third slice of #44 (mirrors #57/#58, but
 # matched by segmentId — a title's real stable id — rather than array
 # position or nearest-offset heuristics).
+def test_resolvable_segment_positions_resolves_to_absolute_timeline_frames():
+    transcript = {
+        "segments": [
+            {"source": "a.mp4", "start": 0.0, "end": 3.0, "text": "intro talk"},
+            {"source": "a.mp4", "start": 5.0, "end": 8.0, "text": "new topic begins here"},
+        ]
+    }
+
+    manifest = {"videos": [{"id": "001", "filename": "a.mp4"}]}
+
+    scene_plan = {
+        "fps": 30,
+        "scenes": [
+            {
+                "id": "scene-001",
+                "type": "presenter",
+                "videoId": "001",
+                "sourceStartFrame": 0,
+                "sourceEndFrame": 300,
+                "durationInFrames": 300,
+                "timelineStartFrame": 0,
+                "effects": {"captions": True, "transition": "none"},
+            },
+        ],
+    }
+
+    positions = resolvable_segment_positions(scene_plan, transcript, manifest)
+
+    assert positions == [
+        {"segmentId": "s0", "timelineFrame": 0},
+        {"segmentId": "s1", "timelineFrame": 150},
+    ]
+
+
+def test_resolvable_segment_positions_accounts_for_a_title_already_splitting_the_clip():
+    # segment s1 (starting at source frame 150) now sits AFTER a title
+    # card that was already inserted at that split — its absolute timeline
+    # frame must include the title's own duration, not just the raw source
+    # offset from the clip's original start.
+    transcript = {
+        "segments": [
+            {"source": "a.mp4", "start": 0.0, "end": 3.0, "text": "intro talk"},
+            {"source": "a.mp4", "start": 5.0, "end": 8.0, "text": "new topic begins here"},
+        ]
+    }
+
+    manifest = {"videos": [{"id": "001", "filename": "a.mp4"}]}
+
+    scene_plan = {
+        "fps": 30,
+        "scenes": [
+            {
+                "id": "scene-001",
+                "type": "presenter",
+                "videoId": "001",
+                "sourceStartFrame": 0,
+                "sourceEndFrame": 150,
+                "durationInFrames": 150,
+                "timelineStartFrame": 0,
+                "effects": {"captions": True, "transition": "none"},
+            },
+            {
+                "id": "scene-title-001",
+                "type": "title",
+                "text": "New Topic",
+                "timelineStartFrame": 150,
+                "durationInFrames": TITLE_DURATION_FRAMES,
+            },
+            {
+                "id": "scene-001-1",
+                "type": "presenter",
+                "videoId": "001",
+                "sourceStartFrame": 150,
+                "sourceEndFrame": 300,
+                "durationInFrames": 150,
+                "timelineStartFrame": 150 + TITLE_DURATION_FRAMES,
+                "effects": {"captions": True, "transition": "none"},
+            },
+        ],
+    }
+
+    positions = resolvable_segment_positions(scene_plan, transcript, manifest)
+
+    assert positions == [
+        {"segmentId": "s0", "timelineFrame": 0},
+        {"segmentId": "s1", "timelineFrame": 150 + TITLE_DURATION_FRAMES},
+    ]
+
+
+def test_resolvable_segment_positions_skips_segments_whose_clip_is_absent():
+    transcript = {
+        "segments": [
+            {"source": "a.mp4", "start": 0.0, "end": 2.0, "text": "known clip"},
+            {"source": "missing.mp4", "start": 0.0, "end": 2.0, "text": "unresolvable clip"},
+        ]
+    }
+
+    manifest = {"videos": [{"id": "001", "filename": "a.mp4"}, {"id": "002", "filename": "missing.mp4"}]}
+
+    scene_plan = {
+        "fps": 30,
+        "scenes": [
+            {
+                "id": "scene-001",
+                "type": "presenter",
+                "videoId": "001",
+                "sourceStartFrame": 0,
+                "sourceEndFrame": 60,
+                "durationInFrames": 60,
+                "timelineStartFrame": 0,
+                "effects": {"captions": True, "transition": "none"},
+            },
+        ],
+    }
+
+    positions = resolvable_segment_positions(scene_plan, transcript, manifest)
+
+    assert positions == [{"segmentId": "s0", "timelineFrame": 0}]
+
+
 def test_compute_overridden_fields_detects_a_changed_field():
     old = {"segmentId": "s1", "text": "before"}
     new = {"segmentId": "s1", "text": "after"}

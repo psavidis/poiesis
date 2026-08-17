@@ -199,6 +199,21 @@ export async function saveTitleScenes(episodePath: string, titles: TitleScenePro
     return res.json();
 }
 
+export interface ChapterBoundaryPosition {
+    segmentId: string;
+    timelineFrame: number;
+}
+
+// For ChapterStrip's drag-to-move boundary UI — every transcript
+// segment's resolved absolute timeline frame, fetched once so a drag can
+// snap client-side with no per-pixel server round trip. Segment text is
+// deliberately not included (see resolvable_segment_positions).
+export const getChapterBoundaryPositions = (episodePath: string) =>
+    fetch(`${API_BASE}/api/episode/chapter-boundary-positions?path=${encodeURIComponent(episodePath)}`)
+        .then((res) => (res.ok ? res.json() : { positions: [] }))
+        .then((data) => (data.positions ?? []) as ChapterBoundaryPosition[])
+        .catch(() => [] as ChapterBoundaryPosition[]);
+
 export interface StoryboardChapter {
     chapterId: string;
     chapterText: string;

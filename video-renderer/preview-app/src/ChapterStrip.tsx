@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ScenePlan, TitleScene } from "video-renderer-src/episode/types";
 import { colors, radius, typography } from "./tokens";
+import { getChapterBoundaryPositions, getTitleScenes, saveTitleScenes, type ChapterBoundaryPosition } from "./api";
 
 // Display-only label for the edit shortcut's hint text — mirrors BeatBar's
 // own MOD_KEY_LABEL constant (kept per-file rather than shared since it's
@@ -64,7 +65,17 @@ interface Props {
     // scene (#54) — keyed by title text (a chapter's own identity here,
     // since chapters aren't derived with their own scene id), not sceneId.
     highlightedTitleText?: string | null;
+    episodePath: string;
+    onSaved?: () => void;
 }
+
+type DragState = {
+    // Index into `titles` (sorted by timelineStartFrame) of the boundary
+    // being dragged — a chapter boundary IS a title's own position, so
+    // moving it means changing that title's segmentId.
+    titleIndex: number;
+    liveFrame: number;
+};
 
 // A full-episode strip dividing the video into chapters at each title
 // card, so the shape of the whole episode is visible at a glance — how
@@ -85,8 +96,12 @@ export function ChapterStrip({
     onSeek,
     onSelectTitle,
     highlightedTitleText,
+    episodePath,
+    onSaved,
 }: Props) {
-    const titles = scenePlan.scenes.filter((s): s is TitleScene => s.type === "title");
+    const titles = scenePlan.scenes
+        .filter((s): s is TitleScene => s.type === "title")
+        .sort((a, b) => a.timelineStartFrame - b.timelineStartFrame);
 
     // The clicked-but-not-editing chapter's title text — highlighted, and
     // the target of Cmd+E/Ctrl+E. Click selects only; it never opens the
@@ -94,6 +109,32 @@ export function ChapterStrip({
     const [selectedTitle, setSelectedTitle] = useState<string | null>(null);
     const selectedAnchorRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
     const trackRef = useRef<HTMLDivElement>(null);
+
+    // Every transcript segment's resolved timeline frame — fetched once
+    // per episode so a boundary drag can snap client-side with no
+    // per-pixel server round trip (see getChapterBoundaryPositions).
+    const [boundaryPositions, setBoundaryPositions] = useState<ChapterBoundaryPosition[]>([]);
+    useEffect(() => {
+        let cancelled = false;
+        getChapterBoundaryPositions(episodePath).then((positions) => {
+            if (!cancelled) setBoundaryPositions(positions);
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [episodePath]);
+
+    // Which chapter boundary (by index into `titles`) is being dragged, if
+    // any — the only piece of drag state that needs to be reactive (it
+    // controls the live readout/handle styling). Mirrors BeatBar's
+    // dragBeatId/dragRef split: the ref carries the mutable live frame so
+    // onMouseMove never re-subscribes the window listeners on every pixel
+    // (see BeatBar.tsx's DragState comment for the concurrent-save bug
+    // that split avoids).
+    const [dragTitleIndex, setDragTitleIndex] = useState<number | null>(null);
+    const [liveFrame, setLiveFrame] = useState(0);
+    const [dragError, setDragError] = useState<string | null>(null);
+    const dragRef = useRef<DragState | null>(null);
 
     // Seeds selection from an AI chat edit (#54) — no zoom/pan to
     // re-center here (unlike MomentBar/BeatBar/ImageBar), this strip
@@ -129,6 +170,89 @@ export function ChapterStrip({
         return () => window.removeEventListener("keydown", onKeyDown);
     }, [selectedTitle, onSelectTitle]);
 
+    // Nearest resolvable segment position to a raw pixel-derived frame —
+    // the actual "snap" a drag performs, purely client-side against the
+    // positions fetched above.
+    const snapToNearestPosition = (rawFrame: number): ChapterBoundaryPosition | null => {
+        if (boundaryPositions.length === 0) return null;
+        return boundaryPositions.reduce((nearest, p) =>
+            Math.abs(p.timelineFrame - rawFrame) < Math.abs(nearest.timelineFrame - rawFrame) ? p : nearest
+        );
+    };
+
+    const startDrag = (e: React.MouseEvent, titleIndex: number) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setDragError(null);
+        const startFrame = titles[titleIndex].timelineStartFrame;
+        dragRef.current = { titleIndex, liveFrame: startFrame };
+        setDragTitleIndex(titleIndex);
+        setLiveFrame(startFrame);
+    };
+
+    // Subscribed only while dragTitleIndex is set (start/end, not every
+    // pixel) — same rationale as BeatBar's onMouseMove/onMouseUp effect.
+    useEffect(() => {
+        if (dragTitleIndex === null) return;
+
+        const onMouseMove = (e: MouseEvent) => {
+            const drag = dragRef.current;
+            if (!drag || !trackRef.current) return;
+            const rect = trackRef.current.getBoundingClientRect();
+            const pct = clamp((e.clientX - rect.left) / rect.width, 0, 1);
+            const rawFrame = Math.round(pct * totalFrames);
+            const snapped = snapToNearestPosition(rawFrame);
+            const nextFrame = snapped ? snapped.timelineFrame : rawFrame;
+
+            drag.liveFrame = nextFrame;
+            setLiveFrame(nextFrame);
+        };
+
+        const onMouseUp = () => {
+            const drag = dragRef.current;
+            dragRef.current = null;
+            setDragTitleIndex(null);
+            if (drag) commitBoundaryMove(drag.titleIndex, drag.liveFrame);
+        };
+
+        window.addEventListener("mousemove", onMouseMove);
+        window.addEventListener("mouseup", onMouseUp);
+        return () => {
+            window.removeEventListener("mousemove", onMouseMove);
+            window.removeEventListener("mouseup", onMouseUp);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [dragTitleIndex, totalFrames, boundaryPositions]);
+
+    // Resolves the dropped frame to its nearest segmentId and rewrites
+    // just that title's segmentId, then does the same full-array PUT
+    // saveTitleScenes always does — the server re-derives every title's
+    // (and every presenter piece's) timelineStartFrame from scratch via
+    // merge_title_scenes, so this single field change is enough to move
+    // the actual footage split point, not just a display position.
+    // title_scenes.json entries have no id shared with the merged
+    // scene-plan TitleScene (same known limitation as #32/#33's title
+    // removal) — matched by text, the only identity the two share.
+    const commitBoundaryMove = async (titleIndex: number, droppedFrame: number) => {
+        const snapped = snapToNearestPosition(droppedFrame);
+        if (!snapped) return;
+
+        const title = titles[titleIndex];
+
+        try {
+            const current = await getTitleScenes(episodePath);
+            const index = current.findIndex((t) => t.text === title.text);
+            if (index === -1) return;
+            if (current[index].segmentId === snapped.segmentId) return; // no-op — dropped back where it started
+
+            const next = current.map((t, i) => (i === index ? { ...t, segmentId: snapped.segmentId } : t));
+            await saveTitleScenes(episodePath, next);
+            onSaved?.();
+        } catch (e) {
+            setDragError(String(e));
+        }
+    };
+
     if (totalFrames <= 0) return null;
 
     const chapters = chaptersFromTitles(titles, totalFrames);
@@ -155,17 +279,40 @@ export function ChapterStrip({
 
             <div ref={trackRef} style={styles.track} onMouseDown={onTrackClick}>
                 {chapters.map((chapter, i) => {
-                    const widthPct = ((chapter.endFrame - chapter.startFrame) / totalFrames) * 100;
+                    // Each titled chapter's boundary IS that title's own
+                    // position — find its index into `titles` (sorted the
+                    // same way chaptersFromTitles sorts) so its drag handle
+                    // knows which title to move. The leading null-title
+                    // intro chapter (if present) has no boundary of its
+                    // own to drag.
+                    const titleIndex = chapter.title === null ? -1 : titles.findIndex((t) => t.text === chapter.title);
+                    const isDraggingThis = dragTitleIndex === titleIndex && titleIndex !== -1;
+
+                    // While dragging this chapter's leading boundary, its
+                    // start (and the previous chapter's end) follow the
+                    // live snapped frame instead of the saved position —
+                    // purely a render-time override, no state write yet.
+                    const startFrame = isDraggingThis ? liveFrame : chapter.startFrame;
+                    const effectiveEndFrame =
+                        dragTitleIndex !== null && chapters[i + 1] && titles.findIndex((t) => t.text === chapters[i + 1].title) === dragTitleIndex
+                            ? liveFrame
+                            : chapter.endFrame;
+
+                    const widthPct = ((effectiveEndFrame - startFrame) / totalFrames) * 100;
+                    const leftPct = (startFrame / totalFrames) * 100;
                     const color = chapter.title === null ? colors.borderStrong : CHAPTER_COLORS[i % CHAPTER_COLORS.length];
 
                     const selectable = chapter.title !== null && !!onSelectTitle;
                     const isSelected = selectable && selectedTitle === chapter.title;
+                    const draggable = titleIndex !== -1;
 
                     return (
                         <div
                             key={i}
                             style={{
                                 ...styles.chapter,
+                                position: "absolute",
+                                left: `${leftPct}%`,
                                 width: `${widthPct}%`,
                                 background: color,
                                 cursor: selectable ? "pointer" : "inherit",
@@ -189,10 +336,20 @@ export function ChapterStrip({
                                     : undefined
                             }
                         >
+                            {draggable && (
+                                <div
+                                    style={styles.boundaryHandle}
+                                    onMouseDown={(e) => startDrag(e, titleIndex)}
+                                    title="Drag to move this chapter's boundary (snaps to the nearest transcript segment)"
+                                />
+                            )}
                             {widthPct > 4 && (
                                 <span style={styles.chapterLabel}>
                                     {chapter.title ?? "Intro"}
                                 </span>
+                            )}
+                            {isDraggingThis && (
+                                <div style={styles.readout}>{formatFrames(liveFrame, fps)}</div>
                             )}
                         </div>
                     );
@@ -201,12 +358,14 @@ export function ChapterStrip({
                 <div style={{ ...styles.playhead, left: `${playheadPct}%` }} />
             </div>
 
+            {dragError && <div style={styles.error}>{dragError}</div>}
+
             <div style={styles.hint}>
                 {selectedTitle
                     ? `Selected — press ${MOD_KEY_LABEL}+E to edit its title.`
                     : `Click anywhere to jump the player there${
                           onSelectTitle ? `, or click a chapter to select it, then ${MOD_KEY_LABEL}+E to edit` : ""
-                      }.`}
+                      }. Drag a chapter's left edge to move its boundary.`}
             </div>
         </div>
     );
@@ -236,15 +395,13 @@ const styles: Record<string, React.CSSProperties> = {
     track: {
         position: "relative",
         height: 44,
-        display: "flex",
         borderRadius: radius.md,
-        overflow: "hidden",
         border: `1px solid ${colors.border}`,
         userSelect: "none",
         cursor: "pointer",
     },
     chapter: {
-        position: "relative",
+        top: 0,
         height: "100%",
         display: "flex",
         alignItems: "center",
@@ -267,6 +424,33 @@ const styles: Record<string, React.CSSProperties> = {
         overflow: "hidden",
         textOverflow: "ellipsis",
         textShadow: "0 1px 2px rgba(0,0,0,0.5)",
+    },
+    boundaryHandle: {
+        position: "absolute",
+        left: -4,
+        top: 0,
+        bottom: 0,
+        width: 8,
+        cursor: "ew-resize",
+        zIndex: 2,
+    },
+    readout: {
+        position: "absolute",
+        bottom: "100%",
+        left: 0,
+        marginBottom: 4,
+        padding: "2px 6px",
+        background: colors.background,
+        border: `1px solid ${colors.border}`,
+        borderRadius: radius.sm,
+        fontSize: typography.size.xs,
+        color: colors.textPrimary,
+        whiteSpace: "nowrap",
+        zIndex: 3,
+    },
+    error: {
+        fontSize: typography.size.sm,
+        color: colors.error,
     },
     playhead: {
         position: "absolute",
