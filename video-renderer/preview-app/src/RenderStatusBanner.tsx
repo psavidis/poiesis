@@ -27,8 +27,21 @@ interface Props {
 // Two independent pollers of one cheap, idempotent GET is a smaller,
 // safer change than lifting AdvancedPanel's whole websocket/run-state
 // management up into EpisodeWorkspace just so one banner can read it.
+interface RenderStatusSnapshot {
+    current: number | null;
+    total: number | null;
+    format: "video" | "davinci" | null;
+    resolution: string | null;
+}
+
+function formatLabel(format: "video" | "davinci" | null, resolution: string | null): string {
+    const kind = format === "davinci" ? "DaVinci Resolve project" : format === "video" ? "MP4" : null;
+    if (!kind && !resolution) return "";
+    return [kind, resolution ? `(${resolution})` : null].filter(Boolean).join(" ");
+}
+
 export function RenderStatusBanner({ episodePath, advancedTabOpen, onOpenAdvanced }: Props) {
-    const [status, setStatus] = useState<{ current: number | null; total: number | null } | null>(null);
+    const [status, setStatus] = useState<RenderStatusSnapshot | null>(null);
 
     useEffect(() => {
         let cancelled = false;
@@ -45,7 +58,7 @@ export function RenderStatusBanner({ episodePath, advancedTabOpen, onOpenAdvance
                         return;
                     }
 
-                    setStatus({ current: s.current, total: s.total });
+                    setStatus({ current: s.current, total: s.total, format: s.format, resolution: s.resolution });
                     pollTimer = setTimeout(poll, 2000);
                 })
                 .catch(() => {
@@ -63,14 +76,16 @@ export function RenderStatusBanner({ episodePath, advancedTabOpen, onOpenAdvance
 
     if (!status || advancedTabOpen) return null;
 
-    const { current, total } = status;
+    const { current, total, format, resolution } = status;
     const pct = total && total > 0 && current !== null ? Math.min(100, Math.round((current / total) * 100)) : null;
+    const kindLabel = formatLabel(format, resolution);
 
     return (
         <button style={styles.banner} onClick={onOpenAdvanced}>
             <span className="phase-dot-active" style={styles.dot} />
             <span className="processing-label" style={styles.label}>
                 {current !== null && total !== null ? `Rendering — ${current} of ${total} clips` : "Rendering…"}
+                {kindLabel && <span style={styles.kindLabel}> — {kindLabel}</span>}
             </span>
             {pct !== null && (
                 <span style={styles.trackWrap}>
@@ -110,6 +125,10 @@ const styles = {
     label: {
         fontSize: typography.size.md,
         whiteSpace: "nowrap" as const,
+    },
+    kindLabel: {
+        color: colors.textSecondary,
+        fontWeight: "normal" as const,
     },
     trackWrap: {
         flex: 1,

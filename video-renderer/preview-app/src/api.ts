@@ -59,13 +59,21 @@ export interface RenderStatus {
     running: boolean;
     current: number | null;
     total: number | null;
+    // Set once, up front, when the render starts (see ui/server.py's
+    // ws_run_render) — recoverable even in the brief window before the
+    // first total/progress message has arrived, so a client can show
+    // "Rendering DaVinci export (1920x1080)" rather than a bare
+    // "Rendering..." with no indication of what's actually being produced.
+    format: "video" | "davinci" | null;
+    resolution: string | null;
 }
 
-// Recovers a DaVinci render's live N-of-M progress after losing the
-// websocket connection that started it (e.g. a page refresh) — see
-// ui/server.py's render_status. Polled once on AdvancedPanel's mount, not
-// a live subscription; the running render itself is unaffected either way,
-// since it's a server-side process independent of any one client.
+// Recovers a render's live N-of-M progress (and what kind of render it is)
+// after losing the websocket connection that started it (e.g. a page
+// refresh) — see ui/server.py's render_status. Polled once on
+// AdvancedPanel's mount and continuously by RenderStatusBanner, not a live
+// subscription; the running render itself is unaffected either way, since
+// it's a server-side process independent of any one client.
 export async function getRenderStatus(episodePath: string): Promise<RenderStatus> {
     const res = await fetch(
         `${API_BASE}/api/episode/render-status?path=${encodeURIComponent(episodePath)}`
@@ -75,6 +83,24 @@ export async function getRenderStatus(episodePath: string): Promise<RenderStatus
         throw new Error(err.detail || `Failed to load render status: ${res.status}`);
     }
     return res.json();
+}
+
+// Cancels a render that's still running but whose original websocket
+// connection is gone — e.g. the tab that clicked Render was refreshed, so
+// there's no RunHandle left to call .cancel() on over that specific
+// connection (see AdvancedPanel's recoveredRender state, which has no
+// working Cancel button today). Looks up the actual subprocess server-side
+// via ui/server.py's render_cancel — works regardless of which tab/
+// connection is asking.
+export async function cancelRender(episodePath: string): Promise<void> {
+    const res = await fetch(
+        `${API_BASE}/api/episode/render-cancel?path=${encodeURIComponent(episodePath)}`,
+        { method: "POST" }
+    );
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || `Failed to cancel render: ${res.status}`);
+    }
 }
 
 async function getArtifact(episodePath: string, name: string) {

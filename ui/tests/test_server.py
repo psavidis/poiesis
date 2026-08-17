@@ -69,7 +69,13 @@ def test_render_status_not_running_by_default(tmp_path):
     response = client.get("/api/episode/render-status", params={"path": str(episode)})
 
     assert response.status_code == 200
-    assert response.json() == {"running": False, "current": None, "total": None}
+    assert response.json() == {
+        "running": False,
+        "current": None,
+        "total": None,
+        "format": None,
+        "resolution": None,
+    }
 
 
 def test_render_status_reflects_the_episode_lock(tmp_path):
@@ -89,7 +95,84 @@ def test_render_status_reports_last_known_progress_while_locked(tmp_path, monkey
     with episode_lock(episode):
         response = client.get("/api/episode/render-status", params={"path": str(episode)})
 
-    assert response.json() == {"running": True, "current": 3, "total": 10}
+    assert response.json() == {
+        "running": True,
+        "current": 3,
+        "total": 10,
+        "format": None,
+        "resolution": None,
+    }
+
+    server._clear_render_progress(episode.resolve())
+
+
+def test_render_status_reports_format_and_resolution_set_up_front(tmp_path):
+    # format/resolution are recorded once, before any clip finishes (see
+    # _set_render_metadata's own docstring) — a client refreshing right
+    # after clicking Render, before __TOTAL__ has even arrived, should
+    # still see what KIND of render is running, not just a bare
+    # "Rendering..." with current/total still None.
+    episode = _make_episode(tmp_path)
+
+    server._set_render_metadata(episode.resolve(), "davinci", "1920x1080")
+
+    with episode_lock(episode):
+        response = client.get("/api/episode/render-status", params={"path": str(episode)})
+
+    assert response.json() == {
+        "running": True,
+        "current": None,
+        "total": None,
+        "format": "davinci",
+        "resolution": "1920x1080",
+    }
+
+    server._clear_render_progress(episode.resolve())
+
+
+def test_set_render_progress_preserves_previously_set_metadata(tmp_path):
+    # _set_render_progress (called from _stream_command's __TOTAL__/
+    # __PROGRESS__ handling) must not clobber format/resolution that
+    # _set_render_metadata already recorded for this same run.
+    episode = tmp_path / "episode"
+
+    server._set_render_metadata(episode, "video", None)
+    server._set_render_progress(episode, 5, 20)
+
+    assert server._render_progress[str(episode)] == {
+        "current": 5,
+        "total": 20,
+        "format": "video",
+        "resolution": None,
+    }
+
+    server._clear_render_progress(episode)
+
+
+def test_render_cancel_returns_404_when_nothing_is_running(tmp_path):
+    episode = _make_episode(tmp_path)
+
+    response = client.post("/api/episode/render-cancel", params={"path": str(episode)})
+
+    assert response.status_code == 404
+
+
+def test_render_cancel_calls_cancel_on_the_registered_handle(tmp_path):
+    episode = _make_episode(tmp_path)
+
+    cancelled = {}
+
+    class _FakeHandle:
+        def cancel(self):
+            cancelled["called"] = True
+
+    server._set_render_handle(episode.resolve(), _FakeHandle())
+
+    response = client.post("/api/episode/render-cancel", params={"path": str(episode)})
+
+    assert response.status_code == 200
+    assert response.json() == {"cancelled": True}
+    assert cancelled.get("called") is True
 
     server._clear_render_progress(episode.resolve())
 

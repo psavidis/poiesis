@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { getEpisodeStatus, getRenderStatus, runOverWebSocket, type EpisodeStageStatus, type EpisodeStatus, type RunHandle, type RunMessage } from "./api";
+import { cancelRender, getEpisodeStatus, getRenderStatus, runOverWebSocket, type EpisodeStageStatus, type EpisodeStatus, type RunHandle, type RunMessage } from "./api";
 import { colors, radius, typography } from "./tokens";
 
 // The full 15-stage + 2-secondary-stage list, individual Run/Re-run,
@@ -50,9 +50,24 @@ export function AdvancedPanel({
     // until the render finishes (checked by re-polling, not a
     // reconnected stream — see the recovery effect below).
     const [recoveredRender, setRecoveredRender] = useState(false);
+    const [recoveredFormat, setRecoveredFormat] = useState<"video" | "davinci" | null>(null);
+    const [recoveredResolution, setRecoveredResolution] = useState<string | null>(null);
+    const [cancellingRecovered, setCancellingRecovered] = useState(false);
     const [renderFormat, setRenderFormat] = useState<"video" | "davinci">("video");
     const [renderResolution, setRenderResolution] = useState("");
     const runHandleRef = useRef<RunHandle | null>(null);
+    // Mirrors runningId for the recovery-poll effect below, which only
+    // depends on [episodePath] and therefore closes over whatever
+    // runningId was at mount time — a ref always reads the CURRENT value
+    // instead, so the poll can tell "this tab already has its own live
+    // websocket run going" apart from "nothing is happening here, but the
+    // lock says something's running elsewhere" on every tick, not just
+    // the first one.
+    const runningIdRef = useRef<string | null>(null);
+
+    useEffect(() => {
+        runningIdRef.current = runningId;
+    }, [runningId]);
 
     // On mount (and whenever the episode changes), check whether a render
     // is already in flight for THIS episode — e.g. this tab was refreshed,
@@ -67,12 +82,41 @@ export function AdvancedPanel({
         let pollTimer: ReturnType<typeof setTimeout> | null = null;
 
         const poll = () => {
+            // Skip entirely while THIS tab has its own live websocket run
+            // going (runningId set via startRun) — otherwise this poll
+            // would see the lock as held (correctly — the live run holds
+            // it) and mark the live run as "recovered," hiding its actual
+            // log/Cancel behind the recovered-run UI branch. Still
+            // reschedules so polling resumes as soon as the live run ends.
+            if (runningIdRef.current) {
+                pollTimer = setTimeout(poll, 4000);
+                return;
+            }
+
             getRenderStatus(episodePath)
                 .then((status) => {
                     if (cancelled) return;
 
                     if (!status.running) {
-                        setRecoveredRender(false);
+                        // Only clear the recovered-run UI if it was actually
+                        // showing one — avoids clobbering unrelated state on
+                        // every idle tick (the common case).
+                        setRecoveredRender((wasRecovered) => {
+                            if (wasRecovered) {
+                                setLogVisible(false);
+                                setProgressTotal(null);
+                                setProgressCurrent(0);
+                                setRecoveredFormat(null);
+                                setRecoveredResolution(null);
+                            }
+                            return false;
+                        });
+
+                        // Keep polling (at the slower "idle" cadence) so a
+                        // render started LATER — from this tab or another —
+                        // is still picked up without needing another
+                        // refresh.
+                        pollTimer = setTimeout(poll, 4000);
                         return;
                     }
 
@@ -80,13 +124,16 @@ export function AdvancedPanel({
                     setLogVisible(true);
                     setProgressCurrent(status.current ?? 0);
                     setProgressTotal(status.total);
+                    setRecoveredFormat(status.format);
+                    setRecoveredResolution(status.resolution);
 
                     pollTimer = setTimeout(poll, 4000);
                 })
                 .catch(() => {
                     // Episode not resolvable yet, or the request raced a
                     // navigation — not worth surfacing as an error for a
-                    // background recovery check.
+                    // background recovery check. Keep the poll loop alive.
+                    pollTimer = setTimeout(poll, 4000);
                 });
         };
 
@@ -146,6 +193,24 @@ export function AdvancedPanel({
     };
 
     const cancelRun = () => runHandleRef.current?.cancel();
+
+    // A recovered run (see the recovery effect above) has no RunHandle —
+    // this tab never opened the websocket that started it, so there's
+    // nothing for cancelRun's runHandleRef to call. Cancels the actual
+    // subprocess server-side instead, via the episode path alone (see
+    // ui/server.py's render_cancel / _render_handles).
+    const cancelRecoveredRun = () => {
+        if (cancellingRecovered) return;
+        setCancellingRecovered(true);
+        cancelRender(episodePath)
+            .catch(() => {
+                // A 404 here just means the render finished on its own
+                // between the click and this request landing — not worth
+                // surfacing as an error; the next poll tick will notice
+                // recoveredRender is no longer true and clear this state.
+            })
+            .finally(() => setCancellingRecovered(false));
+    };
 
     const runStage = (stageId: string) => startRun("/ws/stage/run", { path: episodePath, stage: stageId }, stageId);
 
@@ -219,10 +284,29 @@ export function AdvancedPanel({
             {(logVisible || recoveredRender) && (
                 <div style={styles.logSection}>
                     <div style={styles.logHeader}>
-                        <span>{recoveredRender || progressTotal !== null ? "Rendering" : "Output"}</span>
+                        <span>
+                            {recoveredRender || progressTotal !== null ? "Rendering" : "Output"}
+                            {recoveredRender && (recoveredFormat || recoveredResolution) && (
+                                <span style={styles.runDescription}>
+                                    {" — "}
+                                    {recoveredFormat === "davinci" ? "DaVinci Resolve project" : recoveredFormat === "video" ? "Video (MP4)" : ""}
+                                    {recoveredResolution ? ` (${recoveredResolution})` : ""}
+                                </span>
+                            )}
+                        </span>
                         {runningId && (
                             <button className="secondary" onClick={cancelRun} style={styles.cancelBtn}>
                                 Cancel
+                            </button>
+                        )}
+                        {recoveredRender && (
+                            <button
+                                className="secondary"
+                                onClick={cancelRecoveredRun}
+                                disabled={cancellingRecovered}
+                                style={styles.cancelBtn}
+                            >
+                                {cancellingRecovered ? "Cancelling…" : "Cancel"}
                             </button>
                         )}
                     </div>
@@ -241,7 +325,7 @@ export function AdvancedPanel({
 
                     {recoveredRender && (
                         <span style={styles.progressLabel}>
-                            Reconnected after a refresh — live output isn't available for a run this tab didn't start.
+                            Reconnected after a refresh — live output isn't available for a run this tab didn't start, but Cancel still works.
                         </span>
                     )}
 
@@ -371,6 +455,10 @@ const styles: Record<string, React.CSSProperties> = {
     },
     cancelBtn: {
         fontSize: typography.size.sm,
+    },
+    runDescription: {
+        color: colors.textSecondary,
+        fontWeight: "normal" as const,
     },
     progressWrap: {
         display: "flex",

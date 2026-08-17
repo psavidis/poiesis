@@ -153,16 +153,20 @@ def episode_status(path: str):
 
 @app.get("/api/episode/render-status")
 def render_status(path: str):
-    """Lets a client recover a DaVinci render's live N-of-M progress after
-    losing its websocket connection (e.g. a page refresh) instead of only
-    ever seeing it through the one connection that started the run — see
+    """Lets a client recover a render's live N-of-M progress AND what kind
+    of render it is (format/resolution) after losing its websocket
+    connection (e.g. a page refresh) instead of only ever seeing it
+    through the one connection that started the run — see
     _render_progress's own comment. Polled once on the Advanced panel's
-    mount; "running" reflects episode_locks.py's own lock state (a render
-    could theoretically be mid-flight with no progress recorded yet, in
-    the brief window before export_davinci.py's first __TOTAL__ line
-    arrives — current/total are None in that case, "running" is still
-    true, and the panel shows an indeterminate "Rendering..." state rather
-    than a bar with no numbers to show)."""
+    mount (and continuously by RenderStatusBanner from every other tab);
+    "running" reflects episode_locks.py's own lock state (a render could
+    theoretically be mid-flight with no progress recorded yet, in the
+    brief window before export_davinci.py's first __TOTAL__ line arrives —
+    current/total are None in that case, "running" is still true, and the
+    panel shows an indeterminate "Rendering..." state rather than a bar
+    with no numbers to show). format/resolution are set once, up front
+    (see ws_run_render's build_command), so they're available even in
+    that same pre-__TOTAL__ window."""
 
     episode = resolve_episode(path)
 
@@ -171,9 +175,43 @@ def render_status(path: str):
 
     return {
         "running": is_episode_locked(episode),
-        "current": progress["current"] if progress else None,
-        "total": progress["total"] if progress else None,
+        "current": progress.get("current") if progress else None,
+        "total": progress.get("total") if progress else None,
+        "format": progress.get("format") if progress else None,
+        "resolution": progress.get("resolution") if progress else None,
     }
+
+
+@app.post("/api/episode/render-cancel")
+def render_cancel(path: str):
+    """Cancels a render that's still running but whose original websocket
+    connection is gone — e.g. the tab that clicked Render was refreshed,
+    so AdvancedPanel's own runHandleRef (and therefore its normal Cancel
+    button, which calls runHandleRef.current?.cancel() over that specific
+    websocket) no longer exists for this run. Looks up the ProcessHandle
+    _stream_command registered in _render_handles when the subprocess
+    actually started (see _on_start in that function) and cancels it the
+    same way ProcessHandle.cancel() always has — SIGTERM to the whole
+    process group, since a render spawns its own child processes (npx,
+    remotion) that a bare kill of just the top process would orphan.
+
+    404 if nothing is currently running for this episode (nothing to
+    cancel) rather than silently no-op-ing, so a client can tell the
+    difference between "cancelled" and "there was nothing here" — a
+    refresh raced against the render finishing on its own is the normal
+    way this would happen, not a bug."""
+
+    episode = resolve_episode(path)
+
+    with _render_progress_guard:
+        handle = _render_handles.get(str(episode))
+
+    if handle is None:
+        raise HTTPException(status_code=404, detail="No render is currently running for this episode")
+
+    handle.cancel()
+
+    return {"cancelled": True}
 
 
 @app.get("/api/episode/artifact")
@@ -1324,27 +1362,73 @@ def undo_last_edit(path: str):
 _render_progress: dict[str, dict] = {}
 _render_progress_guard = threading.Lock()
 
+# Companion registry to _render_progress: the actual ProcessHandle for
+# whichever subprocess a render run is currently running, keyed the same
+# way. Exists so a run can be cancelled from a request that ISN'T the
+# websocket connection that started it — e.g. after a page refresh, where
+# AdvancedPanel's own runHandleRef is gone (a fresh page load has no
+# RunHandle for a run this tab didn't start), but the actual subprocess is
+# still running and still cancellable via POST /api/episode/render-cancel.
+# Same in-memory, same-process scope/lifetime as _render_progress and
+# episode_locks.py itself.
+_render_handles: dict[str, object] = {}
+
 
 def _set_render_progress(episode: Path, current: int | None, total: int | None):
     with _render_progress_guard:
-        _render_progress[str(episode)] = {"current": current, "total": total}
+        # Preserves format/resolution (set once, up front, by
+        # _run_websocket — see its own docstring) across every subsequent
+        # current/total update from _stream_command's __TOTAL__/__PROGRESS__
+        # handling, since this function only ever knows about clip counts,
+        # not what kind of render is running.
+        existing = _render_progress.get(str(episode), {})
+        _render_progress[str(episode)] = {**existing, "current": current, "total": total}
+
+
+def _set_render_metadata(episode: Path, output_format: str, resolution: str | None):
+    with _render_progress_guard:
+        existing = _render_progress.get(str(episode), {})
+        _render_progress[str(episode)] = {
+            **existing,
+            "format": output_format,
+            "resolution": resolution,
+            "current": existing.get("current"),
+            "total": existing.get("total"),
+        }
 
 
 def _clear_render_progress(episode: Path):
     with _render_progress_guard:
         _render_progress.pop(str(episode), None)
+    with _render_progress_guard:
+        _render_handles.pop(str(episode), None)
+
+
+def _set_render_handle(episode: Path, handle):
+    with _render_progress_guard:
+        _render_handles[str(episode)] = handle
 
 
 async def _run_websocket(websocket: WebSocket, build_command):
     """Accepts the connection, lets build_command(params) -> (episode,
-    command) construct the episode and command to run from the client's
-    initial message, then streams it. Centralizes the accept/error/close
-    handling shared by every streaming endpoint. Acquires this episode's
-    lock (fail-fast, not queued — see episode_locks.py) around the whole
-    subprocess run, so a second tab starting a pipeline/stage/render run
-    against the SAME episode while one is already in flight gets told
-    immediately rather than silently racing it or queueing behind a
-    potentially multi-minute run with no explanation."""
+    command) or (episode, command, metadata) construct the episode and
+    command to run from the client's initial message, then streams it.
+    Centralizes the accept/error/close handling shared by every streaming
+    endpoint. Acquires this episode's lock (fail-fast, not queued — see
+    episode_locks.py) around the whole subprocess run, so a second tab
+    starting a pipeline/stage/render run against the SAME episode while
+    one is already in flight gets told immediately rather than silently
+    racing it or queueing behind a potentially multi-minute run with no
+    explanation.
+
+    metadata (render runs only — ws_run_render's build_command returns a
+    3-tuple; ws_run_pipeline/ws_run_stage's 2-tuples get an implicit None)
+    is recorded into _render_progress only AFTER the lock is actually
+    acquired — recording it any earlier (e.g. inside build_command itself,
+    before episode_lock is even attempted) would let a SECOND request that
+    loses the lock race to overwrite the FIRST, still-running request's
+    displayed format/resolution with its own (rejected) values, since
+    EpisodeBusyError never runs _clear_render_progress to undo that."""
 
     await websocket.accept()
 
@@ -1355,10 +1439,13 @@ async def _run_websocket(websocket: WebSocket, build_command):
         if result is None:
             return
 
-        episode, command = result
+        episode, command, *rest = result
+        metadata = rest[0] if rest else None
 
         try:
             with episode_lock(episode, wait=False):
+                if metadata is not None:
+                    _set_render_metadata(episode, metadata["format"], metadata["resolution"])
                 try:
                     await _stream_command(websocket, command, episode)
                 finally:
@@ -1450,6 +1537,8 @@ async def ws_run_render(websocket: WebSocket):
             )
             return None
 
+        metadata = {"format": output_format, "resolution": resolution}
+
         if output_format == "davinci":
             # Same underlying scene-plan-driven, per-scene transparent
             # render as render_episode.sh --transparent, just cut into one
@@ -1466,14 +1555,14 @@ async def ws_run_render(websocket: WebSocket):
             if resolution:
                 command.append(resolution)
 
-            return episode, command
+            return episode, command, metadata
 
         command = [str(PROJECT_ROOT / "render_episode.sh"), str(episode)]
 
         if resolution:
             command.append(resolution)
 
-        return episode, command
+        return episode, command, metadata
 
     await _run_websocket(websocket, build_command)
 
@@ -1528,9 +1617,21 @@ async def _stream_command(websocket: WebSocket, command, episode: Path | None = 
     error_holder = {}
     handle_holder = {}
 
+    def _on_start(handle):
+        handle_holder.setdefault("handle", handle)
+        # Registered so a request OTHER than this websocket (e.g.
+        # POST /api/episode/render-cancel after a page refresh, when
+        # AdvancedPanel's own runHandleRef for this run no longer exists)
+        # can still cancel the actual subprocess — see _render_handles'
+        # own comment. Only meaningful for render runs (episode is None
+        # for stage/QA runs, which already have a working cancel path via
+        # their own still-live websocket).
+        if episode is not None:
+            _set_render_handle(episode, handle)
+
     def produce():
         try:
-            for line in stream_process(command, on_start=lambda h: handle_holder.setdefault("handle", h)):
+            for line in stream_process(command, on_start=_on_start):
                 loop.call_soon_threadsafe(queue.put_nowait, line)
         except Exception as e:
             error_holder["error"] = str(e)

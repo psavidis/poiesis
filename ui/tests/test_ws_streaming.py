@@ -204,6 +204,88 @@ def test_ws_render_run_format_davinci_passes_resolution(tmp_path, monkeypatch):
         assert msg["type"] == "done"
 
 
+def _fake_slow_stream_process(command, cwd=None, on_start=None):
+    """Blocks (via a real subprocess sleep, so it's genuinely still
+    "running" from a second request's point of view) long enough for a
+    test to make a second overlapping request against the same episode
+    before this one finishes."""
+
+    if on_start is not None:
+        on_start(None)
+
+    import subprocess
+
+    process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(2)"])
+    process.wait()
+
+    yield "__EXIT_CODE__0"
+
+
+def test_ws_render_run_records_format_and_resolution_in_render_progress(tmp_path, monkeypatch):
+    episode = tmp_path / "episode"
+    episode.mkdir()
+
+    monkeypatch.setattr(server, "stream_process", _fake_stream_process)
+
+    with client.websocket_connect("/ws/render/run") as ws:
+        ws.send_json({"path": str(episode), "format": "davinci", "resolution": "1920x1080"})
+
+        msg = ws.receive_json()
+        while msg["type"] not in ("done", "error"):
+            msg = ws.receive_json()
+
+    # By the time "done" arrives the run has already finished and
+    # _clear_render_progress removed the entry — so this test asserts on
+    # the metadata WHILE the run is still in flight isn't practical with
+    # the simple (non-blocking) fake; see the concurrent-rejection test
+    # below for the case that actually needs a still-running run.
+    assert msg["type"] == "done"
+
+
+def test_ws_render_run_second_rejected_request_does_not_corrupt_the_first_runs_metadata(tmp_path, monkeypatch):
+    # Regression: _set_render_metadata used to be called from inside
+    # build_command BEFORE the lock was acquired — so a second request
+    # for the same episode that ultimately got rejected with
+    # EpisodeBusyError had still already overwritten the FIRST, still-
+    # running request's format/resolution with its own, since
+    # EpisodeBusyError's handler never calls _clear_render_progress to
+    # undo that. Metadata must only be recorded AFTER the lock is
+    # actually held by the request that's keeping it.
+    episode = tmp_path / "episode"
+    episode.mkdir()
+
+    monkeypatch.setattr(server, "stream_process", _fake_slow_stream_process)
+
+    with client.websocket_connect("/ws/render/run") as first_ws:
+        first_ws.send_json({"path": str(episode), "format": "davinci", "resolution": "1920x1080"})
+
+        start_msg = first_ws.receive_json()
+        assert start_msg["type"] == "start"
+
+        # first run is now holding the lock and has recorded its metadata —
+        # a second, different request for the SAME episode must be
+        # rejected without touching that metadata at all.
+        with client.websocket_connect("/ws/render/run") as second_ws:
+            second_ws.send_json({"path": str(episode), "format": "video", "resolution": "3840x2160"})
+            second_msg = second_ws.receive_json()
+
+        assert second_msg["type"] == "error"
+        assert "already running" in second_msg["message"]
+
+        with server._render_progress_guard:
+            recorded = server._render_progress.get(str(episode.resolve()))
+
+        assert recorded is not None
+        assert recorded["format"] == "davinci"
+        assert recorded["resolution"] == "1920x1080"
+
+        # drain the first run to completion so the test doesn't leak a
+        # background subprocess/thread past its own scope.
+        msg = first_ws.receive_json()
+        while msg["type"] not in ("done", "cancelled", "error"):
+            msg = first_ws.receive_json()
+
+
 def _fake_stream_process_with_progress(command, cwd=None, on_start=None):
     """Like _fake_stream_process, but emits export_davinci.py's __TOTAL__/
     __PROGRESS__ sentinel lines (#65's sibling render-console request) so
