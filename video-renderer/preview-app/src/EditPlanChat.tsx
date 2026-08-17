@@ -334,7 +334,7 @@ function ChatBubble({ message }: { message: ChatMessage }) {
 
                 {result.applied.map((op, i) => (
                     <div key={`applied-${i}`} style={styles.appliedRow}>
-                        <span style={styles.opBadge}>{op.op === "remove" ? "REMOVED" : "UPDATED"}</span>
+                        <span style={{ ...styles.opBadge, ...styles.opBadgeSuccess }}>{op.op === "remove" ? "REMOVED" : "UPDATED"}</span>
                         <span>
                             {op.sceneId}
                             {op.reason ? ` — ${op.reason}` : ""}
@@ -344,7 +344,7 @@ function ChatBubble({ message }: { message: ChatMessage }) {
 
                 {result.created.map((beat, i) => (
                     <div key={`created-beat-${i}`} style={styles.appliedRow}>
-                        <span style={styles.opBadge}>CREATED</span>
+                        <span style={{ ...styles.opBadge, ...styles.opBadgeSuccess }}>CREATED</span>
                         <span>
                             {beat.kind} on {beat.sceneId}: "{beat.text}"
                             {beat.reason ? ` — ${beat.reason}` : ""}
@@ -359,7 +359,7 @@ function ChatBubble({ message }: { message: ChatMessage }) {
                     const summary = moment.text ?? moment.diagram?.nodes.map((n) => n.label).join(", ") ?? "";
                     return (
                         <div key={`created-moment-${i}`} style={styles.appliedRow}>
-                            <span style={styles.opBadge}>CREATED</span>
+                            <span style={{ ...styles.opBadge, ...styles.opBadgeSuccess }}>CREATED</span>
                             <span>
                                 {moment.treatment} on {moment.sceneId}: "{summary}"
                                 {moment.reason ? ` — ${moment.reason}` : ""}
@@ -370,7 +370,7 @@ function ChatBubble({ message }: { message: ChatMessage }) {
 
                 {result.createdImages.map((image, i) => (
                     <div key={`created-image-${i}`} style={styles.appliedRow}>
-                        <span style={styles.opBadge}>CREATED</span>
+                        <span style={{ ...styles.opBadge, ...styles.opBadgeSuccess }}>CREATED</span>
                         <span>
                             inset image on {image.parentSceneId}: {image.assetId}
                         </span>
@@ -379,7 +379,7 @@ function ChatBubble({ message }: { message: ChatMessage }) {
 
                 {result.rejected.map((r, i) => (
                     <div key={`rejected-${i}`} style={styles.rejectedRow}>
-                        <span style={styles.opBadge}>REJECTED</span>
+                        <span style={{ ...styles.opBadge, ...styles.opBadgeRejected }}>REJECTED</span>
                         <span>{r.reason}</span>
                     </div>
                 ))}
@@ -407,6 +407,8 @@ const styles: Record<string, React.CSSProperties> = {
         fontSize: typography.size.lg,
         fontWeight: typography.weight.bold,
         color: colors.textPrimary,
+        letterSpacing: 0.2,
+        lineHeight: typography.lineHeight.tight,
     },
     // Scrolls independently of the input row below it, which stays pinned
     // — the conversation grows upward from the input, same as ChatGPT/
@@ -420,8 +422,9 @@ const styles: Record<string, React.CSSProperties> = {
         overflowY: "auto",
     },
     emptyHint: {
-        fontSize: typography.size.sm,
+        fontSize: typography.size.md,
         color: colors.textMuted,
+        lineHeight: typography.lineHeight.relaxed,
     },
     form: {
         display: "flex",
@@ -445,6 +448,7 @@ const styles: Record<string, React.CSSProperties> = {
         border: `1px solid ${colors.borderStrong}`,
         borderRadius: radius.md,
         fontSize: typography.size.sm,
+        lineHeight: typography.lineHeight.tight,
     },
     selectionLabel: {
         color: colors.textSecondary,
@@ -454,16 +458,18 @@ const styles: Record<string, React.CSSProperties> = {
     },
     input: {
         flex: 1,
-        padding: "8px 12px",
+        padding: "9px 12px",
         background: colors.surface,
         border: `1px solid ${colors.border}`,
         borderRadius: radius.md,
         color: colors.textPrimary,
         fontSize: typography.size.base,
+        lineHeight: typography.lineHeight.tight,
     },
     error: {
         color: colors.error,
         fontSize: typography.size.md,
+        lineHeight: typography.lineHeight.relaxed,
     },
     // Single-use recording-active/rejected-text reds — not promoted to
     // tokens.ts since nothing else in the app currently reuses these
@@ -485,16 +491,18 @@ const styles: Record<string, React.CSSProperties> = {
     bubble: {
         display: "flex",
         flexDirection: "column",
-        gap: 4,
+        gap: 6,
         maxWidth: "88%",
-        padding: "8px 12px",
+        padding: "9px 13px",
         borderRadius: radius.lg,
-        fontSize: typography.size.md,
+        fontSize: typography.size.base,
+        lineHeight: typography.lineHeight.relaxed,
         wordBreak: "break-word",
     },
     bubbleUser: {
         background: colors.accent,
         color: colors.background,
+        fontWeight: typography.weight.semibold,
         borderBottomRightRadius: radius.sm,
     },
     bubbleAi: {
@@ -504,32 +512,51 @@ const styles: Record<string, React.CSSProperties> = {
         borderBottomLeftRadius: radius.sm,
     },
     thinkingHint: {
-        fontSize: typography.size.sm,
+        fontSize: typography.size.base,
         color: colors.textMuted,
         fontStyle: "italic",
+        lineHeight: typography.lineHeight.relaxed,
     },
     appliedRow: {
         display: "flex",
         gap: 8,
         alignItems: "baseline",
         color: colors.textPrimary,
+        lineHeight: typography.lineHeight.relaxed,
     },
     rejectedRow: {
         display: "flex",
         gap: 8,
         alignItems: "baseline",
-        color: "#c96f6f",
+        color: colors.textSecondary,
+        lineHeight: typography.lineHeight.relaxed,
     },
+    // A small solid label rather than plain colored text — gives each
+    // operation an immediately scannable outcome at a glance (success
+    // green for applied/created, the semantic error red for rejected)
+    // instead of every row reading as one undifferentiated color, which
+    // matters once a bubble lists several operations at once.
     opBadge: {
         flexShrink: 0,
         fontSize: typography.size.xs,
         fontWeight: typography.weight.bold,
-        letterSpacing: 0.5,
-        color: colors.textSecondary,
+        letterSpacing: 0.4,
+        padding: "1px 6px",
+        borderRadius: radius.sm,
+        lineHeight: typography.lineHeight.tight,
+    },
+    opBadgeSuccess: {
+        color: colors.success,
+        background: "rgba(75, 179, 131, 0.14)",
+    },
+    opBadgeRejected: {
+        color: colors.error,
+        background: "rgba(255, 148, 132, 0.14)",
     },
     hint: {
-        fontSize: typography.size.sm,
+        fontSize: typography.size.base,
         color: colors.textMuted,
-        marginTop: 4,
+        lineHeight: typography.lineHeight.relaxed,
+        marginTop: 2,
     },
 };

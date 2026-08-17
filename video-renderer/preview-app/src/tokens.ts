@@ -108,4 +108,15 @@ export const typography = {
         semibold: 600,
         bold: 700,
     },
+    // Unitless multipliers (× font-size), not px — CSS line-height best
+    // practice, so a nested element with a different font-size still gets
+    // a proportionally correct line-height instead of inheriting a fixed
+    // px value meant for a different size. tight suits single-line UI
+    // labels/buttons; relaxed is for anything the reader actually reads
+    // in sentences (AI conversation text — spec section 7 names this as
+    // its own typography category — where default/tight reads cramped).
+    lineHeight: {
+        tight: 1.2,
+        relaxed: 1.5,
+    },
 } as const;
