@@ -40,9 +40,19 @@ function phaseState(stageIds: string[], status: EpisodeStatus | null): PhaseStat
     const relevant = status.stages.filter((s) => stageIds.includes(s.id));
     if (relevant.length === 0) return "not-started";
 
-    const doneCount = relevant.filter((s) => s.complete).length;
+    // A stage with complete === null (e.g. generate_scene_plan_ts, which
+    // has no artifact file to check — see pipeline_stages.py's Stage)
+    // reports "unknown," not "incomplete." Counting it against doneCount
+    // meant a phase containing one could never reach "done" at all, no
+    // matter how far the run actually got — Finalize's dot was
+    // permanently stuck at amber (#68). Judge completeness only from
+    // stages that CAN report it; a phase made ENTIRELY of unknowable
+    // stages still needs an in-progress signal, so that case falls
+    // through to the true/false-checkable set being empty below.
+    const checkable = relevant.filter((s) => s.complete !== null);
+    const doneCount = checkable.filter((s) => s.complete).length;
 
-    if (doneCount === relevant.length) return "done";
+    if (checkable.length > 0 && doneCount === checkable.length) return "done";
     if (doneCount > 0) return "in-progress";
     return "not-started";
 }
@@ -65,6 +75,12 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
     const [running, setRunning] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [log, setLog] = useState("");
+    // Kept independent of `running` — the log used to unmount the instant
+    // a run stopped, whether it succeeded, failed, or was cancelled, so a
+    // real failure vanished with no trace right when the user most needed
+    // to see it (#68). Defaults to shown once a run has produced any
+    // output; the user can still collapse it.
+    const [logVisible, setLogVisible] = useState(false);
     const runHandleRef = useRef<RunHandle | null>(null);
     const logRef = useRef<HTMLPreElement>(null);
 
@@ -97,6 +113,7 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
         setError(null);
         setRunning(true);
         setLog("");
+        setLogVisible(true);
 
         runHandleRef.current = runOverWebSocket(
             "/ws/pipeline/run",
@@ -111,7 +128,20 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
                     setError(msg.message);
                     setRunning(false);
                 } else if (msg.type === "done") {
-                    setLog((prev) => prev + `\n(exit code ${msg.exitCode})\n`);
+                    // A pipeline stage failing exits non-zero but still
+                    // reaches this "done" branch, not "error" — create_
+                    // episode.sh just stops chaining further stages
+                    // (see run_pipeline.py). Previously that looked
+                    // identical to a clean finish: dots stopped moving,
+                    // "Processing…" reverted to "Start", log vanished
+                    // with it (logVisible used to be tied to `running`)
+                    // — no signal anything had gone wrong (#68).
+                    if (msg.exitCode !== 0) {
+                        setLog((prev) => prev + `\nPipeline failed (exit code ${msg.exitCode}) — see output above.\n`);
+                        setError(`Pipeline stopped with exit code ${msg.exitCode}. See output below for details.`);
+                    } else {
+                        setLog((prev) => prev + `\n(exit code ${msg.exitCode})\n`);
+                    }
                     setRunning(false);
                     refreshStatus();
                 } else if (msg.type === "cancelled") {
@@ -127,16 +157,26 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
         runHandleRef.current?.cancel();
     };
 
-    const allDone = status ? status.stages.every((s) => s.complete) : false;
+    // Same complete === null handling as phaseState above — a stage with
+    // no artifact to check (generate_scene_plan_ts) must not permanently
+    // block "Re-run pipeline" from ever being offered.
+    const allDone = status ? status.stages.every((s) => s.complete !== false) : false;
 
     return (
         <div style={styles.wrap}>
             <div style={styles.phases}>
                 {PHASES.map((phase) => {
                     const state = phaseState(phase.stageIds, status);
+                    // Only the phase actually running right now pulses —
+                    // running=true alone isn't enough, since Draft edit's
+                    // dot shouldn't animate while Ingest is still going.
+                    const isActive = running && state === "in-progress";
                     return (
                         <div key={phase.label} style={styles.phase}>
-                            <span style={{ ...styles.dot, ...dotStyleFor(state) }} />
+                            <span
+                                className={isActive ? "phase-dot-active" : undefined}
+                                style={{ ...styles.dot, ...dotStyleFor(state) }}
+                            />
                             <span style={styles.phaseLabel}>{phase.label}</span>
                         </div>
                     );
@@ -151,17 +191,24 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
                 )}
                 {running && (
                     <>
-                        <span style={styles.runningLabel}>Processing…</span>
+                        <span className="processing-label" style={styles.runningLabel}>
+                            Processing…
+                        </span>
                         <button className="secondary" onClick={cancel}>
                             Cancel
                         </button>
                     </>
                 )}
+                {log && (
+                    <button className="secondary small" onClick={() => setLogVisible((v) => !v)}>
+                        {logVisible ? "Hide output" : "Show output"}
+                    </button>
+                )}
             </div>
 
             {error && <div style={styles.error}>{error}</div>}
 
-            {running && (
+            {logVisible && log && (
                 <div style={styles.logSection}>
                     <span style={styles.logHeader}>Output</span>
                     <pre style={styles.logPanel} ref={logRef}>

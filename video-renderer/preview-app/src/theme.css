@@ -66,3 +66,48 @@ button:focus-visible {
     outline: 2px solid #d4a24e;
     outline-offset: 2px;
 }
+
+/* Live pipeline-run feedback (#68) — the phase dots and "Processing…"
+   label previously looked identical whether the pipeline was actively
+   working or had silently stalled/failed, since nothing on screen
+   changed state between log lines. A pulsing ring on the CURRENTLY
+   active phase's dot, and a breathing opacity on the running label, are
+   the two lightweight signals that "this is live," not a status readout
+   an observer has to actively re-check. warning (#e0a542), matching the
+   dot's own in-progress color already used for the static ring. */
+@keyframes pulse-ring {
+    0% {
+        box-shadow: 0 0 0 0 rgba(224, 165, 66, 0.55);
+    }
+    70% {
+        box-shadow: 0 0 0 6px rgba(224, 165, 66, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(224, 165, 66, 0);
+    }
+}
+
+.phase-dot-active {
+    animation: pulse-ring 1.6s ease-out infinite;
+}
+
+@keyframes breathe {
+    0%,
+    100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.55;
+    }
+}
+
+.processing-label {
+    animation: breathe 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .phase-dot-active,
+    .processing-label {
+        animation: none;
+    }
+}
