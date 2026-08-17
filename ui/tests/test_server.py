@@ -56,6 +56,44 @@ def test_episode_status_returns_stage_info(tmp_path):
     assert any(s["id"] == "prepare" and s["complete"] for s in body["stages"])
 
 
+def test_render_status_returns_404_for_missing_folder(tmp_path):
+    response = client.get(
+        "/api/episode/render-status", params={"path": str(tmp_path / "does-not-exist")}
+    )
+    assert response.status_code == 404
+
+
+def test_render_status_not_running_by_default(tmp_path):
+    episode = _make_episode(tmp_path)
+
+    response = client.get("/api/episode/render-status", params={"path": str(episode)})
+
+    assert response.status_code == 200
+    assert response.json() == {"running": False, "current": None, "total": None}
+
+
+def test_render_status_reflects_the_episode_lock(tmp_path):
+    episode = _make_episode(tmp_path)
+
+    with episode_lock(episode):
+        response = client.get("/api/episode/render-status", params={"path": str(episode)})
+
+    assert response.json()["running"] is True
+
+
+def test_render_status_reports_last_known_progress_while_locked(tmp_path, monkeypatch):
+    episode = _make_episode(tmp_path)
+
+    server._set_render_progress(episode.resolve(), 3, 10)
+
+    with episode_lock(episode):
+        response = client.get("/api/episode/render-status", params={"path": str(episode)})
+
+    assert response.json() == {"running": True, "current": 3, "total": 10}
+
+    server._clear_render_progress(episode.resolve())
+
+
 def test_episode_artifact_rejects_unknown_filename(tmp_path):
     episode = _make_episode(tmp_path)
 

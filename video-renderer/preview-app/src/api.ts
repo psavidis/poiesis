@@ -55,6 +55,28 @@ export async function getEpisodeStatus(episodePath: string): Promise<EpisodeStat
     return res.json();
 }
 
+export interface RenderStatus {
+    running: boolean;
+    current: number | null;
+    total: number | null;
+}
+
+// Recovers a DaVinci render's live N-of-M progress after losing the
+// websocket connection that started it (e.g. a page refresh) — see
+// ui/server.py's render_status. Polled once on AdvancedPanel's mount, not
+// a live subscription; the running render itself is unaffected either way,
+// since it's a server-side process independent of any one client.
+export async function getRenderStatus(episodePath: string): Promise<RenderStatus> {
+    const res = await fetch(
+        `${API_BASE}/api/episode/render-status?path=${encodeURIComponent(episodePath)}`
+    );
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || `Failed to load render status: ${res.status}`);
+    }
+    return res.json();
+}
+
 async function getArtifact(episodePath: string, name: string) {
     const res = await fetch(
         `${API_BASE}/api/episode/artifact?path=${encodeURIComponent(episodePath)}&name=${encodeURIComponent(name)}`

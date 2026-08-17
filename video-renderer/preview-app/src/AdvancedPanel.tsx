@@ -1,5 +1,5 @@
-import { useRef, useState } from "react";
-import { getEpisodeStatus, runOverWebSocket, type EpisodeStageStatus, type EpisodeStatus, type RunHandle, type RunMessage } from "./api";
+import { useEffect, useRef, useState } from "react";
+import { getEpisodeStatus, getRenderStatus, runOverWebSocket, type EpisodeStageStatus, type EpisodeStatus, type RunHandle, type RunMessage } from "./api";
 import { colors, radius, typography } from "./tokens";
 
 // The full 15-stage + 2-secondary-stage list, individual Run/Re-run,
@@ -42,9 +42,61 @@ export function AdvancedPanel({
     const [logExpanded, setLogExpanded] = useState(false);
     const [progressTotal, setProgressTotal] = useState<number | null>(null);
     const [progressCurrent, setProgressCurrent] = useState(0);
+    // True when the progress bar is showing state RECOVERED via
+    // getRenderStatus (e.g. after a page refresh mid-render) rather than
+    // live over this component's own websocket — Cancel isn't offered in
+    // that case (there's no RunHandle for a run this tab didn't start;
+    // see runHandleRef below) and no further live updates will arrive
+    // until the render finishes (checked by re-polling, not a
+    // reconnected stream — see the recovery effect below).
+    const [recoveredRender, setRecoveredRender] = useState(false);
     const [renderFormat, setRenderFormat] = useState<"video" | "davinci">("video");
     const [renderResolution, setRenderResolution] = useState("");
     const runHandleRef = useRef<RunHandle | null>(null);
+
+    // On mount (and whenever the episode changes), check whether a render
+    // is already in flight for THIS episode — e.g. this tab was refreshed,
+    // or a render was started from a different tab — and if so, recover
+    // its last-known progress instead of showing a blank Render button
+    // with no indication anything is happening (#65's sibling
+    // render-progress-recovery request). Polls every few seconds while a
+    // recovered render is showing, since there's no live stream to push
+    // updates — stops polling once the render is no longer running.
+    useEffect(() => {
+        let cancelled = false;
+        let pollTimer: ReturnType<typeof setTimeout> | null = null;
+
+        const poll = () => {
+            getRenderStatus(episodePath)
+                .then((status) => {
+                    if (cancelled) return;
+
+                    if (!status.running) {
+                        setRecoveredRender(false);
+                        return;
+                    }
+
+                    setRecoveredRender(true);
+                    setLogVisible(true);
+                    setProgressCurrent(status.current ?? 0);
+                    setProgressTotal(status.total);
+
+                    pollTimer = setTimeout(poll, 4000);
+                })
+                .catch(() => {
+                    // Episode not resolvable yet, or the request raced a
+                    // navigation — not worth surfacing as an error for a
+                    // background recovery check.
+                });
+        };
+
+        poll();
+
+        return () => {
+            cancelled = true;
+            if (pollTimer) clearTimeout(pollTimer);
+        };
+    }, [episodePath]);
 
     const appendLog = (line: string) => {
         setLogLines((prev) => {
@@ -59,7 +111,7 @@ export function AdvancedPanel({
     };
 
     const startRun = (wsPath: string, params: Record<string, unknown>, id: string) => {
-        if (runningId) return;
+        if (runningId || recoveredRender) return;
 
         setRunningId(id);
         setLogLines([]);
@@ -103,6 +155,12 @@ export function AdvancedPanel({
         startRun("/ws/render/run", params, "__render__");
     };
 
+    // Covers both "this tab started a live run" and "a run recovered from
+    // getRenderStatus is still going, started by some OTHER tab/session" —
+    // either way, the controls should be locked out the same way, even
+    // though only the first case has a RunHandle to Cancel.
+    const busy = !!runningId || recoveredRender;
+
     if (!isActive) return null;
 
     return (
@@ -112,7 +170,7 @@ export function AdvancedPanel({
                     type="checkbox"
                     checked={includeCaptions}
                     onChange={(e) => onIncludeCaptionsChange(e.target.checked)}
-                    disabled={!!runningId}
+                    disabled={busy}
                 />
                 Include captions on next full pipeline run (leave unticked to remove any already generated)
             </label>
@@ -123,7 +181,7 @@ export function AdvancedPanel({
                     <select
                         value={renderFormat}
                         onChange={(e) => setRenderFormat(e.target.value as "video" | "davinci")}
-                        disabled={!!runningId}
+                        disabled={busy}
                     >
                         <option value="video">Video (MP4)</option>
                         <option value="davinci">DaVinci Resolve project (OTIO timeline)</option>
@@ -134,34 +192,34 @@ export function AdvancedPanel({
                     <select
                         value={renderResolution}
                         onChange={(e) => setRenderResolution(e.target.value)}
-                        disabled={!!runningId}
+                        disabled={busy}
                     >
                         <option value="">Default (from config.json)</option>
                         <option value="1920x1080">1920x1080</option>
                         <option value="3840x2160">3840x2160</option>
                     </select>
                 </label>
-                <button className="secondary" onClick={runRender} disabled={!!runningId}>
+                <button className="secondary" onClick={runRender} disabled={busy}>
                     Render
                 </button>
-                <button className="secondary" onClick={() => runStage("qa_check")} disabled={!!runningId}>
+                <button className="secondary" onClick={() => runStage("qa_check")} disabled={busy}>
                     QA check
                 </button>
             </div>
 
             <div style={styles.stageList}>
                 {status?.stages.map((stage) => (
-                    <StageRow key={stage.id} stage={stage} running={runningId === stage.id} disabled={!!runningId} onRun={() => runStage(stage.id)} />
+                    <StageRow key={stage.id} stage={stage} running={runningId === stage.id} disabled={busy} onRun={() => runStage(stage.id)} />
                 ))}
                 {status?.secondary.map((stage) => (
-                    <StageRow key={stage.id} stage={stage} running={runningId === stage.id} disabled={!!runningId} onRun={() => runStage(stage.id)} />
+                    <StageRow key={stage.id} stage={stage} running={runningId === stage.id} disabled={busy} onRun={() => runStage(stage.id)} />
                 ))}
             </div>
 
-            {logVisible && (
+            {(logVisible || recoveredRender) && (
                 <div style={styles.logSection}>
                     <div style={styles.logHeader}>
-                        <span>{progressTotal !== null ? "Rendering" : "Output"}</span>
+                        <span>{recoveredRender || progressTotal !== null ? "Rendering" : "Output"}</span>
                         {runningId && (
                             <button className="secondary" onClick={cancelRun} style={styles.cancelBtn}>
                                 Cancel
@@ -169,15 +227,31 @@ export function AdvancedPanel({
                         )}
                     </div>
 
-                    {progressTotal !== null && (
-                        <ProgressBar current={progressCurrent} total={progressTotal} />
+                    {recoveredRender ? (
+                        progressTotal !== null ? (
+                            <ProgressBar current={progressCurrent} total={progressTotal} />
+                        ) : (
+                            <span style={styles.progressLabel}>
+                                A render is already running for this episode (started elsewhere) — waiting for progress...
+                            </span>
+                        )
+                    ) : (
+                        progressTotal !== null && <ProgressBar current={progressCurrent} total={progressTotal} />
                     )}
 
-                    <button className="secondary" onClick={() => setLogExpanded((v) => !v)} style={styles.logToggle}>
-                        {logExpanded ? "Hide details" : "Show details"}
-                    </button>
+                    {recoveredRender && (
+                        <span style={styles.progressLabel}>
+                            Reconnected after a refresh — live output isn't available for a run this tab didn't start.
+                        </span>
+                    )}
 
-                    {logExpanded && <pre style={styles.logPanel}>{logLines.join("\n")}</pre>}
+                    {!recoveredRender && (
+                        <button className="secondary" onClick={() => setLogExpanded((v) => !v)} style={styles.logToggle}>
+                            {logExpanded ? "Hide details" : "Show details"}
+                        </button>
+                    )}
+
+                    {!recoveredRender && logExpanded && <pre style={styles.logPanel}>{logLines.join("\n")}</pre>}
                 </div>
             )}
         </div>

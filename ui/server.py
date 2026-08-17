@@ -3,6 +3,7 @@
 import asyncio
 import json
 import re
+import threading
 from pathlib import Path
 
 import sys
@@ -11,7 +12,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from episode_locks import EpisodeBusyError, episode_lock
+from episode_locks import EpisodeBusyError, episode_lock, is_episode_locked
 from pipeline_stages import SECONDARY_STAGES, find_stage, stage_status
 from process_runner import stream_process
 from undo import restore_latest, wrap_with_checkpoint
@@ -147,6 +148,31 @@ def episode_status(path: str):
             for stage in SECONDARY_STAGES
         ],
         "hasRender": (episode / "rendered" / f"{episode.name}.mp4").exists(),
+    }
+
+
+@app.get("/api/episode/render-status")
+def render_status(path: str):
+    """Lets a client recover a DaVinci render's live N-of-M progress after
+    losing its websocket connection (e.g. a page refresh) instead of only
+    ever seeing it through the one connection that started the run — see
+    _render_progress's own comment. Polled once on the Advanced panel's
+    mount; "running" reflects episode_locks.py's own lock state (a render
+    could theoretically be mid-flight with no progress recorded yet, in
+    the brief window before export_davinci.py's first __TOTAL__ line
+    arrives — current/total are None in that case, "running" is still
+    true, and the panel shows an indeterminate "Rendering..." state rather
+    than a bar with no numbers to show)."""
+
+    episode = resolve_episode(path)
+
+    with _render_progress_guard:
+        progress = _render_progress.get(str(episode))
+
+    return {
+        "running": is_episode_locked(episode),
+        "current": progress["current"] if progress else None,
+        "total": progress["total"] if progress else None,
     }
 
 
@@ -1286,6 +1312,29 @@ def undo_last_edit(path: str):
     return {"restored": manifest}
 
 
+# In-memory, per-episode "last known render progress" — lets a client that
+# opens (or re-opens, e.g. after a page refresh) the Advanced panel while a
+# render is already in flight recover a real N-of-M progress bar instead of
+# starting blank, via GET /api/episode/render-status below. Keyed by
+# resolved episode path (same key episode_locks.py uses), so this is
+# naturally scoped per-episode without any extra bookkeeping. Same
+# same-process, in-memory-only scope/limitation as episode_locks.py itself
+# (restarting the server loses it — acceptable, since the render process
+# it was tracking dies with the server anyway in that case).
+_render_progress: dict[str, dict] = {}
+_render_progress_guard = threading.Lock()
+
+
+def _set_render_progress(episode: Path, current: int | None, total: int | None):
+    with _render_progress_guard:
+        _render_progress[str(episode)] = {"current": current, "total": total}
+
+
+def _clear_render_progress(episode: Path):
+    with _render_progress_guard:
+        _render_progress.pop(str(episode), None)
+
+
 async def _run_websocket(websocket: WebSocket, build_command):
     """Accepts the connection, lets build_command(params) -> (episode,
     command) construct the episode and command to run from the client's
@@ -1310,7 +1359,10 @@ async def _run_websocket(websocket: WebSocket, build_command):
 
         try:
             with episode_lock(episode, wait=False):
-                await _stream_command(websocket, command)
+                try:
+                    await _stream_command(websocket, command, episode)
+                finally:
+                    _clear_render_progress(episode)
         except EpisodeBusyError as e:
             await websocket.send_json({"type": "error", "message": str(e)})
 
@@ -1426,12 +1478,19 @@ async def ws_run_render(websocket: WebSocket):
     await _run_websocket(websocket, build_command)
 
 
-async def _stream_command(websocket: WebSocket, command):
+async def _stream_command(websocket: WebSocket, command, episode: Path | None = None):
     """Runs the (blocking) process generator in a worker thread and relays
     each line to the websocket as it arrives, without blocking the event
     loop for the whole (potentially very long) process lifetime. Concurrently
     watches for a client "cancel" message so a long render/pipeline run can
-    be stopped mid-flight."""
+    be stopped mid-flight.
+
+    episode, when given (render runs only — stage/QA runs pass None), is
+    used to mirror every total/progress message into _render_progress so a
+    DIFFERENT client (e.g. this same tab after a refresh, or a second tab)
+    can recover the current N-of-M via GET /api/episode/render-status
+    instead of only ever seeing progress live over this one websocket
+    connection — see that dict's own comment."""
 
     await websocket.send_json({"type": "start", "command": " ".join(command)})
 
@@ -1480,12 +1539,18 @@ async def _stream_command(websocket: WebSocket, command):
             # Other scripts never print these prefixes, so this is a no-op
             # for every other websocket-driven run (stage/QA).
             if line.startswith("__TOTAL__"):
-                await websocket.send_json({"type": "total", "count": int(line.removeprefix("__TOTAL__"))})
+                total = int(line.removeprefix("__TOTAL__"))
+                if episode is not None:
+                    _set_render_progress(episode, 0, total)
+                await websocket.send_json({"type": "total", "count": total})
                 continue
 
             if line.startswith("__PROGRESS__"):
                 current, total = line.removeprefix("__PROGRESS__").split("/")
-                await websocket.send_json({"type": "progress", "current": int(current), "total": int(total)})
+                current, total = int(current), int(total)
+                if episode is not None:
+                    _set_render_progress(episode, current, total)
+                await websocket.send_json({"type": "progress", "current": current, "total": total})
                 continue
 
             await websocket.send_json({"type": "log", "line": line})

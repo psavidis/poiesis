@@ -50,6 +50,28 @@ class EpisodeBusyError(Exception):
     block behind an in-progress operation on the same episode."""
 
 
+def is_episode_locked(episode: Path) -> bool:
+    """Non-blocking peek at whether an operation is currently in flight for
+    this episode — used by a status-only GET endpoint (server.py's
+    render_status, #65's sibling render-progress-recovery request) that
+    just wants to know "is something running right now," not to actually
+    hold the lock itself. Acquire-then-immediately-release is the standard
+    safe pattern for this: the result can be stale by the time the caller
+    reads it (a render could start or finish microseconds later), which is
+    fine for a UI status display, but would NOT be fine for anything that
+    needs the lock held across a check-then-act — those call sites must
+    keep using episode_lock() as a context manager, never this."""
+
+    lock = _lock_for(episode)
+
+    acquired = lock.acquire(blocking=False)
+
+    if acquired:
+        lock.release()
+
+    return not acquired
+
+
 @contextmanager
 def episode_lock(episode: Path, *, wait: bool = True):
     """Acquires the lock for this episode for the duration of the `with`
