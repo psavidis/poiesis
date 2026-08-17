@@ -631,6 +631,32 @@ def test_update_moments_stores_presenter_side_for_side_image(tmp_path):
     assert "layout" not in parent
 
 
+def test_update_moments_stores_entrance_for_bottom_callout(tmp_path):
+    # entrance (docs/specs/ai-assisted-editing-and-conversational-control.md
+    # section 7) must round-trip through a save, not be silently stripped
+    # by MomentProposal's own field allowlist.
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    response = client.put(
+        "/api/episode/moments",
+        params={"path": str(episode)},
+        json={"moments": [_bottom_callout_payload(entrance="slide")]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["moments"][0]["entrance"] == "slide"
+
+    moments_on_disk = json.loads((episode / "processing" / "moments.json").read_text())
+    assert moments_on_disk["moments"][0]["entrance"] == "slide"
+
+    scene_plan_on_disk = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    moment_scenes = [s for s in scene_plan_on_disk["scenes"] if s["type"] == "moment"]
+    assert len(moment_scenes) == 1
+    assert moment_scenes[0]["entrance"] == "slide"
+
+
 def test_update_moments_can_remove_scenes_by_omitting_them(tmp_path):
     episode = _make_episode(tmp_path)
     _make_scene_plan(episode)

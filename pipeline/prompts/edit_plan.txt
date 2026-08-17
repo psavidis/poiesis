@@ -49,12 +49,16 @@ Decide which scene(s) the instruction refers to and what should change. You may:
    presenter (not a side treatment, no talking-head movement). Use this ONLY when the
    instruction explicitly asks to show/add/display a phrase on screen — never for a general
    emphasis request (that's a beat, above):
-   {"op": "create", "type": "moment", "sceneId": "...", "text": "...", "reason": "..."}
+   {"op": "create", "type": "moment", "sceneId": "...", "text": "...", "entrance": "..."
+   (optional), "reason": "..."}
    sceneId must be a real "presenter" scene id from the plan above. text must be a short phrase
    taken directly from what is actually said in that scene — quote it closely, do not
    paraphrase or invent it. The exact on-screen position/duration is computed automatically
    from where the phrase is actually spoken within that scene — do not propose offset or
-   duration values yourself.
+   duration values yourself. entrance is optional: only include it if the SAME instruction also
+   asks for a specific animation/entrance (see the dedicated entrance guidance below for the
+   three valid values and when to use each) — omit it entirely for a plain "show/add a callout"
+   request with no animation mentioned.
 5. Create a new inset image — a small picture-in-picture image in the corner of the frame while
    the presenter stays fully visible and centered (NOT a side-image moment, which shifts the
    presenter aside, and NOT full-visual, which hides the presenter — this is the one
@@ -93,13 +97,15 @@ calmer." The creator should not need to know field names to get a reasonable cha
 instruction like this:
 
 - Translate the feeling into the single most plausible change among that scene type's editable
-  fields listed below — do not invent fields that don't exist (there is no "template," "entrance
-  animation," or "emphasis style" field today, even though a request like this might suggest
-  one). For example, on a "moment" scene, "make this more dramatic" might reasonably become a
-  longer durationInFrames (it lingers longer, reads as more weighty) and/or a punchier
-  text/caption rewrite — grounded in what is actually said in the parent scene (quote closely,
-  paraphrase minimally, never invent content that wasn't said, same discipline as the moment
-  creation rule above), not a generic dramatic-sounding phrase unrelated to the actual content.
+  fields listed below — do not invent fields that don't exist (there is no "template" or
+  "emphasis style" field today, even though a request like this might suggest one; "entrance" IS
+  a real field, but ONLY for "moment" scenes with treatment "bottom-callout" — see the dedicated
+  entrance guidance below for when to use it instead of a generic field guess). For example, on
+  a "moment" scene, "make this more dramatic" might reasonably become a longer durationInFrames
+  (it lingers longer, reads as more weighty) and/or a punchier text/caption rewrite — grounded in
+  what is actually said in the parent scene (quote closely, paraphrase minimally, never invent
+  content that wasn't said, same discipline as the moment creation rule above), not a generic
+  dramatic-sounding phrase unrelated to the actual content.
 - Prefer ONE well-chosen field change over touching every field you're allowed to. A vague
   instruction is asking for a single meaningful nudge, not a rewrite of the scene.
 - If the selected/targeted scene type's editable fields genuinely offer no plausible way to
@@ -109,6 +115,23 @@ instruction like this:
   empty operations list — only return no operations if you cannot identify which scene the
   instruction even refers to (see the ambiguity guidance below), not merely because the
   requested feeling has no perfect field to express it in today.
+
+Some instructions ask specifically about how an element ENTERS the frame — e.g. "make this fade
+in," "make this pop/scale in," "give this a more dramatic entrance," "make this slide up." A
+"moment" scene with treatment "bottom-callout" supports a real, configurable "entrance" field
+with exactly three values:
+- "fade" — a plain opacity fade, no motion. Use for "fade in," "make this calmer/less busy,"
+  "tone down the entrance."
+- "scale" — a spring-driven scale-up (this is also the default when entrance is omitted, so a
+  request that just means "the current/normal entrance" doesn't need this operation at all).
+  Use for "pop in," "scale in," or a generic "make the entrance more dramatic/energetic" request.
+- "slide" — a spring-driven slide up from below. Use for "slide in," "slide up," or when the
+  instruction asks for motion specifically (not just a mood).
+Only propose an entrance update for a "moment" scene whose treatment is "bottom-callout" — other
+treatments/scene types have no configurable entrance, so a request like this against one of
+those has no field to express it in (fall back to the general vague-instruction guidance above,
+or return no operations if genuinely nothing fits). Do not invent a fourth entrance value — pick
+the closest of the three.
 
 You may NOT create any scene type or moment treatment other than the four above (no side-text,
 side-image, side-code, side-diagram, titles, content-dominant-code, or full-visual with kind
@@ -162,6 +185,7 @@ Schema:
       "kind": "word-pop" | "underline" | "icon-accent" — required for create/beat, omit otherwise",
       "icon": "arrow" | "check" | "warning" | "gear" — only for create/beat with kind icon-accent",
       "text": "string — required for create/moment, a short phrase quoted from what is actually said in the target scene",
+      "entrance": "'fade' | 'scale' | 'slide' — optional for create/moment, omit unless the SAME instruction also asks for a specific entrance animation",
       "assetId": "string — required for create/image, must be an exact id from the available assets above",
       "anchorText": "string — optional for create/image, a short phrase quoted from what is actually said near where the image should appear",
       "diagram": "object — required for create/diagram: { nodes: [{id, label}], edges: [{from, to, label?}], layout: 'horizontal'|'vertical' }, at most 6 nodes and 8 edges, every label grounded in what is actually said",
@@ -172,7 +196,7 @@ Schema:
 
 "fields" is only present for "update" operations. "type"/"wordIds"/"kind"/"icon" are only
 present for "create"/"beat" operations. "type"/"sceneId"/"text" are only present for
-"create"/"moment" operations. "type"/"sceneId"/"assetId"/"anchorText" are only present for
-"create"/"image" operations. "type"/"sceneId"/"diagram" are only present for "create"/"diagram"
-operations. If the instruction doesn't match anything in the current plan, return
-{"operations": []}.
+"create"/"moment" operations ("entrance" is also allowed there, but optional). "type"/"sceneId"/
+"assetId"/"anchorText" are only present for "create"/"image" operations. "type"/"sceneId"/
+"diagram" are only present for "create"/"diagram" operations. If the instruction doesn't match
+anything in the current plan, return {"operations": []}.

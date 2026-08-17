@@ -11,6 +11,7 @@ import {
 
 import { brand } from "./brand";
 import { SIDE_CONTENT_WIDTH_PCT, TRANSITION_FRAMES } from "./timing";
+import type { MomentEntrance } from "./types";
 
 // SideText/SideImage's own fade timing is derived from the same
 // TRANSITION_FRAMES constant Episode.tsx uses for the presenter's
@@ -29,17 +30,41 @@ const FADE_OUT_FRAMES = TRANSITION_FRAMES;
 // component. Requires the parent presenter scene's layout to be "center"
 // (the presenter still fills the frame; this is a pure overlay, same as
 // before moments existed).
-export const BottomCallout = ({ text }: { text: string }) => {
+//
+// entrance selects among three ALREADY-EXISTING animation patterns in this
+// codebase (see MomentEntrance's own doc comment in types.ts for where
+// each one is otherwise used) rather than introducing new motion design —
+// this is what makes an entrance actually configurable (docs/specs/
+// ai-assisted-editing-and-conversational-control.md section 7's "if it
+// corresponds to an existing supported animation, configure it") instead
+// of every moment being stuck with whichever entrance its component
+// happened to hardcode. Defaults to "scale" — this component's own
+// original, only-ever behavior before this field existed, so an episode
+// with no entrance field set renders byte-identical to before.
+export const computeTransform = (entrance: MomentEntrance, frame: number, fps: number): string => {
+    if (entrance === "fade") return "none";
+
+    const progress = spring({ frame, fps, config: { damping: 200 } });
+
+    if (entrance === "slide") {
+        // Same spring-translateY-up pattern AnimatedTitle.tsx already uses
+        // for its own entrance — geometrically appropriate here too, since
+        // BottomCallout is also bottom-anchored (unlike Comparison.tsx's
+        // left/right slide, which assumes a side-flanking position this
+        // element doesn't have).
+        const translateY = interpolate(progress, [0, 1], [24, 0]);
+        return `translateY(${translateY}px)`;
+    }
+
+    // "scale" — the original hardcoded behavior.
+    return `scale(${progress})`;
+};
+
+export const BottomCallout = ({ text, entrance = "scale" }: { text: string; entrance?: MomentEntrance }) => {
     const frame = useCurrentFrame();
     const { fps, durationInFrames } = useVideoConfig();
 
-    const scale = spring({
-        frame,
-        fps,
-        config: {
-            damping: 200,
-        },
-    });
+    const transform = computeTransform(entrance, frame, fps);
 
     const opacity = interpolate(
         frame,
@@ -63,7 +88,7 @@ export const BottomCallout = ({ text }: { text: string }) => {
             <div
                 style={{
                     opacity,
-                    transform: `scale(${scale})`,
+                    transform,
                     display: "flex",
                     alignItems: "center",
                     maxWidth: "78%",

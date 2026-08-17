@@ -347,6 +347,22 @@ export function MomentEditorPanel({ episodePath, sceneId, scenePlan, currentFram
                 </div>
             )}
 
+            {moment.treatment === "bottom-callout" && (
+                <div style={styles.fieldRow}>
+                    <label style={styles.presentationLabel}>Entrance</label>
+                    <select
+                        value={moment.entrance || "scale"}
+                        onChange={(e) => update({ entrance: e.target.value })}
+                        style={{ ...styles.input, flex: 1 }}
+                    >
+                        <option value="scale">Scale (default)</option>
+                        <option value="slide">Slide up</option>
+                        <option value="fade">Fade only</option>
+                    </select>
+                    {resetButton("entrance")}
+                </div>
+            )}
+
             {moment.reason && <p style={styles.reason}>{moment.reason}</p>}
 
             {parentScene && (

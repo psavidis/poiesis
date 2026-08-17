@@ -216,6 +216,61 @@ def test_validate_operations_accepts_image_asset_and_display_updates():
     assert rejected == []
 
 
+def test_validate_operations_accepts_moment_entrance_update():
+    # entrance (docs/specs/ai-assisted-editing-and-conversational-control.md
+    # section 7's animation-configuration prerequisite) is a real editable
+    # field on "moment" now, not just text/assetId/caption/timing.
+    scene_plan = {"scenes": [_moment("scene-moment-0", "scene-001", 10, 60, "hello there")]}
+
+    ops = [
+        {
+            "op": "update",
+            "sceneId": "scene-moment-0",
+            "fields": {"entrance": "slide"},
+            "reason": "make it slide in",
+        }
+    ]
+
+    valid, rejected = validate_operations(scene_plan, ops)
+
+    assert valid == ops
+    assert rejected == []
+
+
+def test_validate_operations_rejects_an_invalid_entrance_value():
+    # Regression: field-NAME validation alone would let a hallucinated
+    # entrance value (e.g. "bounce" — not one of the three real patterns
+    # BottomCallout.tsx's computeTransform implements) through silently,
+    # since "entrance" itself is a valid field name for "moment". Value
+    # validation catches it explicitly instead.
+    scene_plan = {"scenes": [_moment("scene-moment-0", "scene-001", 10, 60, "hello there")]}
+
+    ops = [
+        {
+            "op": "update",
+            "sceneId": "scene-moment-0",
+            "fields": {"entrance": "bounce"},
+            "reason": "x",
+        }
+    ]
+
+    valid, rejected = validate_operations(scene_plan, ops)
+
+    assert valid == []
+    assert len(rejected) == 1
+    assert "entrance" in rejected[0]["reason"]
+
+
+def test_validate_operations_accepts_each_valid_entrance_value():
+    scene_plan = {"scenes": [_moment("scene-moment-0", "scene-001", 10, 60, "hello there")]}
+
+    for value in ("fade", "scale", "slide"):
+        ops = [{"op": "update", "sceneId": "scene-moment-0", "fields": {"entrance": value}, "reason": "x"}]
+        valid, rejected = validate_operations(scene_plan, ops)
+        assert valid == ops, f"entrance={value!r} should be valid"
+        assert rejected == []
+
+
 def test_validate_operations_rejects_id_and_type_and_linking_fields():
     scene_plan = {
         "scenes": [_moment("scene-moment-0", "scene-001", 10, 60, "hello there")]
@@ -507,6 +562,55 @@ def test_resolve_bottom_callout_creation_accepts_grounded_text():
     assert moment["text"] == "dependency injection matters"
     assert moment["presenterSide"] is None
     assert moment["reason"] == "the core idea"
+
+
+def test_resolve_bottom_callout_creation_sets_entrance_when_provided_and_valid():
+    # Regression: a "create" op's entrance was previously silently
+    # discarded entirely — resolve_bottom_callout_creation's returned dict
+    # never included it, so a single instruction combining creation with
+    # an animation request ("show a callout... and make it slide in")
+    # could never actually set the animation at creation time.
+    scene_plan = _scene_plan_with_segments_scene()
+
+    op = {
+        "op": "create", "type": "moment", "sceneId": "scene-001",
+        "text": "dependency injection matters", "entrance": "slide", "reason": "x",
+    }
+
+    moment = resolve_bottom_callout_creation(op, scene_plan, _transcript_with_segments(), _manifest_single_video())
+
+    assert moment["entrance"] == "slide"
+
+
+def test_resolve_bottom_callout_creation_omits_entrance_when_absent():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    op = {
+        "op": "create", "type": "moment", "sceneId": "scene-001",
+        "text": "dependency injection matters", "reason": "x",
+    }
+
+    moment = resolve_bottom_callout_creation(op, scene_plan, _transcript_with_segments(), _manifest_single_video())
+
+    assert "entrance" not in moment
+
+
+def test_resolve_bottom_callout_creation_ignores_an_invalid_entrance_value():
+    # An invented/hallucinated entrance value doesn't reject the whole
+    # creation — the callout itself is still real and grounded, just
+    # without a non-default entrance (falls back to the renderer's own
+    # "scale" default).
+    scene_plan = _scene_plan_with_segments_scene()
+
+    op = {
+        "op": "create", "type": "moment", "sceneId": "scene-001",
+        "text": "dependency injection matters", "entrance": "bounce", "reason": "x",
+    }
+
+    moment = resolve_bottom_callout_creation(op, scene_plan, _transcript_with_segments(), _manifest_single_video())
+
+    assert moment is not None
+    assert "entrance" not in moment
 
 
 def test_resolve_bottom_callout_creation_places_the_moment_near_where_text_is_spoken():
@@ -1389,6 +1493,43 @@ def test_edit_plan_applies_a_vague_instructions_field_change_on_a_moment():
     assert by_id["scene-moment-0"]["durationInFrames"] == 120
 
 
+def test_edit_plan_applies_a_concrete_entrance_animation_request():
+    # A CONCRETE animation request ("make this fade in") — distinct from
+    # the vague-feeling tests above, this is docs/specs/ai-assisted-
+    # editing-and-conversational-control.md section 7's "if the requested
+    # animation corresponds to an existing supported animation, configure
+    # it" — entrance is that configurable field.
+    scene_plan = {
+        "scenes": [
+            _presenter("scene-001", 0, 300, 0),
+            _moment("scene-moment-0", "scene-001", 10, 60, "some text"),
+        ]
+    }
+
+    llm = _FakeLLMClient(
+        {
+            "operations": [
+                {
+                    "op": "update",
+                    "sceneId": "scene-moment-0",
+                    "fields": {"entrance": "fade"},
+                    "reason": "a plain fade in, as requested",
+                }
+            ]
+        }
+    )
+
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+        scene_plan, "make this fade in instead", llm, PROMPT_TEMPLATE, selected_scene_id="scene-moment-0"
+    )
+
+    assert len(valid_ops) == 1
+    assert rejected == []
+
+    by_id = {s["id"]: s for s in updated_plan["scenes"]}
+    assert by_id["scene-moment-0"]["entrance"] == "fade"
+
+
 def test_edit_plan_applies_a_vague_instructions_field_change_on_a_beat():
     scene_plan = {
         "scenes": [
@@ -1468,3 +1609,15 @@ def test_edit_plan_prompt_includes_vague_instruction_guidance():
 
     assert "dramatic" in real_template
     assert "editable fields" in real_template.lower()
+
+
+def test_edit_plan_prompt_includes_entrance_animation_guidance():
+    # Regression check that the entrance-configuration guidance (docs/specs/
+    # ai-assisted-editing-and-conversational-control.md section 7) is
+    # present in the real prompt file on disk.
+    real_template = load_prompt(PROMPT_FILE)
+
+    assert "entrance" in real_template.lower()
+    assert '"fade"' in real_template
+    assert '"scale"' in real_template
+    assert '"slide"' in real_template

@@ -980,6 +980,7 @@ OVERRIDABLE_MOMENT_FIELDS = {
     "offsetInParentFrames", "maxDurationInParentFrames", "presenterSide",
     "fullVisualKind", "text", "assetId", "codeAssetId", "diagram",
     "comparison", "terms", "sideTextStyle", "caption", "treatment",
+    "entrance",
 }
 
 # Which MomentTreatment values all present the SAME underlying content at
@@ -1329,6 +1330,9 @@ def merge_moment_scenes(scene_plan, proposals):
 
         if proposal.get("sideTextStyle"):
             moment_scene["sideTextStyle"] = proposal["sideTextStyle"]
+
+        if proposal.get("entrance"):
+            moment_scene["entrance"] = proposal["entrance"]
 
         if proposal.get("terms"):
             moment_scene["terms"] = proposal["terms"]

@@ -2407,6 +2407,81 @@ def test_merge_moment_scenes_side_text_stores_style_when_present():
     assert moment_scene["sideTextStyle"] == "title"
 
 
+def test_merge_moment_scenes_bottom_callout_stores_entrance_when_present():
+    # entrance (docs/specs/ai-assisted-editing-and-conversational-control.md
+    # section 7's animation-configuration prerequisite) — only meaningful
+    # for bottom-callout, same truthiness-copy pattern sideTextStyle uses
+    # for side-text above.
+    scene_plan = {
+        "fps": 30,
+        "scenes": [
+            {
+                "id": "scene-001",
+                "type": "presenter",
+                "videoId": "001",
+                "timelineStartFrame": 0,
+                "durationInFrames": 900,
+            },
+        ],
+    }
+
+    proposals = [
+        {
+            "windowId": "w0",
+            "sceneId": "scene-001",
+            "videoId": "001",
+            "offsetInParentFrames": 100,
+            "maxDurationInParentFrames": 90,
+            "treatment": "bottom-callout",
+            "text": "Key idea",
+            "entrance": "slide",
+            "reason": "emphasizes the key idea",
+        }
+    ]
+
+    result = merge_moment_scenes(scene_plan, proposals)
+    moment_scene = next(s for s in result["scenes"] if s["type"] == "moment")
+
+    assert moment_scene["entrance"] == "slide"
+
+
+def test_merge_moment_scenes_omits_entrance_when_absent():
+    # A moment with no entrance field (every episode generated before this
+    # field existed, or any non-bottom-callout treatment) must not get a
+    # stray entrance key attached — the renderer's own default ("scale")
+    # applies via BottomCallout's prop default, not a value written here.
+    scene_plan = {
+        "fps": 30,
+        "scenes": [
+            {
+                "id": "scene-001",
+                "type": "presenter",
+                "videoId": "001",
+                "timelineStartFrame": 0,
+                "durationInFrames": 900,
+            },
+        ],
+    }
+
+    proposals = [
+        {
+            "windowId": "w0",
+            "sceneId": "scene-001",
+            "videoId": "001",
+            "offsetInParentFrames": 100,
+            "maxDurationInParentFrames": 90,
+            "treatment": "bottom-callout",
+            "text": "Key idea",
+            "reason": "emphasizes the key idea",
+        }
+    ]
+
+    result = merge_moment_scenes(scene_plan, proposals)
+    moment_scene = next(s for s in result["scenes"] if s["type"] == "moment")
+
+    assert "entrance" not in moment_scene
+
+
 def test_merge_moment_scenes_is_idempotent_on_rerun():
     # regression: re-merging against an already-merged plan should replace,
     # not stack, moment scenes

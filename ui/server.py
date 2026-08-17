@@ -311,6 +311,11 @@ class MomentProposal(BaseModel):
     terms: list[dict] | None = None
     sideTextStyle: str | None = None
     caption: str | None = None
+    # Only meaningful for treatment "bottom-callout" — see MomentEntrance
+    # in video-renderer's types.ts. Included here so a save round-trips it
+    # (Pydantic silently strips any field not declared on the model), same
+    # as every other treatment-specific field in this class.
+    entrance: str | None = None
     reason: str = ""
     # Field names a human has explicitly changed since the AI last proposed
     # this moment (see #57) — a save's own diff against what's currently on

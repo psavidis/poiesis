@@ -34,6 +34,17 @@ from style import load_style  # noqa: E402
 
 PROMPT_FILE = PIPELINE_DIR / "prompts" / "edit_plan.txt"
 
+# Must match MomentEntrance in video-renderer's types.ts exactly — the
+# three entrance patterns BottomCallout.tsx's computeTransform actually
+# implements (see #61-adjacent entrance-configuration work, docs/specs/
+# ai-assisted-editing-and-conversational-control.md section 7). An
+# "update" op's entrance value is checked against this in
+# validate_operations indirectly via EDITABLE_FIELDS (which only checks
+# the FIELD NAME is allowed, not the value) — resolve_bottom_callout_creation
+# checks the VALUE directly, since a "create" op's fields aren't validated
+# by validate_operations at all (see that function's own docstring).
+VALID_ENTRANCES = {"scale", "slide", "fade"}
+
 # Everything not listed here is read-only to natural-language edits: id/type
 # never change what a scene fundamentally is, and videoId/parentSceneId/
 # assetId repoint a scene at different footage/parent/asset rather than
@@ -48,7 +59,14 @@ PROMPT_FILE = PIPELINE_DIR / "prompts" / "edit_plan.txt"
 EDITABLE_FIELDS = {
     "presenter": {"sourceStartFrame", "sourceEndFrame", "effects"},
     "title": {"text"},
-    "moment": {"text", "assetId", "caption", "offsetInParentFrames", "durationInFrames"},
+    # "entrance" is only meaningful for treatment "bottom-callout" (see
+    # MomentEntrance in video-renderer's types.ts) — included here rather
+    # than validated per-treatment since EDITABLE_FIELDS is a per-type,
+    # not per-treatment, allowlist (same coarseness "text" already has:
+    # it's editable for every text-bearing treatment, not just one). A
+    # field-level check for "does this treatment actually use this field"
+    # isn't done anywhere else in this dict either.
+    "moment": {"text", "assetId", "caption", "offsetInParentFrames", "durationInFrames", "entrance"},
     "caption": {"text", "offsetInParentFrames", "durationInFrames"},
     # "assetId"/"display" are included here (unlike moment's "assetId",
     # which stays read-only) because changing which image is shown or
@@ -148,6 +166,23 @@ def validate_operations(scene_plan, operations):
                             f"fields {sorted(invalid_fields)} are not editable on "
                             f"type '{scene['type']}' (allowed: {sorted(allowed)})"
                         ),
+                    }
+                )
+                continue
+
+            # Field-name validation above doesn't check VALUES — entrance
+            # is the one editable field with a fixed enum of legal values
+            # (must match BottomCallout.tsx's computeTransform exactly),
+            # so an update proposing an invented 4th value (the model
+            # hallucinating e.g. "bounce") is caught here rather than
+            # silently written to scene-plan.json, where computeTransform
+            # would fall through to its "scale" default with no feedback
+            # to the user that their request wasn't honored.
+            if "entrance" in fields and fields["entrance"] not in VALID_ENTRANCES:
+                rejected.append(
+                    {
+                        "operation": op,
+                        "reason": f"entrance {fields['entrance']!r} is not one of {sorted(VALID_ENTRANCES)}",
                     }
                 )
                 continue
@@ -595,7 +630,7 @@ def resolve_bottom_callout_creation(op, scene_plan, transcript, manifest, style=
     if _bottom_callout_overlaps_existing_moment(scene_plan, scene_id, offset, duration):
         return None
 
-    return {
+    proposal = {
         "sceneId": scene_id,
         "videoId": parent["videoId"],
         "treatment": "bottom-callout",
@@ -605,6 +640,22 @@ def resolve_bottom_callout_creation(op, scene_plan, transcript, manifest, style=
         "maxDurationInParentFrames": duration,
         "reason": op.get("reason", ""),
     }
+
+    # entrance is optional on a create op (an instruction that only asks
+    # to show a callout, with no animation request, has nothing to set
+    # here — the renderer's own "scale" default applies) — validated the
+    # same way validate_operations checks an update's entrance value,
+    # since a "create" op's fields never pass through that function (see
+    # its own docstring). An invalid/hallucinated value is silently
+    # dropped rather than rejecting the whole creation over one bad field
+    # — the callout itself is still real and grounded, just without a
+    # non-default entrance.
+    entrance = op.get("entrance")
+
+    if entrance in VALID_ENTRANCES:
+        proposal["entrance"] = entrance
+
+    return proposal
 
 
 def resolve_full_screen_diagram_creation(op, scene_plan, transcript, manifest, style=None):

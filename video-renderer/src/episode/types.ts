@@ -163,6 +163,23 @@ export interface DiagramData {
     layout: "horizontal" | "vertical";
 }
 
+// Which entrance animation a moment uses — only meaningful for treatments
+// whose component actually reads it (currently "bottom-callout" only, see
+// BottomCallout in MomentTreatments.tsx). Absent/undefined means "scale"
+// (today's only behavior, unchanged for every existing episode). The three
+// values are not new animation code — each already existed hardcoded in a
+// different component before this field existed ("scale": BottomCallout's
+// own pre-existing spring-scale entrance; "slide": the same spring-
+// translateY pattern AnimatedTitle.tsx already uses for its own entrance;
+// "fade": the plain opacity-only pattern CaptionText.tsx already uses,
+// deliberately calm for elements that shouldn't demand attention). This is
+// the prerequisite docs/specs/ai-assisted-editing-and-conversational-
+// control.md section 7 needs ("if the requested animation corresponds to
+// an existing supported animation, configure it") — before this field
+// existed, no moment animation was configurable at all, only hardcoded per
+// component.
+export type MomentEntrance = "scale" | "slide" | "fade";
+
 export interface MomentScene {
     type: "moment";
     id: string;
@@ -184,6 +201,8 @@ export interface MomentScene {
     terms?: TermEmphasis[];
     // Required for "comparison" — the two flanking labels (see ComparisonData).
     comparison?: ComparisonData;
+    // Only meaningful when treatment is "bottom-callout" — see MomentEntrance.
+    entrance?: MomentEntrance;
     parentSceneId: string;
     offsetInParentFrames: number;
     durationInFrames: number;

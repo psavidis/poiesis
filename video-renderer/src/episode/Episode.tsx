@@ -447,7 +447,7 @@ const MomentSequence = ({
 }) => {
     switch (scene.treatment) {
         case "bottom-callout":
-            return <BottomCallout text={scene.text ?? ""} />;
+            return <BottomCallout text={scene.text ?? ""} entrance={scene.entrance} />;
 
         case "side-text": {
             const presenterOnLeft = scene.presenterSide === "left";
