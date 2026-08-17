@@ -143,6 +143,53 @@ def test_render_clip_without_progress_arg_prints_no_progress_line(tmp_path, caps
     assert "__PROGRESS__" not in capsys.readouterr().out
 
 
+def _scene_plan_with_n_presenter_scenes(n):
+    return {
+        "fps": 30,
+        "episode": "Concurrency Test Episode",
+        "scenes": [
+            {
+                "id": f"scene-{i:03d}",
+                "type": "presenter",
+                "videoId": f"{i:03d}",
+                "sourceStartFrame": 0,
+                "sourceEndFrame": 100,
+                "timelineStartFrame": i * 100,
+                "durationInFrames": 100,
+                "effects": {"captions": True, "transition": "none"},
+            }
+            for i in range(n)
+        ],
+    }
+
+
+def test_render_presenter_clips_progress_count_is_exact_under_concurrency(tmp_path):
+    # Regression guard for the race this session's RENDER_CONCURRENCY change
+    # introduced: progress["done"] += 1 is a read-modify-write, not atomic,
+    # so without _report_progress's lock, several clips finishing at
+    # genuinely the same moment could silently under-count (two threads
+    # read the same "done", both write back the same incremented value).
+    # A real sleep (not a mock that returns instantly) in the fake
+    # subprocess.run is what actually forces real thread overlap here — an
+    # instant mock can happen to never overlap even with max_workers=2.
+    import time
+
+    scene_plan = _scene_plan_with_n_presenter_scenes(12)
+    progress = {"done": 0, "total": 12}
+
+    def fake_run(*args, **kwargs):
+        time.sleep(0.01)
+
+    with patch("export_davinci.subprocess.run", side_effect=fake_run):
+        clips = render_presenter_clips(scene_plan, tmp_path, progress=progress)
+
+    assert len(clips) == 12
+    assert [scene_id for scene_id, _ in clips] == [f"scene-{i:03d}" for i in range(12)]
+    # The actual race guard: every one of the 12 clips must have been
+    # counted exactly once, no matter how their completions overlapped.
+    assert progress["done"] == 12
+
+
 def test_clip_label_uses_title_text_for_title_scenes():
     scene = {"type": "title", "id": "scene-title-002", "text": "Chapter Two"}
 
@@ -168,12 +215,20 @@ def test_render_presenter_clips_invokes_remotion_per_presenter_scene(tmp_path):
         clips = render_presenter_clips(scene_plan, tmp_path)
 
     assert mock_run.call_count == 2
+    # The RETURNED clips list stays in timeline order regardless of which
+    # clip's subprocess call actually happened first (render_presenter_clips
+    # renders up to RENDER_CONCURRENCY clips concurrently — see that
+    # constant's own comment — so raw mock call order is no longer
+    # guaranteed to match scene order the way it was under the old
+    # sequential loop; ThreadPoolExecutor.map's OUTPUT order is what's
+    # actually guaranteed, which is what downstream code — build_otio_timeline
+    # — depends on).
     assert [scene_id for scene_id, _ in clips] == ["scene-001", "scene-002"]
 
-    first_call_command = mock_run.call_args_list[0].args[0]
-    assert "npx" in first_call_command
-    assert "--frames=0-99" in first_call_command
-    assert '"onlyTypes": ["presenter"]' in first_call_command[-1]
+    all_commands = [call.args[0] for call in mock_run.call_args_list]
+    assert any("npx" in command for command in all_commands)
+    assert any("--frames=0-99" in command for command in all_commands)
+    assert all('"onlyTypes": ["presenter"]' in command[-1] for command in all_commands)
 
 
 def test_render_presenter_clips_passes_resolution_when_given(tmp_path):
@@ -182,9 +237,9 @@ def test_render_presenter_clips_passes_resolution_when_given(tmp_path):
     with patch("export_davinci.subprocess.run") as mock_run:
         render_presenter_clips(scene_plan, tmp_path, resolution="3840x2160")
 
-    first_call_command = mock_run.call_args_list[0].args[0]
-    assert "--width=3840" in first_call_command
-    assert "--height=2160" in first_call_command
+    all_commands = [call.args[0] for call in mock_run.call_args_list]
+    assert all("--width=3840" in command for command in all_commands)
+    assert all("--height=2160" in command for command in all_commands)
 
 
 def test_render_overlay_clips_uses_absolute_position_for_frame_range(tmp_path):

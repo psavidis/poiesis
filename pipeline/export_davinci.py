@@ -2,9 +2,12 @@
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import opentimelineio as otio
@@ -14,6 +17,26 @@ from overlay_placement import absolute_position
 PIPELINE_DIR = Path(__file__).parent
 PROJECT_ROOT = PIPELINE_DIR.parent
 RENDERER_DIR = PROJECT_ROOT / "video-renderer"
+
+# How many render_clip() calls (each its own "npx remotion render"
+# subprocess) run at once. Each clip's OWN render already uses Remotion's
+# default intra-render concurrency (parallel headless-browser frame
+# rendering within that one clip — confirmed live at "Concurrency 6x" on
+# this machine's 12 cores), so running clips fully sequentially left half
+# the machine idle between clips: every clip pays Remotion's own bundle/
+# browser-launch startup cost from a cold start, one at a time, for an
+# episode that can have 50+ clips (one per presenter scene plus one per
+# overlay scene). 2 is deliberately conservative rather than
+# cpu_count()-driven — each clip's own intra-render work already
+# saturates several cores, so running MORE than 2-3 at once would mostly
+# contend with itself rather than add real throughput; 2 already lets one
+# clip's browser-launch/bundle overhead overlap with another clip's actual
+# frame rendering, which is where the sequential version's idle time came
+# from. subprocess.run releases the GIL while waiting on the child
+# process, so a plain ThreadPoolExecutor (not multiprocessing) is enough —
+# the actual CPU-bound work happens in the child "npx remotion render"
+# process, not in this Python thread.
+RENDER_CONCURRENCY = min(2, os.cpu_count() or 1)
 
 # One clip per element of each of these types, each on its own OTIO track —
 # titles/captions/moments/images/beats are never baked into their parent
@@ -106,7 +129,33 @@ def total_clips(scene_plan):
     )
 
 
-def render_clip(clip_path: Path, start_frame, end_frame, only_type, resolution, resume, progress=None):
+def _report_progress(progress, progress_lock):
+    """Increments progress["done"] and prints the __PROGRESS__ sentinel
+    line as one atomic unit under progress_lock — required now that
+    render_clip can run on several threads at once (see RENDER_CONCURRENCY):
+    "done += 1" is a read-modify-write, not a single atomic op, so two
+    threads finishing at the same moment could otherwise race and silently
+    under-count (both read the same "done", both write back the same
+    incremented value, one increment lost). flush=True — see the call
+    sites' own history: stdout is a pipe here (not a TTY), so Python fully-
+    buffers by default rather than line-buffering; without an explicit
+    flush a line can sit in the buffer until process exit instead of
+    arriving incrementally as each clip finishes.
+
+    progress_lock=None (e.g. a caller using render_clip directly, outside
+    render_presenter_clips/render_overlay_clips' own executor) falls back
+    to an ad-hoc lock — safe but pointless for a genuinely single-threaded
+    caller, just avoids requiring every render_clip call site to construct
+    and pass one for a race that can't happen there."""
+
+    lock = progress_lock or threading.Lock()
+
+    with lock:
+        progress["done"] += 1
+        print(f"__PROGRESS__{progress['done']}/{progress['total']}", flush=True)
+
+
+def render_clip(clip_path: Path, start_frame, end_frame, only_type, resolution, resume, progress=None, progress_lock=None):
     """Renders one transparent ProRes 4444 .mov covering [start_frame,
     end_frame) of the full episode timeline, with Episode.tsx's onlyTypes
     prop restricting output to a single scene type — e.g. onlyTypes=
@@ -117,32 +166,27 @@ def render_clip(clip_path: Path, start_frame, end_frame, only_type, resolution, 
     --transparent already uses, scoped to one frame range and one element
     type per call via Remotion's --frames=start-end.
 
+    May run concurrently with other render_clip calls for different clips
+    (see RENDER_CONCURRENCY) — this function itself has no shared mutable
+    state of its own (each call renders its own clip_path), only the
+    progress dict needs the lock, via _report_progress.
+
     With resume=True, a clip that already exists (non-empty) is left in
     place rather than re-rendered — a render that dies partway through a
     long episode shouldn't force re-rendering every clip that already
     succeeded.
 
     progress, when given, is a {"done": int, "total": int} dict this
-    function mutates and reports via a __PROGRESS__done/total line after
-    EVERY clip (rendered or skipped) — a single shared dict rather than a
-    return value, since the caller loops (render_presenter_clips/
-    render_overlay_clips) have no other running-total bookkeeping to
-    thread a return value through."""
+    function mutates (through _report_progress, using progress_lock) and
+    reports via a __PROGRESS__done/total line after EVERY clip (rendered
+    or skipped) — a single shared dict rather than a return value, since
+    the caller loops (render_presenter_clips/render_overlay_clips) have no
+    other running-total bookkeeping to thread a return value through."""
 
     if resume and clip_path.exists() and clip_path.stat().st_size > 0:
         print(f"Skipping {clip_path.name} (already rendered)...")
         if progress is not None:
-            progress["done"] += 1
-            # flush=True: stdout is a pipe here (not a TTY), so Python
-            # fully-buffers by default rather than line-buffering — without
-            # an explicit flush this line can sit in the buffer until
-            # process exit, arriving all at once at the very end instead of
-            # incrementally as each clip finishes (confirmed live: the
-            # progress bar stayed frozen on the FIRST clip's own npx
-            # remotion render output the entire time, never reaching
-            # "Rendering" state, because __TOTAL__ itself was stuck in the
-            # same unflushed buffer).
-            print(f"__PROGRESS__{progress['done']}/{progress['total']}", flush=True)
+            _report_progress(progress, progress_lock)
         return
 
     command = [
@@ -164,22 +208,24 @@ def render_clip(clip_path: Path, start_frame, end_frame, only_type, resolution, 
     subprocess.run(command, cwd=RENDERER_DIR, check=True)
 
     if progress is not None:
-        progress["done"] += 1
-        print(f"__PROGRESS__{progress['done']}/{progress['total']}", flush=True)
+        _report_progress(progress, progress_lock)
 
 
-def render_presenter_clips(scene_plan, clips_dir: Path, resolution=None, resume=False, progress=None):
+def render_presenter_clips(scene_plan, clips_dir: Path, resolution=None, resume=False, progress=None, progress_lock=None):
     """One clip per presenter scene — video (with keyed alpha, if the
     source video has one) and its own embedded audio track together, since
     they come from the same underlying footage. Returns [(scene_id,
-    clip_path), ...] in timeline order."""
+    clip_path), ...] in TIMELINE order (unchanged from the previous
+    sequential version) — rendering itself now happens across up to
+    RENDER_CONCURRENCY clips at once (see that constant's own comment),
+    but ThreadPoolExecutor.map preserves input order in its output
+    regardless of which worker finishes first, so build_otio_timeline
+    downstream still sees clips in the same order it always has."""
 
-    clips = []
+    scenes = presenter_scenes(scene_plan)
 
-    for scene in presenter_scenes(scene_plan):
-
+    def render_one(scene):
         clip_path = clips_dir / f"presenter-{scene['id']}.mov"
-
         render_clip(
             clip_path,
             scene["timelineStartFrame"],
@@ -188,37 +234,35 @@ def render_presenter_clips(scene_plan, clips_dir: Path, resolution=None, resume=
             resolution,
             resume,
             progress,
+            progress_lock,
         )
+        return scene["id"], clip_path
 
-        clips.append((scene["id"], clip_path))
+    with ThreadPoolExecutor(max_workers=RENDER_CONCURRENCY) as executor:
+        return list(executor.map(render_one, scenes))
 
-    return clips
 
-
-def render_overlay_clips(scene_plan, scene_type, clips_dir: Path, resolution=None, resume=False, progress=None):
+def render_overlay_clips(scene_plan, scene_type, clips_dir: Path, resolution=None, resume=False, progress=None, progress_lock=None):
     """One small transparent clip per overlay scene of the given type
     (title/caption/moment/image), each covering just that scene's own
     absolute frame range. Returns [(scene_id, clip_path), ...] in timeline
-    order. Empty list if there are no scenes of this type (or, for
-    captions, none with captions enabled on their parent) — the caller
-    skips creating a track in that case."""
+    order (see render_presenter_clips' own comment on why concurrent
+    rendering doesn't disturb this). Empty list if there are no scenes of
+    this type (or, for captions, none with captions enabled on their
+    parent) — the caller skips creating a track in that case."""
 
     by_id = scenes_by_id(scene_plan)
+    scenes = overlay_scenes_of_type(scene_plan, scene_type)
 
-    clips = []
-
-    for scene in overlay_scenes_of_type(scene_plan, scene_type):
-
+    def render_one(scene):
         clip_path = clips_dir / f"{scene_type}-{scene['id']}.mov"
-
         start_frame = absolute_position(scene, by_id)
         end_frame = start_frame + scene["durationInFrames"]
+        render_clip(clip_path, start_frame, end_frame, scene_type, resolution, resume, progress, progress_lock)
+        return scene["id"], clip_path
 
-        render_clip(clip_path, start_frame, end_frame, scene_type, resolution, resume, progress)
-
-        clips.append((scene["id"], clip_path))
-
-    return clips
+    with ThreadPoolExecutor(max_workers=RENDER_CONCURRENCY) as executor:
+        return list(executor.map(render_one, scenes))
 
 
 def clip_label(scene):
@@ -387,8 +431,10 @@ def export_davinci(episode: Path, scene_plan, resolution=None, resume=False):
     # (ui/server.py's _stream_command) can show a real N-of-M progress bar
     # instead of an open-ended scrolling log — see total_clips' own
     # docstring. progress is a single dict shared by every render_clip call
-    # below (both loops), incremented once per clip whether rendered or
-    # skipped (resume mode).
+    # below (both loops, and every clip within each — see
+    # RENDER_CONCURRENCY), incremented once per clip whether rendered or
+    # skipped (resume mode). progress_lock guards that shared dict now that
+    # multiple clips can finish at genuinely the same moment.
     total = total_clips(scene_plan)
     # flush=True — see render_clip's __PROGRESS__ print for why this is
     # required when stdout is a pipe, not a TTY (confirmed live: without
@@ -397,11 +443,16 @@ def export_davinci(episode: Path, scene_plan, resolution=None, resume=False):
     # export, because this line sat unflushed in Python's stdout buffer).
     print(f"__TOTAL__{total}", flush=True)
     progress = {"done": 0, "total": total}
+    progress_lock = threading.Lock()
 
-    presenter_clips = render_presenter_clips(scene_plan, clips_dir, resolution, resume=resume, progress=progress)
+    presenter_clips = render_presenter_clips(
+        scene_plan, clips_dir, resolution, resume=resume, progress=progress, progress_lock=progress_lock
+    )
 
     overlay_clips_by_type = {
-        scene_type: render_overlay_clips(scene_plan, scene_type, clips_dir, resolution, resume=resume, progress=progress)
+        scene_type: render_overlay_clips(
+            scene_plan, scene_type, clips_dir, resolution, resume=resume, progress=progress, progress_lock=progress_lock
+        )
         for scene_type in OVERLAY_TRACK_TYPES
     }
 
