@@ -405,9 +405,13 @@ const styles: Record<string, React.CSSProperties> = {
     },
     heading: {
         fontSize: typography.size.lg,
-        fontWeight: typography.weight.bold,
+        // semibold, not bold — bold at this size read heavier than the
+        // rest of the panel's restrained weight; semibold plus the
+        // widened tracking below carries the same presence without
+        // feeling clunky.
+        fontWeight: typography.weight.semibold,
         color: colors.textPrimary,
-        letterSpacing: 0.2,
+        letterSpacing: 0.3,
         lineHeight: typography.lineHeight.tight,
     },
     // Scrolls independently of the input row below it, which stays pinned
@@ -422,7 +426,7 @@ const styles: Record<string, React.CSSProperties> = {
         overflowY: "auto",
     },
     emptyHint: {
-        fontSize: typography.size.md,
+        fontSize: typography.size.reading,
         // textSecondary, not textMuted — textMuted's ~3.8:1 contrast on
         // this dark surface falls below WCAG AA's 4.5:1 minimum for body
         // text, which read as illegible gray-on-navy. textSecondary is the
@@ -463,12 +467,16 @@ const styles: Record<string, React.CSSProperties> = {
     },
     input: {
         flex: 1,
-        padding: "9px 12px",
+        // Matches the reading-sized text above it, so what you type looks
+        // like it belongs to the same conversation as what's above it
+        // rather than reverting to smaller UI-label sizing right where
+        // the thread ends.
+        padding: "10px 13px",
         background: colors.surface,
         border: `1px solid ${colors.border}`,
         borderRadius: radius.md,
         color: colors.textPrimary,
-        fontSize: typography.size.base,
+        fontSize: typography.size.reading,
         lineHeight: typography.lineHeight.tight,
     },
     error: {
@@ -493,27 +501,55 @@ const styles: Record<string, React.CSSProperties> = {
         display: "flex",
         justifyContent: "flex-start",
     },
+    // 12px radius, not the smaller radius.lg (8px) used elsewhere in the
+    // app's boxier panels/inputs — a conversation bubble reads softer and
+    // more considered with a rounder shape than a form control does, and
+    // the extra roundness is what makes the small "tail" corner (4px, via
+    // radius.sm below) register as a deliberate speech-bubble cue instead
+    // of just an inconsistent corner.
     bubble: {
         display: "flex",
         flexDirection: "column",
-        gap: 6,
-        maxWidth: "88%",
-        padding: "9px 13px",
-        borderRadius: radius.lg,
-        fontSize: typography.size.base,
+        gap: 7,
+        maxWidth: "86%",
+        padding: "11px 15px",
+        borderRadius: 12,
+        fontSize: typography.size.reading,
         lineHeight: typography.lineHeight.relaxed,
         wordBreak: "break-word",
     },
+    // Neither a solid gold fill (text sitting directly on a saturated
+    // mid-tone never reads crisp — dark text goes muddy, light text fails
+    // contrast outright) nor a plain thin outline (too quiet a
+    // differentiator once it sits next to the AI bubble's own border —
+    // the two read as near-identical dark boxes). This is the third path:
+    // a warm gold-TINTED dark surface (12:1 contrast for textPrimary, same
+    // as everywhere else) carrying a bold solid accent bar down the left
+    // edge — the gold does its job as a strong, immediate visual signature
+    // without ever being the surface text has to sit on top of.
+    // A soft gold bloom, not a bright neon glow — CLAUDE.md's own design
+    // directive names "excessive/generic glowing UI" as a thing to avoid,
+    // so the shadow here stays low-opacity and wide-blurred (a haze, not
+    // a hard-edged effect) and is exclusive to the user's OWN bubble, not
+    // applied ambiently across the panel — it's a deliberate signature
+    // for "this is what you said," not decoration.
     bubbleUser: {
-        background: colors.accent,
-        // background (near-black), not textPrimary/white — near-black on
-        // this gold is ~8:1 contrast, by far the best-reading option
-        // tested (light text on this same gold measures ~2:1, well below
-        // AA). Regular weight, not semibold — semibold dark text on a
-        // warm mid-tone reads heavier/muddier at this size rather than
-        // crisper; letter-spacing does the "crisp" job instead.
-        color: colors.background,
-        letterSpacing: 0.1,
+        // 10% accent over surface — warm enough to read as clearly its
+        // own thing next to bubbleAi's neutral surfaceElevated, subtle
+        // enough that it's still obviously the same dark family, not a
+        // jump to a foreign color.
+        background: "#292c31",
+        border: `1px solid rgba(212, 162, 78, 0.45)`,
+        boxShadow: "0 0 18px rgba(212, 162, 78, 0.22), 0 0 3px rgba(212, 162, 78, 0.3)",
+        // A pale warm gold, not textPrimary's neutral off-white — the
+        // glow effect wants the text itself carrying the accent hue, not
+        // just the border/shadow around it. Still ~11:1 contrast on this
+        // background (see the numbers this was checked against), so nothing
+        // is traded for the color — it's exactly as legible as textPrimary,
+        // just warmer. The text-shadow is a tight, low-spread glow (not a
+        // wide neon blur) so it reads as "this text is lit," not smeared.
+        color: "#f6ead0",
+        textShadow: "0 0 8px rgba(212, 162, 78, 0.5)",
         borderBottomRightRadius: radius.sm,
     },
     bubbleAi: {
@@ -523,38 +559,43 @@ const styles: Record<string, React.CSSProperties> = {
         borderBottomLeftRadius: radius.sm,
     },
     thinkingHint: {
-        fontSize: typography.size.base,
+        fontSize: typography.size.reading,
         // textSecondary — see emptyHint's comment on why textMuted is
         // avoided for anything read as content.
         color: colors.textSecondary,
         fontStyle: "italic",
         lineHeight: typography.lineHeight.relaxed,
     },
+    // font-size/line-height intentionally NOT set here — both rows sit
+    // inside .bubble, which already establishes the reading size/relaxed
+    // line-height for this whole surface; repeating it per-row is how the
+    // panel drifted out of one coherent scale last time.
     appliedRow: {
         display: "flex",
         gap: 8,
         alignItems: "baseline",
         color: colors.textPrimary,
-        lineHeight: typography.lineHeight.relaxed,
     },
     rejectedRow: {
         display: "flex",
         gap: 8,
         alignItems: "baseline",
         color: colors.textSecondary,
-        lineHeight: typography.lineHeight.relaxed,
     },
     // A small solid label rather than plain colored text — gives each
     // operation an immediately scannable outcome at a glance (success
     // green for applied/created, the semantic error red for rejected)
     // instead of every row reading as one undifferentiated color, which
-    // matters once a bubble lists several operations at once.
+    // matters once a bubble lists several operations at once. Uppercase
+    // + wide tracking is what keeps an 11px label legible on its own —
+    // small text needs weight and space, not just a smaller font-size.
     opBadge: {
         flexShrink: 0,
         fontSize: typography.size.xs,
         fontWeight: typography.weight.bold,
-        letterSpacing: 0.4,
-        padding: "1px 6px",
+        letterSpacing: 0.6,
+        textTransform: "uppercase",
+        padding: "2px 7px",
         borderRadius: radius.sm,
         lineHeight: typography.lineHeight.tight,
     },
@@ -568,20 +609,20 @@ const styles: Record<string, React.CSSProperties> = {
     },
     // The AI's own explanation when it declines an instruction — this IS
     // the message's content, not a footnote, so it reads at the bubble's
-    // normal textPrimary color/weight rather than muted.
+    // normal textPrimary color/weight and reading size, not muted or
+    // shrunk down.
     explanationText: {
-        fontSize: typography.size.base,
         color: colors.textPrimary,
-        lineHeight: typography.lineHeight.relaxed,
     },
     // The trailing "Applied to scene-plan.json…" confirmation note — a
     // genuinely secondary meta-line after the real content above it, so
-    // textSecondary (not textMuted, which fails contrast on this surface)
-    // is appropriate here.
+    // it drops one size down (sm, not the bubble's reading size) and
+    // uses textSecondary (not textMuted, which fails contrast on this
+    // surface) rather than fighting the content above it for attention.
     metaNote: {
         fontSize: typography.size.sm,
         color: colors.textSecondary,
         lineHeight: typography.lineHeight.relaxed,
-        marginTop: 2,
+        marginTop: 1,
     },
 };

@@ -102,6 +102,13 @@ export const typography = {
         md: 13,
         base: 14,
         lg: 16,
+        // Body-copy size for anything actually read as prose (AI
+        // conversation text — spec section 7's own category) rather than
+        // scanned as a UI label. Distinct from lg: lg is for short chrome
+        // (headings, buttons); reading is sized for comfortable multi-
+        // sentence paragraphs, which the UI sizes below all read cramped
+        // at once bubbles started holding real sentences.
+        reading: 15,
     },
     weight: {
         regular: 400,
