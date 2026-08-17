@@ -144,7 +144,14 @@ def _fake_stream_process(command, cwd=None, on_start=None):
     yield "__EXIT_CODE__0"
 
 
-def test_ws_render_run_defaults_to_render_episode_sh(tmp_path, monkeypatch):
+def test_ws_render_run_defaults_to_render_with_progress_js(tmp_path, monkeypatch):
+    # render_episode.sh remains the documented standalone terminal tool
+    # (see README.md) — the UI's own plain-video render instead calls
+    # render-with-progress.js, which does the same render via Remotion's
+    # Node API so it can report real __TOTAL__/__PROGRESS__ lines the way
+    # export_davinci.py already does for the DaVinci path (see that
+    # script's own header comment for why render_episode.sh's CLI output
+    # can't be parsed reliably for this).
     episode = tmp_path / "episode"
     episode.mkdir()
 
@@ -155,7 +162,8 @@ def test_ws_render_run_defaults_to_render_episode_sh(tmp_path, monkeypatch):
         start_msg = ws.receive_json()
 
         assert start_msg["type"] == "start"
-        assert "render_episode.sh" in start_msg["command"]
+        assert "render-with-progress.js" in start_msg["command"]
+        assert "render_episode.sh" not in start_msg["command"]
         assert "export_davinci.py" not in start_msg["command"]
 
         msg = ws.receive_json()

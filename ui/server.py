@@ -1557,7 +1557,25 @@ async def ws_run_render(websocket: WebSocket):
 
             return episode, command, metadata
 
-        command = [str(PROJECT_ROOT / "render_episode.sh"), str(episode)]
+        # UI-only path — render_episode.sh itself is untouched and remains
+        # the documented standalone terminal tool (see README.md). This
+        # script does the same render (same "Episode" composition, same
+        # width/height override) via Remotion's programmatic Node API
+        # instead of shelling out to `npx remotion render`, so it gets a
+        # real structured onProgress callback instead of the CLI's ANSI
+        # progress bar (no stable text format to parse — see
+        # render-with-progress.js's own header comment). Prints the same
+        # __TOTAL__/__PROGRESS__ sentinel-line convention
+        # pipeline/export_davinci.py already established for the DaVinci
+        # path, so _stream_command's existing parsing (and the frontend's
+        # existing progress bar) work unchanged for this format too.
+        regenerate_codegen(episode)
+
+        command = [
+            "node",
+            str(RENDERER_DIR / "render-with-progress.js"),
+            str(episode),
+        ]
 
         if resolution:
             command.append(resolution)
