@@ -552,10 +552,18 @@ const styles: Record<string, React.CSSProperties> = {
         textShadow: "0 0 8px rgba(212, 162, 78, 0.5)",
         borderBottomRightRadius: radius.sm,
     },
+    // The AI's own half of the same glow language bubbleUser establishes
+    // — cool blue rather than gold, both so the two sides stay clearly
+    // differentiated at a glance and because blue is this app's own
+    // existing "text/AI content" semantic (colors.timelineText, reused
+    // here rather than inventing a new hue). Covers the "Thinking…"
+    // placeholder and error bubble too, since both share this style.
     bubbleAi: {
         background: colors.surfaceElevated,
-        border: `1px solid ${colors.border}`,
-        color: colors.textPrimary,
+        border: `1px solid rgba(74, 143, 209, 0.4)`,
+        boxShadow: "0 0 16px rgba(74, 143, 209, 0.16), 0 0 3px rgba(74, 143, 209, 0.22)",
+        color: "#dce8f7",
+        textShadow: "0 0 7px rgba(74, 143, 209, 0.35)",
         borderBottomLeftRadius: radius.sm,
     },
     thinkingHint: {
