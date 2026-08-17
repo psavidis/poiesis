@@ -264,3 +264,46 @@ def test_run_scene_analysis_preserves_existing_moment_scenes(tmp_path):
 
     moment_scene = next(s for s in scene_plan["scenes"] if s["type"] == "moment")
     assert moment_scene["text"] == "key phrase"
+
+
+def test_run_scene_analysis_preserves_existing_beat_scenes(tmp_path):
+    # Regression: analyze_scenes.py rebuilds scene-plan.json from scratch
+    # on every run and already re-merged titles/moments back in from their
+    # own source files, but never did the same for beats — a "Re-run
+    # pipeline" on an episode that already had emphasis.json silently
+    # dropped every beat, since generate_emphasis.py's own re-merge is
+    # skipped when its output file already exists (no --force).
+    episode = tmp_path / "episode"
+    processing = episode / "processing"
+
+    _write_json(
+        processing / "manifest.json",
+        {
+            "episode": "episode",
+            "fps": 30,
+            "videos": [{"id": "001", "duration": 30.0}],
+        },
+    )
+
+    _write_json(
+        processing / "emphasis.json",
+        {
+            "beats": [
+                {
+                    "sceneId": "scene-001",
+                    "offsetInParentFrames": 100,
+                    "durationInFrames": 60,
+                    "kind": "word-pop",
+                    "text": "key word",
+                }
+            ]
+        },
+    )
+
+    scene_plan = run_scene_analysis(episode)
+
+    types = [scene["type"] for scene in scene_plan["scenes"]]
+    assert "beat" in types
+
+    beat_scene = next(s for s in scene_plan["scenes"] if s["type"] == "beat")
+    assert beat_scene["text"] == "key word"

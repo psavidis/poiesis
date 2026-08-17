@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from generate_title_scenes import merge_title_scenes
 from generate_moments import merge_moment_scenes
+from generate_emphasis import merge_beat_scenes
 
 
 LEAD_IN_SECONDS = 0.15
@@ -251,6 +252,32 @@ def run_scene_analysis(episode):
 
         print(
             f"Re-merged {len(moments)} existing moment scene(s)."
+        )
+
+
+    beats_path = (
+            episode
+            /
+            "processing"
+            /
+            "emphasis.json"
+    )
+
+    if beats_path.exists():
+
+        with beats_path.open(
+                "r",
+                encoding="utf-8"
+        ) as f:
+            beats = json.load(f).get("beats", [])
+
+        scene_plan = merge_beat_scenes(
+            scene_plan,
+            beats
+        )
+
+        print(
+            f"Re-merged {len(beats)} existing beat scene(s)."
         )
 
 
