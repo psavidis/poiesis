@@ -64,7 +64,9 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
     const [status, setStatus] = useState<EpisodeStatus | null>(null);
     const [running, setRunning] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [log, setLog] = useState("");
     const runHandleRef = useRef<RunHandle | null>(null);
+    const logRef = useRef<HTMLPreElement>(null);
 
     const refreshStatus = () => {
         getEpisodeStatus(episodePath)
@@ -87,18 +89,33 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [running]);
 
+    useEffect(() => {
+        if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+    }, [log]);
+
     const start = () => {
         setError(null);
         setRunning(true);
+        setLog("");
 
         runHandleRef.current = runOverWebSocket(
             "/ws/pipeline/run",
             { path: episodePath, skipCaptions },
             (msg: RunMessage) => {
-                if (msg.type === "error") {
+                if (msg.type === "start") {
+                    setLog((prev) => prev + `$ ${msg.command}\n`);
+                } else if (msg.type === "log") {
+                    setLog((prev) => prev + msg.line + "\n");
+                } else if (msg.type === "error") {
+                    setLog((prev) => prev + `\nERROR: ${msg.message}\n`);
                     setError(msg.message);
                     setRunning(false);
-                } else if (msg.type === "done" || msg.type === "cancelled") {
+                } else if (msg.type === "done") {
+                    setLog((prev) => prev + `\n(exit code ${msg.exitCode})\n`);
+                    setRunning(false);
+                    refreshStatus();
+                } else if (msg.type === "cancelled") {
+                    setLog((prev) => prev + `\nCancelled.\n`);
                     setRunning(false);
                     refreshStatus();
                 }
@@ -143,6 +160,15 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
             </div>
 
             {error && <div style={styles.error}>{error}</div>}
+
+            {running && (
+                <div style={styles.logSection}>
+                    <span style={styles.logHeader}>Output</span>
+                    <pre style={styles.logPanel} ref={logRef}>
+                        {log}
+                    </pre>
+                </div>
+            )}
         </div>
     );
 }
@@ -197,5 +223,27 @@ const styles: Record<string, React.CSSProperties> = {
     error: {
         fontSize: typography.size.md,
         color: colors.error,
+    },
+    logSection: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+    },
+    logHeader: {
+        fontSize: typography.size.md,
+        color: colors.textSecondary,
+    },
+    logPanel: {
+        maxHeight: 240,
+        overflowY: "auto",
+        background: colors.background,
+        border: `1px solid ${colors.border}`,
+        borderRadius: radius.md,
+        padding: 10,
+        fontSize: typography.size.sm,
+        fontFamily: "monospace",
+        color: colors.codeText,
+        whiteSpace: "pre-wrap",
+        margin: 0,
     },
 };
