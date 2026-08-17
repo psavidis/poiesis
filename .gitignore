@@ -2,3 +2,11 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Remotion's own headless-browser download cache — created wherever the
+# render process's cwd happens to be (video-renderer/node_modules/.remotion
+# is already covered by the node_modules ignore below/above; ui/.remotion
+# appears because ws_run_render's render-with-progress.js subprocess runs
+# with ui/ as its cwd, not video-renderer/ — see #65's sibling render-
+# progress work).
+.remotion/

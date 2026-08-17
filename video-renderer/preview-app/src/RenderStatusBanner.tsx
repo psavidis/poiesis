@@ -79,12 +79,17 @@ export function RenderStatusBanner({ episodePath, advancedTabOpen, onOpenAdvance
     const { current, total, format, resolution } = status;
     const pct = total && total > 0 && current !== null ? Math.min(100, Math.round((current / total) * 100)) : null;
     const kindLabel = formatLabel(format, resolution);
+    // See AdvancedPanel.tsx's own ProgressBar for why this isn't always
+    // "clips" — DaVinci exports report per rendered clip, the plain MP4
+    // path reports per frame.
+    const unit = format === "video" ? "frame" : "clip";
+    const unitLabel = total === 1 ? unit : `${unit}s`;
 
     return (
         <button style={styles.banner} onClick={onOpenAdvanced}>
             <span className="phase-dot-active" style={styles.dot} />
             <span className="processing-label" style={styles.label}>
-                {current !== null && total !== null ? `Rendering — ${current} of ${total} clips` : "Rendering…"}
+                {current !== null && total !== null ? `Rendering — ${current} of ${total} ${unitLabel}` : "Rendering…"}
                 {kindLabel && <span style={styles.kindLabel}> — {kindLabel}</span>}
             </span>
             {pct !== null && (

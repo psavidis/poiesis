@@ -313,14 +313,14 @@ export function AdvancedPanel({
 
                     {recoveredRender ? (
                         progressTotal !== null ? (
-                            <ProgressBar current={progressCurrent} total={progressTotal} />
+                            <ProgressBar current={progressCurrent} total={progressTotal} format={recoveredFormat} />
                         ) : (
                             <span style={styles.progressLabel}>
                                 A render is already running for this episode (started elsewhere) — waiting for progress...
                             </span>
                         )
                     ) : (
-                        progressTotal !== null && <ProgressBar current={progressCurrent} total={progressTotal} />
+                        progressTotal !== null && <ProgressBar current={progressCurrent} total={progressTotal} format={renderFormat} />
                     )}
 
                     {recoveredRender && (
@@ -342,9 +342,19 @@ export function AdvancedPanel({
     );
 }
 
-function ProgressBar({ current, total }: { current: number; total: number }) {
+function ProgressBar({ current, total, format }: { current: number; total: number; format: "video" | "davinci" | null }) {
     const pct = total > 0 ? Math.min(100, Math.round((current / total) * 100)) : 0;
     const done = total > 0 && current >= total;
+    // DaVinci exports report progress per rendered CLIP (one file per
+    // scene — see export_davinci.py's __PROGRESS__); the plain MP4 path
+    // reports per FRAME (render-with-progress.js's renderedFrames) — a
+    // single "clips" label was wrong (and confusing at a 5-figure total)
+    // for the frame-based case. Defaults to "clip" when format is
+    // unknown (e.g. briefly, before render-status's first response) —
+    // matches the original, DaVinci-only behavior this bar was written
+    // for, so an unresolved format doesn't flip the label to something
+    // new by default.
+    const unit = format === "video" ? "frame" : "clip";
 
     return (
         <div style={styles.progressWrap}>
@@ -358,7 +368,9 @@ function ProgressBar({ current, total }: { current: number; total: number }) {
                 />
             </div>
             <span style={styles.progressLabel}>
-                {current} of {total} clips{done ? " — done" : ""}
+                {current} of {total} {unit}
+                {total === 1 ? "" : "s"}
+                {done ? " — done" : ""}
             </span>
         </div>
     );
