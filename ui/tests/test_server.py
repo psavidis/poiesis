@@ -1636,6 +1636,51 @@ def test_edit_scene_plan_creates_a_moment_in_moments_json_and_scene_plan(tmp_pat
     assert moment_scenes[0]["id"] == "scene-moment-0"
 
 
+def test_edit_scene_plan_loads_code_assets_and_passes_them_to_edit_plan(tmp_path):
+    # code_assets.json (#64) is optional, same as assets.json — an episode
+    # with no indexed code/ folder can't ground a Full Screen code
+    # creation, but every other chat operation still works. This confirms
+    # the endpoint actually loads it and threads it through, not just that
+    # edit_plan() itself accepts the kwarg (already covered in
+    # pipeline/tests/test_edit_plan.py).
+    episode = _make_episode(tmp_path)
+    scene_plan_before = _make_scene_plan(episode, video_ids=("001",))
+    (episode / "processing" / "code_assets.json").write_text(
+        json.dumps({"codeAssets": [{"id": "code-1", "language": "java", "description": "the kafka consumer"}]})
+    )
+
+    fake_result = (scene_plan_before, [], [], [], [], [])
+
+    with patch("server.edit_plan", return_value=fake_result) as mock_edit_plan:
+        response = client.post(
+            "/api/episode/edit-plan",
+            params={"path": str(episode)},
+            json={"instruction": "show the kafka consumer code full screen"},
+        )
+
+    assert response.status_code == 200
+    assert mock_edit_plan.call_args.kwargs["code_assets"] == [
+        {"id": "code-1", "language": "java", "description": "the kafka consumer"}
+    ]
+
+
+def test_edit_scene_plan_passes_none_code_assets_when_code_assets_json_missing(tmp_path):
+    episode = _make_episode(tmp_path)
+    scene_plan_before = _make_scene_plan(episode, video_ids=("001",))
+
+    fake_result = (scene_plan_before, [], [], [], [], [])
+
+    with patch("server.edit_plan", return_value=fake_result) as mock_edit_plan:
+        response = client.post(
+            "/api/episode/edit-plan",
+            params={"path": str(episode)},
+            json={"instruction": "show the kafka consumer code full screen"},
+        )
+
+    assert response.status_code == 200
+    assert mock_edit_plan.call_args.kwargs["code_assets"] is None
+
+
 def test_edit_scene_plan_creates_an_image_scene_directly_in_scene_plan(tmp_path):
     # Image scenes have no separate source file (see #60) — unlike beats/
     # moments, this asserts the created image lands straight in

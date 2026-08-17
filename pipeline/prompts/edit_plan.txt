@@ -90,6 +90,25 @@ Decide which scene(s) the instruction refers to and what should change. You may:
    over an exhaustive one. Every edge's "from"/"to" must reference a real node id from the same
    diagram's own "nodes" list. Do not propose offset or duration values yourself — those are
    computed automatically.
+7. Create a new Full Screen image, code, or statement — the presenter is hidden and the content
+   takes over the entire frame, for the image/code equivalent of a Full Screen diagram (item 6
+   above) or a Full Screen equivalent of a bottom-callout (item 4 above). Use this ONLY when the
+   instruction explicitly asks to show/create/display something FULL SCREEN — never for a small
+   overlay while the presenter stays visible (that's a bottom-callout or an inset image, items 4/5
+   above):
+   {"op": "create", "type": "full-screen", "sceneId": "...", "fullVisualKind": "image" | "code" |
+   "text", "assetId": "..." (required if fullVisualKind is "image"), "codeAssetId": "..."
+   (required if fullVisualKind is "code"), "text": "..." (required if fullVisualKind is "text"),
+   "reason": "..."}
+   sceneId must be a real "presenter" scene id from the plan above.
+   For fullVisualKind "image": assetId must be an EXACT id from the available assets list below —
+   never invent one, same discipline as the inset-image creation rule above.
+   For fullVisualKind "code": codeAssetId must be an EXACT id from the available code assets list
+   below — never invent one.
+   For fullVisualKind "text": text must be a short phrase taken directly from what is actually
+   said in the target scene — quote it closely, do not paraphrase or invent it, same discipline
+   as a bottom-callout's own text.
+   Do not propose offset or duration values yourself — those are computed automatically.
 
 Some instructions describe a creative feeling or intent rather than naming a specific field —
 e.g. "make this more dramatic," "make this pop more," "tone this down," "make this feel
@@ -133,10 +152,9 @@ those has no field to express it in (fall back to the general vague-instruction 
 or return no operations if genuinely nothing fits). Do not invent a fourth entrance value — pick
 the closest of the three.
 
-You may NOT create any scene type or moment treatment other than the four above (no side-text,
-side-image, side-code, side-diagram, titles, content-dominant-code, or full-visual with kind
-"image"/"text"/"code" via this endpoint — those require different grounding this endpoint
-doesn't have).
+You may NOT create any scene type or moment treatment other than the five above (no side-text,
+side-image, side-code, side-diagram, titles, or content-dominant-code via this endpoint — those
+require different grounding this endpoint doesn't have).
 You may NOT change "id", "type", "videoId", "parentSceneId", or "assetId" on any scene —
 those identify what a scene fundamentally is, not something an edit instruction changes.
 
@@ -149,9 +167,13 @@ spoken word, in [wordId] text format):
 
 {candidate_words}
 
-Assets available for an inset image creation (in [assetId] caption format):
+Assets available for an inset image or Full Screen image creation (in [assetId] caption format):
 
 {available_assets}
+
+Code assets available for a Full Screen code creation (in [codeAssetId] language — description format):
+
+{available_code_assets}
 
 If the instruction is ambiguous about which scene it refers to (e.g. "remove the pause" when
 several scenes could match), pick the single best match based on context — text content,
@@ -178,17 +200,19 @@ Schema:
   "operations": [
     {
       "op": "remove" or "update" or "create",
-      "sceneId": "string, must match an id in the scene plan above — required for remove/update and for create/moment, create/image, and create/diagram, omit for create/beat",
+      "sceneId": "string, must match an id in the scene plan above — required for remove/update and for create/moment, create/image, create/diagram, and create/full-screen, omit for create/beat",
       "fields": { "field": newValue, ... },
-      "type": "beat" | "moment" | "image" | "diagram" — required for create, omit otherwise",
+      "type": "beat" | "moment" | "image" | "diagram" | "full-screen" — required for create, omit otherwise",
       "wordIds": ["string", ...] — required for create/beat, must be exact contiguous ids from the candidate words above",
       "kind": "word-pop" | "underline" | "icon-accent" — required for create/beat, omit otherwise",
       "icon": "arrow" | "check" | "warning" | "gear" — only for create/beat with kind icon-accent",
-      "text": "string — required for create/moment, a short phrase quoted from what is actually said in the target scene",
+      "text": "string — required for create/moment, and for create/full-screen when fullVisualKind is 'text', a short phrase quoted from what is actually said in the target scene",
       "entrance": "'fade' | 'scale' | 'slide' — optional for create/moment, omit unless the SAME instruction also asks for a specific entrance animation",
-      "assetId": "string — required for create/image, must be an exact id from the available assets above",
+      "assetId": "string — required for create/image, and for create/full-screen when fullVisualKind is 'image', must be an exact id from the available assets above",
       "anchorText": "string — optional for create/image, a short phrase quoted from what is actually said near where the image should appear",
       "diagram": "object — required for create/diagram: { nodes: [{id, label}], edges: [{from, to, label?}], layout: 'horizontal'|'vertical' }, at most 6 nodes and 8 edges, every label grounded in what is actually said",
+      "fullVisualKind": "'image' | 'code' | 'text' — required for create/full-screen, selects which of assetId/codeAssetId/text below is used",
+      "codeAssetId": "string — required for create/full-screen when fullVisualKind is 'code', must be an exact id from the available code assets above",
       "reason": "short explanation, referencing the scene's actual content"
     }
   ]
@@ -198,5 +222,7 @@ Schema:
 present for "create"/"beat" operations. "type"/"sceneId"/"text" are only present for
 "create"/"moment" operations ("entrance" is also allowed there, but optional). "type"/"sceneId"/
 "assetId"/"anchorText" are only present for "create"/"image" operations. "type"/"sceneId"/
-"diagram" are only present for "create"/"diagram" operations. If the instruction doesn't match
-anything in the current plan, return {"operations": []}.
+"diagram" are only present for "create"/"diagram" operations. "type"/"sceneId"/"fullVisualKind"
+are only present for "create"/"full-screen" operations, plus exactly one of "assetId"/
+"codeAssetId"/"text" depending on fullVisualKind. If the instruction doesn't match anything in
+the current plan, return {"operations": []}.

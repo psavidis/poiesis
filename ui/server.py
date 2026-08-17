@@ -759,6 +759,7 @@ def edit_scene_plan(path: str, body: EditPlanRequest):
     beats_path = processing / "emphasis.json"
     moments_path = processing / "moments.json"
     assets_path = processing / "assets.json"
+    code_assets_path = processing / "code_assets.json"
 
     # Beat/moment creation (#52/#53) needs real word-level transcript
     # timing to ground itself — both optional here (unlike
@@ -768,10 +769,12 @@ def edit_scene_plan(path: str, body: EditPlanRequest):
     # own docstring — this mirrors generate_emphasis.py's own graceful
     # no-op for the same case). Image creation is likewise optional on
     # assets.json existing (an episode with no indexed graphics/ folder
-    # can't ground an inset image either).
+    # can't ground an inset image either). Full Screen code creation (#64)
+    # is likewise optional on code_assets.json existing.
     episode_transcript = None
     manifest = None
     assets = None
+    code_assets = None
 
     if episode_transcript_path.exists() and manifest_path.exists():
         with episode_transcript_path.open("r", encoding="utf-8") as f:
@@ -782,6 +785,10 @@ def edit_scene_plan(path: str, body: EditPlanRequest):
     if assets_path.exists():
         with assets_path.open("r", encoding="utf-8") as f:
             assets = json.load(f).get("assets", [])
+
+    if code_assets_path.exists():
+        with code_assets_path.open("r", encoding="utf-8") as f:
+            code_assets = json.load(f).get("codeAssets", [])
 
     try:
         with episode_lock(episode, wait=False):
@@ -796,6 +803,7 @@ def edit_scene_plan(path: str, body: EditPlanRequest):
                     scene_plan, body.instruction, llm, prompt_template,
                     selected_scene_id=body.selectedSceneId,
                     transcript=episode_transcript, manifest=manifest, assets=assets,
+                    code_assets=code_assets,
                 )
             except Exception as e:
                 raise HTTPException(status_code=502, detail=f"Edit request failed: {e}")

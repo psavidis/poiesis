@@ -24,6 +24,7 @@ from generate_moments import (  # noqa: E402
     TRANSITION_FRAMES,
     duration_for_treatment,
     format_assets_for_prompt,
+    format_code_assets_for_prompt,
     group_transcript_by_clip,
     is_diagram_grounded,
     is_grounded,
@@ -744,9 +745,200 @@ def resolve_full_screen_diagram_creation(op, scene_plan, transcript, manifest, s
     }
 
 
+def _full_screen_creation_preamble(op, scene_plan, style):
+    """Shared setup for resolve_full_screen_image_creation/
+    resolve_full_screen_code_creation/resolve_full_screen_text_creation
+    (see #64) — the same "resolve sceneId to a real presenter scene, then
+    compute a start-of-scene offset/duration" preamble
+    resolve_full_screen_diagram_creation already establishes, factored out
+    now that four full-visual creation kinds exist side by side rather
+    than duplicating it a third/fourth time. Returns (parent, offset,
+    duration) or None if sceneId is missing/not a real presenter scene, or
+    there's no room left in the parent scene — same rejection behavior
+    resolve_full_screen_diagram_creation already has, just shared."""
+
+    scene_id = op.get("sceneId")
+
+    if not scene_id:
+        return None
+
+    scenes_by_id = {scene["id"]: scene for scene in scene_plan["scenes"]}
+    parent = scenes_by_id.get(scene_id)
+
+    if not parent or parent["type"] != "presenter":
+        return None
+
+    # Same "no more specific anchor available" default every other
+    # full-visual creation path uses — a full-visual moment takes over the
+    # whole frame for its own window, it isn't anchored to a specific
+    # spoken phrase's position the way a bottom-callout is.
+    offset = 0
+
+    duration = min(
+        duration_for_treatment("full-visual", style),
+        max(0, parent["durationInFrames"] - offset),
+    )
+
+    if duration <= 0:
+        return None
+
+    if _bottom_callout_overlaps_existing_moment(scene_plan, scene_id, offset, duration):
+        return None
+
+    return parent, offset, duration
+
+
+def resolve_full_screen_image_creation(op, scene_plan, assets, style=None):
+    """Resolves a single "create"/"full-screen" operation with
+    fullVisualKind "image" into a full-visual moment proposal — the Full
+    Screen counterpart to resolve_image_creation's inset image (#64).
+    Grounding here means picking a REAL assetId from the assets index
+    (same discipline resolve_image_creation already applies to inset
+    images) — there is deliberately no separate text-grounding step, the
+    image itself is the content, not a paraphrase of narration."""
+
+    if style is None:
+        style = load_style()
+
+    asset_id = op.get("assetId")
+
+    if not asset_id:
+        return None
+
+    asset = next((a for a in (assets or []) if a["id"] == asset_id), None)
+
+    if asset is None:
+        return None
+
+    preamble = _full_screen_creation_preamble(op, scene_plan, style)
+
+    if preamble is None:
+        return None
+
+    parent, offset, duration = preamble
+
+    return {
+        "sceneId": op["sceneId"],
+        "videoId": parent["videoId"],
+        "treatment": "full-visual",
+        "fullVisualKind": "image",
+        "assetId": asset_id,
+        "caption": asset.get("caption"),
+        "presenterSide": None,
+        "offsetInParentFrames": offset,
+        "maxDurationInParentFrames": duration,
+        "reason": op.get("reason", ""),
+    }
+
+
+def resolve_full_screen_code_creation(op, scene_plan, code_assets, style=None):
+    """Resolves a single "create"/"full-screen" operation with
+    fullVisualKind "code" into a full-visual moment proposal (#64).
+    Grounding here means picking a REAL codeAssetId from the indexed code
+    assets — same discipline generate_moments.py's side-code/
+    content-dominant-code handling already applies, never inventing a
+    codeAssetId."""
+
+    if style is None:
+        style = load_style()
+
+    code_asset_id = op.get("codeAssetId")
+
+    if not code_asset_id:
+        return None
+
+    code_asset = next((a for a in (code_assets or []) if a["id"] == code_asset_id), None)
+
+    if code_asset is None:
+        return None
+
+    preamble = _full_screen_creation_preamble(op, scene_plan, style)
+
+    if preamble is None:
+        return None
+
+    parent, offset, duration = preamble
+
+    return {
+        "sceneId": op["sceneId"],
+        "videoId": parent["videoId"],
+        "treatment": "full-visual",
+        "fullVisualKind": "code",
+        "codeAssetId": code_asset_id,
+        "caption": code_asset.get("description"),
+        "presenterSide": None,
+        "offsetInParentFrames": offset,
+        "maxDurationInParentFrames": duration,
+        "reason": op.get("reason", ""),
+    }
+
+
+def resolve_full_screen_text_creation(op, scene_plan, transcript, manifest, style=None):
+    """Resolves a single "create"/"full-screen" operation with
+    fullVisualKind "text" into a full-visual moment proposal (#64).
+    Grounding here means the same discipline resolve_bottom_callout_creation
+    already applies to its own "text" field — a short phrase taken
+    directly from what is actually said in the target scene, quoted
+    closely, never paraphrased or invented — rather than a new, looser
+    standard for full-screen text specifically. Unlike image/code, there's
+    no asset to select: the text itself is grounded against the scene's
+    own transcript, the same way a bottom-callout is."""
+
+    if style is None:
+        style = load_style()
+
+    scene_id = op.get("sceneId")
+    text = op.get("text")
+
+    if not scene_id or not text:
+        return None
+
+    scenes_by_id = {scene["id"]: scene for scene in scene_plan["scenes"]}
+    parent = scenes_by_id.get(scene_id)
+
+    if not parent or parent["type"] != "presenter":
+        return None
+
+    if not transcript or not manifest:
+        return None
+
+    clips = group_transcript_by_clip(transcript, manifest)
+    segments = clips.get(parent["videoId"], [])
+
+    window = {"sourceStartFrame": parent["sourceStartFrame"], "sourceEndFrame": parent["sourceEndFrame"]}
+    matching_segments = filter_segments_in_window(segments, window, scene_plan["fps"])
+
+    if not matching_segments:
+        return None
+
+    full_window_text = " ".join(segment["text"] for segment in matching_segments)
+
+    if not is_grounded(text, full_window_text):
+        return None
+
+    preamble = _full_screen_creation_preamble(op, scene_plan, style)
+
+    if preamble is None:
+        return None
+
+    parent, offset, duration = preamble
+
+    return {
+        "sceneId": scene_id,
+        "videoId": parent["videoId"],
+        "treatment": "full-visual",
+        "fullVisualKind": "text",
+        "text": text,
+        "presenterSide": None,
+        "offsetInParentFrames": offset,
+        "maxDurationInParentFrames": duration,
+        "reason": op.get("reason", ""),
+    }
+
+
 def edit_plan(
     scene_plan, instruction, llm: LLMClient, prompt_template: str,
-    selected_scene_id=None, transcript=None, manifest=None, assets=None,
+    selected_scene_id=None, transcript=None, manifest=None, assets=None, code_assets=None,
 ):
     """transcript/manifest are optional — only pass them when both are
     available (an episode with no word-level transcript data can't ground
@@ -755,15 +947,21 @@ def edit_plan(
     "beat" (#52, resolve_beat_creation, reuses generate_emphasis.py's own
     word-matching), "moment"/bottom-callout (#53,
     resolve_bottom_callout_creation, reuses generate_moments.py's own
-    text-grounding), and "diagram" (resolve_full_screen_diagram_creation —
-    a Full Screen diagram moment, reuses generate_moments.py's own
-    is_diagram_grounded; see docs/specs/ai-assisted-editing-and-
+    text-grounding), and "full-screen" with fullVisualKind "diagram"/"text"
+    (resolve_full_screen_diagram_creation/resolve_full_screen_text_creation
+    — a Full Screen moment, reuses generate_moments.py's own
+    is_diagram_grounded/is_grounded; see docs/specs/ai-assisted-editing-and-
     conversational-control.md section 5's own worked example). assets is
     likewise optional (an episode with no indexed graphics can't ground an
-    inset image creation) and enables "create"/"image" (resolve_image_creation —
-    the AI-creation path for ImageScene, previously unreachable by any
-    real workflow; see docs/specs/content-types-and-presentation-editing.md).
-    None of these are reimplemented here.
+    inset image creation) and enables "create"/"image" (resolve_image_creation
+    — the AI-creation path for ImageScene, previously unreachable by any
+    real workflow; see docs/specs/content-types-and-presentation-editing.md)
+    as well as "create"/"full-screen" with fullVisualKind "image"
+    (resolve_full_screen_image_creation, #64). code_assets is likewise
+    optional (an episode with no indexed code/ folder can't ground a Full
+    Screen code creation) and enables "create"/"full-screen" with
+    fullVisualKind "code" (resolve_full_screen_code_creation, #64). None of
+    these are reimplemented here.
 
     Returns (updated_plan, valid_ops, rejected, created_beats,
     created_moments, created_images) — the three created_* lists are kept
@@ -796,6 +994,10 @@ def edit_plan(
 
     available_assets_text = format_assets_for_prompt(assets) if assets else "(none available)"
 
+    available_code_assets_text = (
+        format_code_assets_for_prompt(code_assets) if code_assets else "(none available)"
+    )
+
     # Substitute the fixed, non-user-authored blocks first, then the
     # free-text instruction last — it's the one value that could plausibly
     # contain a literal "{scene_plan}"/"{editable_fields}" substring (e.g.
@@ -816,6 +1018,8 @@ def edit_plan(
     ).replace(
         "{available_assets}", available_assets_text
     ).replace(
+        "{available_code_assets}", available_code_assets_text
+    ).replace(
         "{instruction}", instruction
     )
 
@@ -830,6 +1034,11 @@ def edit_plan(
     create_moment_ops = [op for op in valid_ops if op["op"] == "create" and op.get("type") == "moment"]
     create_image_ops = [op for op in valid_ops if op["op"] == "create" and op.get("type") == "image"]
     create_diagram_ops = [op for op in valid_ops if op["op"] == "create" and op.get("type") == "diagram"]
+    # "full-screen" (#64) covers the three fullVisualKind values diagram
+    # creation didn't (image/code/text) — kept as a separate "type" from
+    # "diagram" above rather than folding diagram into it, so the existing
+    # diagram-creation prompt/tests/callers keep working unchanged.
+    create_full_screen_ops = [op for op in valid_ops if op["op"] == "create" and op.get("type") == "full-screen"]
 
     created_beats = []
 
@@ -866,6 +1075,34 @@ def edit_plan(
             continue
 
         created_moments.append(diagram_moment)
+
+    # A "full-screen" create is also a moment proposal (treatment
+    # full-visual) — same created_moments list, same moments.json write
+    # path as a bottom-callout/diagram, just dispatched by fullVisualKind
+    # to whichever of the three resolvers (#64) matches its grounding
+    # discipline (asset-grounded for image/code, transcript-grounded for
+    # text).
+    for op in create_full_screen_ops:
+        kind = op.get("fullVisualKind")
+
+        if kind == "image":
+            full_screen_moment = resolve_full_screen_image_creation(op, scene_plan, assets)
+            reason = "could not ground this image against a real asset id"
+        elif kind == "code":
+            full_screen_moment = resolve_full_screen_code_creation(op, scene_plan, code_assets)
+            reason = "could not ground this code snippet against a real code asset id"
+        elif kind == "text":
+            full_screen_moment = resolve_full_screen_text_creation(op, scene_plan, transcript, manifest)
+            reason = "could not ground this text against the target scene's transcript"
+        else:
+            full_screen_moment = None
+            reason = f"fullVisualKind must be 'image', 'code', or 'text' for a full-screen create, got {kind!r}"
+
+        if full_screen_moment is None:
+            rejected.append({"operation": op, "reason": reason})
+            continue
+
+        created_moments.append(full_screen_moment)
 
     created_images = []
 

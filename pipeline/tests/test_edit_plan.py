@@ -9,7 +9,10 @@ from edit_plan import (
     reflow_timeline,
     resolve_beat_creation,
     resolve_bottom_callout_creation,
+    resolve_full_screen_code_creation,
     resolve_full_screen_diagram_creation,
+    resolve_full_screen_image_creation,
+    resolve_full_screen_text_creation,
     resolve_image_creation,
     validate_operations,
 )
@@ -1002,6 +1005,184 @@ def test_resolve_full_screen_diagram_creation_returns_none_without_transcript_or
     assert resolve_full_screen_diagram_creation(op, scene_plan, _transcript_with_segments(), None) is None
 
 
+# resolve_full_screen_image_creation — Full Screen counterpart to
+# resolve_image_creation's inset image (#64).
+def test_resolve_full_screen_image_creation_accepts_a_real_asset_id():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    op = {"op": "create", "type": "full-screen", "sceneId": "scene-001", "fullVisualKind": "image", "assetId": "asset-1", "reason": "x"}
+
+    moment = resolve_full_screen_image_creation(op, scene_plan, _assets())
+
+    assert moment["sceneId"] == "scene-001"
+    assert moment["treatment"] == "full-visual"
+    assert moment["fullVisualKind"] == "image"
+    assert moment["assetId"] == "asset-1"
+    assert moment["caption"] == "the architecture diagram"
+    assert moment["presenterSide"] is None
+
+
+def test_resolve_full_screen_image_creation_rejects_an_unknown_asset_id():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    op = {"op": "create", "type": "full-screen", "sceneId": "scene-001", "fullVisualKind": "image", "assetId": "does-not-exist", "reason": "x"}
+
+    assert resolve_full_screen_image_creation(op, scene_plan, _assets()) is None
+
+
+def test_resolve_full_screen_image_creation_rejects_a_non_presenter_scene():
+    scene_plan = {"fps": 30, "scenes": [_title("scene-title-0", "Hello", 0)]}
+
+    op = {"op": "create", "type": "full-screen", "sceneId": "scene-title-0", "fullVisualKind": "image", "assetId": "asset-1", "reason": "x"}
+
+    assert resolve_full_screen_image_creation(op, scene_plan, _assets()) is None
+
+
+def test_resolve_full_screen_image_creation_requires_scene_id_and_asset_id():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    missing_scene_id = {"op": "create", "type": "full-screen", "fullVisualKind": "image", "assetId": "asset-1", "reason": "x"}
+    assert resolve_full_screen_image_creation(missing_scene_id, scene_plan, _assets()) is None
+
+    missing_asset_id = {"op": "create", "type": "full-screen", "sceneId": "scene-001", "fullVisualKind": "image", "reason": "x"}
+    assert resolve_full_screen_image_creation(missing_asset_id, scene_plan, _assets()) is None
+
+
+def test_resolve_full_screen_image_creation_returns_none_without_any_assets():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    op = {"op": "create", "type": "full-screen", "sceneId": "scene-001", "fullVisualKind": "image", "assetId": "asset-1", "reason": "x"}
+
+    assert resolve_full_screen_image_creation(op, scene_plan, None) is None
+    assert resolve_full_screen_image_creation(op, scene_plan, []) is None
+
+
+# resolve_full_screen_code_creation — same shape, grounded against a real
+# codeAssetId instead of assetId (#64).
+def _code_assets():
+    return [
+        {"id": "code-1", "language": "java", "description": "the kafka consumer"},
+        {"id": "code-2", "language": "python", "description": "the order repository"},
+    ]
+
+
+def test_resolve_full_screen_code_creation_accepts_a_real_code_asset_id():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    op = {"op": "create", "type": "full-screen", "sceneId": "scene-001", "fullVisualKind": "code", "codeAssetId": "code-1", "reason": "x"}
+
+    moment = resolve_full_screen_code_creation(op, scene_plan, _code_assets())
+
+    assert moment["sceneId"] == "scene-001"
+    assert moment["treatment"] == "full-visual"
+    assert moment["fullVisualKind"] == "code"
+    assert moment["codeAssetId"] == "code-1"
+    assert moment["caption"] == "the kafka consumer"
+    assert moment["presenterSide"] is None
+
+
+def test_resolve_full_screen_code_creation_rejects_an_unknown_code_asset_id():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    op = {"op": "create", "type": "full-screen", "sceneId": "scene-001", "fullVisualKind": "code", "codeAssetId": "does-not-exist", "reason": "x"}
+
+    assert resolve_full_screen_code_creation(op, scene_plan, _code_assets()) is None
+
+
+def test_resolve_full_screen_code_creation_rejects_a_non_presenter_scene():
+    scene_plan = {"fps": 30, "scenes": [_title("scene-title-0", "Hello", 0)]}
+
+    op = {"op": "create", "type": "full-screen", "sceneId": "scene-title-0", "fullVisualKind": "code", "codeAssetId": "code-1", "reason": "x"}
+
+    assert resolve_full_screen_code_creation(op, scene_plan, _code_assets()) is None
+
+
+def test_resolve_full_screen_code_creation_requires_scene_id_and_code_asset_id():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    missing_scene_id = {"op": "create", "type": "full-screen", "fullVisualKind": "code", "codeAssetId": "code-1", "reason": "x"}
+    assert resolve_full_screen_code_creation(missing_scene_id, scene_plan, _code_assets()) is None
+
+    missing_code_asset_id = {"op": "create", "type": "full-screen", "sceneId": "scene-001", "fullVisualKind": "code", "reason": "x"}
+    assert resolve_full_screen_code_creation(missing_code_asset_id, scene_plan, _code_assets()) is None
+
+
+def test_resolve_full_screen_code_creation_returns_none_without_any_code_assets():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    op = {"op": "create", "type": "full-screen", "sceneId": "scene-001", "fullVisualKind": "code", "codeAssetId": "code-1", "reason": "x"}
+
+    assert resolve_full_screen_code_creation(op, scene_plan, None) is None
+    assert resolve_full_screen_code_creation(op, scene_plan, []) is None
+
+
+# resolve_full_screen_text_creation — grounding-only, same discipline as
+# resolve_bottom_callout_creation's own text field (#64).
+def test_resolve_full_screen_text_creation_accepts_grounded_text():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    op = {
+        "op": "create", "type": "full-screen", "sceneId": "scene-001", "fullVisualKind": "text",
+        "text": "dependency injection matters", "reason": "the core idea",
+    }
+
+    moment = resolve_full_screen_text_creation(op, scene_plan, _transcript_with_segments(), _manifest_single_video())
+
+    assert moment["sceneId"] == "scene-001"
+    assert moment["treatment"] == "full-visual"
+    assert moment["fullVisualKind"] == "text"
+    assert moment["text"] == "dependency injection matters"
+    assert moment["presenterSide"] is None
+
+
+def test_resolve_full_screen_text_creation_rejects_ungrounded_text():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    op = {
+        "op": "create", "type": "full-screen", "sceneId": "scene-001", "fullVisualKind": "text",
+        "text": "this was never actually said in the video", "reason": "x",
+    }
+
+    assert resolve_full_screen_text_creation(op, scene_plan, _transcript_with_segments(), _manifest_single_video()) is None
+
+
+def test_resolve_full_screen_text_creation_rejects_a_non_presenter_scene():
+    scene_plan = {"fps": 30, "scenes": [_title("scene-title-0", "Hello", 0)]}
+
+    op = {
+        "op": "create", "type": "full-screen", "sceneId": "scene-title-0", "fullVisualKind": "text",
+        "text": "dependency injection matters", "reason": "x",
+    }
+
+    assert resolve_full_screen_text_creation(op, scene_plan, _transcript_with_segments(), _manifest_single_video()) is None
+
+
+def test_resolve_full_screen_text_creation_requires_scene_id_and_text():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    missing_scene_id = {"op": "create", "type": "full-screen", "fullVisualKind": "text", "text": "dependency injection matters", "reason": "x"}
+    assert resolve_full_screen_text_creation(
+        missing_scene_id, scene_plan, _transcript_with_segments(), _manifest_single_video()
+    ) is None
+
+    missing_text = {"op": "create", "type": "full-screen", "sceneId": "scene-001", "fullVisualKind": "text", "reason": "x"}
+    assert resolve_full_screen_text_creation(
+        missing_text, scene_plan, _transcript_with_segments(), _manifest_single_video()
+    ) is None
+
+
+def test_resolve_full_screen_text_creation_returns_none_without_transcript_or_manifest():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    op = {
+        "op": "create", "type": "full-screen", "sceneId": "scene-001", "fullVisualKind": "text",
+        "text": "dependency injection matters", "reason": "x",
+    }
+
+    assert resolve_full_screen_text_creation(op, scene_plan, None, _manifest_single_video()) is None
+    assert resolve_full_screen_text_creation(op, scene_plan, _transcript_with_segments(), None) is None
+
+
 def test_edit_plan_creates_a_full_screen_diagram_grounded_against_scene_transcript():
     scene_plan = _scene_plan_with_segments_scene()
 
@@ -1025,6 +1206,107 @@ def test_edit_plan_creates_a_full_screen_diagram_grounded_against_scene_transcri
     assert created_moments[0]["treatment"] == "full-visual"
     assert created_moments[0]["fullVisualKind"] == "diagram"
     assert rejected == []
+
+
+def test_edit_plan_creates_a_full_screen_image_grounded_against_a_real_asset():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    llm = _FakeLLMClient(
+        {
+            "operations": [
+                {
+                    "op": "create", "type": "full-screen", "sceneId": "scene-001", "fullVisualKind": "image",
+                    "assetId": "asset-1", "reason": "shows the architecture full screen",
+                }
+            ]
+        }
+    )
+
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+        scene_plan, "show the architecture diagram full screen", llm, PROMPT_TEMPLATE,
+        transcript=_transcript_with_segments(), manifest=_manifest_single_video(), assets=_assets(),
+    )
+
+    assert len(created_moments) == 1
+    assert created_moments[0]["treatment"] == "full-visual"
+    assert created_moments[0]["fullVisualKind"] == "image"
+    assert created_moments[0]["assetId"] == "asset-1"
+    assert rejected == []
+
+
+def test_edit_plan_creates_a_full_screen_code_grounded_against_a_real_code_asset():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    llm = _FakeLLMClient(
+        {
+            "operations": [
+                {
+                    "op": "create", "type": "full-screen", "sceneId": "scene-001", "fullVisualKind": "code",
+                    "codeAssetId": "code-1", "reason": "shows the kafka consumer full screen",
+                }
+            ]
+        }
+    )
+
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+        scene_plan, "show the kafka consumer code full screen", llm, PROMPT_TEMPLATE,
+        transcript=_transcript_with_segments(), manifest=_manifest_single_video(), code_assets=_code_assets(),
+    )
+
+    assert len(created_moments) == 1
+    assert created_moments[0]["treatment"] == "full-visual"
+    assert created_moments[0]["fullVisualKind"] == "code"
+    assert created_moments[0]["codeAssetId"] == "code-1"
+    assert rejected == []
+
+
+def test_edit_plan_creates_a_full_screen_text_grounded_against_the_transcript():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    llm = _FakeLLMClient(
+        {
+            "operations": [
+                {
+                    "op": "create", "type": "full-screen", "sceneId": "scene-001", "fullVisualKind": "text",
+                    "text": "dependency injection matters", "reason": "the core statement, full screen",
+                }
+            ]
+        }
+    )
+
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+        scene_plan, "make this statement full screen", llm, PROMPT_TEMPLATE,
+        transcript=_transcript_with_segments(), manifest=_manifest_single_video(),
+    )
+
+    assert len(created_moments) == 1
+    assert created_moments[0]["treatment"] == "full-visual"
+    assert created_moments[0]["fullVisualKind"] == "text"
+    assert created_moments[0]["text"] == "dependency injection matters"
+    assert rejected == []
+
+
+def test_edit_plan_rejects_a_full_screen_creation_with_an_unrecognized_full_visual_kind():
+    scene_plan = _scene_plan_with_segments_scene()
+
+    llm = _FakeLLMClient(
+        {
+            "operations": [
+                {
+                    "op": "create", "type": "full-screen", "sceneId": "scene-001", "fullVisualKind": "video",
+                    "reason": "x",
+                }
+            ]
+        }
+    )
+
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+        scene_plan, "show a full screen video", llm, PROMPT_TEMPLATE,
+        transcript=_transcript_with_segments(), manifest=_manifest_single_video(),
+    )
+
+    assert created_moments == []
+    assert len(rejected) == 1
 
 
 def test_edit_plan_rejects_an_ungroundable_diagram_creation():
@@ -1621,3 +1903,14 @@ def test_edit_plan_prompt_includes_entrance_animation_guidance():
     assert '"fade"' in real_template
     assert '"scale"' in real_template
     assert '"slide"' in real_template
+
+
+def test_edit_plan_prompt_includes_full_screen_creation_guidance():
+    # Regression check that Full Screen image/code/text creation (#64) is
+    # documented in the real prompt file on disk, not just implemented in
+    # code the LLM is never told about.
+    real_template = load_prompt(PROMPT_FILE)
+
+    assert '"type": "full-screen"' in real_template
+    assert "fullVisualKind" in real_template
+    assert "{available_code_assets}" in real_template
