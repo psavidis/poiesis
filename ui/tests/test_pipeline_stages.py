@@ -45,3 +45,14 @@ def test_find_stage_returns_none_for_unknown_id():
 def test_find_stage_finds_primary_and_secondary_stages():
     assert find_stage("prepare") is not None
     assert find_stage("key_footage") in SECONDARY_STAGES
+
+
+def test_index_code_is_a_chained_stage_before_generate_moments():
+    # index_code.py existed as a standalone script with no automatic
+    # trigger — generate_moments.py already reads code_assets to propose
+    # codeAssetId-grounded moments, so index_code must be chained in and
+    # must run before generate_moments, or code assets are silently never
+    # available to it on a fresh pipeline run.
+    ids = [stage.id for stage in PIPELINE_STAGES]
+    assert "index_code" in ids
+    assert ids.index("index_code") < ids.index("generate_moments")

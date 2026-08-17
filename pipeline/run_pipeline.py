@@ -157,6 +157,18 @@ def main():
     run(index_assets_command)
 
 
+    # 6a-2. Index episode code/ into a code asset manifest — must run
+    # before generate_moments below, which already reads code_assets to
+    # propose codeAssetId-grounded moments.
+    index_code_command = [
+        sys.executable,
+        str(pipeline / "index_code.py"),
+        str(episode)
+    ]
+
+    run(index_code_command)
+
+
     # 6b. Propose title scenes
     title_scenes_command = [
         sys.executable,

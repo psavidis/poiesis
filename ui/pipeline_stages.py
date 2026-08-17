@@ -88,6 +88,12 @@ PIPELINE_STAGES = [
         "assets.json",
     ),
     Stage(
+        "index_code",
+        "Index code assets",
+        lambda ep: [PYTHON, PIPELINE_DIR / "index_code.py", ep],
+        "code_assets.json",
+    ),
+    Stage(
         "generate_title_scenes",
         "Propose title scenes (AI)",
         lambda ep: [PYTHON, PIPELINE_DIR / "generate_title_scenes.py", ep],

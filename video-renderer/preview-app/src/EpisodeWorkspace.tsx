@@ -5,6 +5,7 @@ import type { EpisodeProps, Scene, ScenePlan } from "video-renderer-src/episode/
 import { getAssets, getCodeAssets, getManifest, getScenePlan, undoLastEdit, type EpisodeStatus } from "./api";
 import { ActiveSceneBar } from "./ActiveSceneBar";
 import { AdvancedPanel } from "./AdvancedPanel";
+import { AssetLibraryPanel } from "./AssetLibraryPanel";
 import { BeatBar } from "./BeatBar";
 import { ChapterStrip } from "./ChapterStrip";
 import { EditPlanChat } from "./EditPlanChat";
@@ -193,6 +194,7 @@ export function EpisodeWorkspace() {
     const ENRICHMENT_STAGE_IDS = [
         "analyze_scenes",
         "index_assets",
+        "index_code",
         "generate_title_scenes",
         "generate_storyboard",
         "generate_moments",
@@ -425,6 +427,14 @@ export function EpisodeWorkspace() {
                 onIncludeCaptionsChange={setIncludeCaptions}
             />
             <StoryboardPanel episodePath={episodePath} />
+            {episodeProps && (
+                <AssetLibraryPanel
+                    episodePath={episodePath}
+                    scenePlan={episodeProps.scenePlan}
+                    selectedMomentSceneId={selectedEditor?.kind === "moment" ? selectedEditor.sceneId : undefined}
+                    onSaved={reloadScenePlan}
+                />
+            )}
             <EpisodeAnalysisPanel episodePath={episodePath} />
         </>
     ) : null;
