@@ -1,10 +1,55 @@
 import json
 
-from index_code import description_from_filename, index_code, list_code_files
+from index_code import default_display_hint, description_from_filename, index_code, list_code_files
 
 
 def test_description_from_filename_cleans_up_separators():
     assert description_from_filename("order_repository-impl.java") == "order repository impl"
+
+
+def test_default_display_hint_reads_full_screen_folder(tmp_path):
+    code = tmp_path / "code"
+    (code / "full-screen").mkdir(parents=True)
+    file = code / "full-screen" / "KafkaConsumer.java"
+    file.write_text("class KafkaConsumer {}")
+
+    assert default_display_hint(file, code) == "full"
+
+
+def test_default_display_hint_accepts_the_shorter_full_folder_name(tmp_path):
+    code = tmp_path / "code"
+    (code / "full").mkdir(parents=True)
+    file = code / "full" / "KafkaConsumer.java"
+    file.write_text("class KafkaConsumer {}")
+
+    assert default_display_hint(file, code) == "full"
+
+
+def test_default_display_hint_is_none_for_flat_root_files(tmp_path):
+    code = tmp_path / "code"
+    code.mkdir(parents=True)
+    file = code / "Repository.java"
+    file.write_text("class Repository {}")
+
+    assert default_display_hint(file, code) is None
+
+
+def test_default_display_hint_is_none_for_an_unrecognized_subfolder_name(tmp_path):
+    code = tmp_path / "code"
+    (code / "com" / "example").mkdir(parents=True)
+    file = code / "com" / "example" / "Repository.java"
+    file.write_text("class Repository {}")
+
+    assert default_display_hint(file, code) is None
+
+
+def test_default_display_hint_only_reads_the_immediate_parent_folder(tmp_path):
+    code = tmp_path / "code"
+    (code / "full-screen" / "nested").mkdir(parents=True)
+    file = code / "full-screen" / "nested" / "x.java"
+    file.write_text("class X {}")
+
+    assert default_display_hint(file, code) is None
 
 
 def test_list_code_files_filters_by_extension_and_ignores_system_files(tmp_path):
@@ -87,6 +132,21 @@ def test_index_code_preserves_manually_edited_description_on_rerun(tmp_path):
     code_assets = index_code(episode)
 
     assert code_assets[0]["description"] == "constructor injection example"
+
+
+def test_index_code_stamps_default_display_for_full_screen_folder_assets(tmp_path):
+    episode = tmp_path / "episode"
+    code = episode / "code"
+    (code / "full-screen").mkdir(parents=True)
+
+    (code / "Repository.java").write_text("class Repository {}")
+    (code / "full-screen" / "KafkaConsumer.java").write_text("class KafkaConsumer {}")
+
+    code_assets = index_code(episode)
+    by_filename = {a["filename"]: a for a in code_assets}
+
+    assert "defaultDisplay" not in by_filename["Repository.java"]
+    assert by_filename["KafkaConsumer.java"]["defaultDisplay"] == "full"
 
 
 def test_index_code_adds_new_asset_without_disturbing_existing_description(tmp_path):

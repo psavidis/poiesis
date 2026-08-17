@@ -256,7 +256,12 @@ def format_code_assets_for_prompt(code_assets):
     lines = []
 
     for code_asset in code_assets:
-        lines.append(f"[{code_asset['id']}] {code_asset['language']} — {code_asset['description']}")
+        # Same folder-hint nudge as format_assets_for_prompt above (see
+        # index_code.py's default_display_hint) — a suggestion the AI
+        # should still weigh against its existing full-visual criteria,
+        # not a guarantee.
+        suggestion = " (suggested: full screen)" if code_asset.get("defaultDisplay") == "full" else ""
+        lines.append(f"[{code_asset['id']}] {code_asset['language']} — {code_asset['description']}{suggestion}")
 
     return "\n".join(lines)
 

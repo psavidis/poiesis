@@ -178,6 +178,11 @@ propose "side-code", "content-dominant-code", or a full-visual with
 fullVisualKind "code" — use another treatment or nothing instead. This same
 codeAssetId requirement applies to all three.
 
+Some code snippets are marked "(suggested: full screen)", the same
+folder-organization hint described above for images — weigh it the same
+way: not an instruction to always use full-visual, just a nudge to
+consider when the window itself is central enough to warrant it.
+
 Diagrams ("side-diagram") use this structure:
 - "nodes": a list of small boxes, each with a short "id" and a short
   "label" (a word or short phrase, not a sentence).

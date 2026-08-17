@@ -39,6 +39,33 @@ IGNORED_FILES = {
     "Thumbs.db",
 }
 
+# Same folder-as-authoring-hint convention as index_assets.py's
+# FULL_SCREEN_HINT_FOLDERS (see docs/specs/content-types-and-presentation-
+# editing.md's "Asset Folders as Authoring Metadata") — a code file placed
+# directly under one of these subfolder names hints that its initial
+# presentation should default to Full Screen, a suggestion generate_moments.py
+# and the user can both override, never a permanent constraint.
+FULL_SCREEN_HINT_FOLDERS = {"full-screen", "full"}
+
+
+def default_display_hint(file: Path, code_dir: Path) -> str | None:
+    """Mirrors index_assets.py's default_display_hint exactly — reads only
+    the file's immediate parent folder name, relative to code/. Only one
+    level deep is intentional: this reads as "this file lives in the
+    full-screen bucket," not as walking an arbitrary folder hierarchy."""
+
+    relative = file.relative_to(code_dir)
+
+    if len(relative.parts) < 2:
+        return None
+
+    immediate_parent = relative.parts[-2]
+
+    if immediate_parent in FULL_SCREEN_HINT_FOLDERS:
+        return "full"
+
+    return None
+
 
 def load_json(path: Path):
     with path.open("r", encoding="utf-8") as f:
@@ -124,17 +151,22 @@ def index_code(episode: Path):
 
         line_count = len(file.read_text(encoding="utf-8").splitlines())
 
-        code_assets.append(
-            {
-                "id": asset_id,
-                "filename": file.name,
-                "path": str(file.relative_to(episode)),
-                "renderPath": str(Path("episodes") / episode.name / "code" / file.relative_to(code_dir)),
-                "language": LANGUAGE_BY_EXTENSION[file.suffix.lower()],
-                "description": description,
-                "lineCount": line_count,
-            }
-        )
+        code_asset = {
+            "id": asset_id,
+            "filename": file.name,
+            "path": str(file.relative_to(episode)),
+            "renderPath": str(Path("episodes") / episode.name / "code" / file.relative_to(code_dir)),
+            "language": LANGUAGE_BY_EXTENSION[file.suffix.lower()],
+            "description": description,
+            "lineCount": line_count,
+        }
+
+        hint = default_display_hint(file, code_dir)
+
+        if hint:
+            code_asset["defaultDisplay"] = hint
+
+        code_assets.append(code_asset)
 
     write_json_atomic(output_path, {"codeAssets": code_assets})
 

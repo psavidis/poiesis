@@ -10,6 +10,7 @@ from generate_moments import (
     dedupe_overlapping_windows,
     duration_for_treatment,
     format_assets_for_prompt,
+    format_code_assets_for_prompt,
     format_storyboard_for_prompt,
     format_windows_for_prompt,
     is_comparison_grounded,
@@ -368,6 +369,27 @@ def test_format_assets_for_prompt_ignores_other_default_display_values():
     text = format_assets_for_prompt(assets)
 
     assert text == "[img-001] a photo"
+
+
+def test_format_code_assets_for_prompt_annotates_full_screen_hinted_assets():
+    code_assets = [
+        {"id": "code-001", "language": "java", "description": "a repository"},
+        {"id": "code-002", "language": "java", "description": "a kafka consumer", "defaultDisplay": "full"},
+    ]
+
+    text = format_code_assets_for_prompt(code_assets)
+
+    assert "[code-001] java — a repository\n" in text + "\n"
+    assert "[code-002] java — a kafka consumer (suggested: full screen)" in text
+    assert "(suggested: full screen)" not in text.split("\n")[0]
+
+
+def test_format_code_assets_for_prompt_ignores_other_default_display_values():
+    code_assets = [{"id": "code-001", "language": "java", "description": "a repository", "defaultDisplay": "inset"}]
+
+    text = format_code_assets_for_prompt(code_assets)
+
+    assert text == "[code-001] java — a repository"
 
 
 def test_propose_moments_accepts_grounded_bottom_callout():
