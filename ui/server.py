@@ -86,7 +86,7 @@ app.add_middleware(
         "http://localhost:5173",
         "http://127.0.0.1:5173",
     ],
-    allow_methods=["GET", "PUT", "POST"],
+    allow_methods=["GET", "PUT", "POST", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -749,6 +749,55 @@ def update_scene_fields(path: str, body: SceneFieldUpdate):
         raise HTTPException(status_code=409, detail=str(e))
 
     return {"applied": valid_ops}
+
+
+@app.delete("/api/episode/scene")
+def delete_scene(path: str, sceneId: str):
+    """Removes a single scene from scene-plan.json by id — the deterministic
+    counterpart to update_scene_fields above, for scene types with no
+    separate source-of-truth file to also update (image scenes are the
+    first user: ImageEditorPanel's own "Remove" button was previously a
+    stub telling the user to go use the edit-plan chat instead). Reuses the
+    exact same validate_operations/apply_operations path a chat-driven
+    "remove this image" instruction already goes through — {"op": "remove"}
+    needs no field allowlist check (see validate_operations), so this works
+    for any scene type by id, not just images. Removing a scene doesn't
+    cascade to overlays anchored to it (see apply_operations' own
+    docstring) — a dangling parentSceneId is caught by qa_check.py, not
+    silently cleaned up here."""
+
+    episode = resolve_episode(path)
+    processing = episode / "processing"
+
+    scene_plan_path = processing / "scene-plan.json"
+
+    if not scene_plan_path.exists():
+        raise HTTPException(status_code=404, detail="scene-plan.json not found — run the pipeline first")
+
+    op = {"op": "remove", "sceneId": sceneId}
+
+    try:
+        with episode_lock(episode, wait=False):
+            with scene_plan_path.open("r", encoding="utf-8") as f:
+                scene_plan = json.load(f)
+
+            valid_ops, rejected = validate_operations(scene_plan, [op])
+
+            if rejected:
+                raise HTTPException(status_code=422, detail=rejected[0]["reason"])
+
+            def do_write():
+                updated_plan = apply_operations(scene_plan, valid_ops)
+                updated_plan = reflow_timeline(updated_plan)
+
+                write_json_atomic(scene_plan_path, updated_plan)
+                regenerate_codegen(episode)
+
+            wrap_with_checkpoint(processing, [scene_plan_path], "scene removal", do_write)
+    except EpisodeBusyError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    return {"removed": sceneId}
 
 
 class EditPlanRequest(BaseModel):

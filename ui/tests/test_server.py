@@ -1353,6 +1353,73 @@ def test_update_scene_returns_409_when_episode_is_locked(tmp_path):
     assert response.status_code == 409
 
 
+def test_delete_scene_returns_404_without_scene_plan(tmp_path):
+    episode = _make_episode(tmp_path)
+
+    response = client.delete(
+        "/api/episode/scene",
+        params={"path": str(episode), "sceneId": "scene-image-0"},
+    )
+
+    assert response.status_code == 404
+
+
+def test_delete_scene_rejects_unknown_scene_id(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan_with_image(episode)
+
+    response = client.delete(
+        "/api/episode/scene",
+        params={"path": str(episode), "sceneId": "scene-does-not-exist"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_delete_scene_removes_an_image_overlay(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan_with_image(episode)
+
+    response = client.delete(
+        "/api/episode/scene",
+        params={"path": str(episode), "sceneId": "scene-image-0"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["removed"] == "scene-image-0"
+
+    scene_plan_on_disk = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    assert not any(s["id"] == "scene-image-0" for s in scene_plan_on_disk["scenes"])
+
+
+def test_delete_scene_leaves_other_scenes_untouched(tmp_path):
+    episode = _make_episode(tmp_path)
+    scene_plan = _make_scene_plan_with_image(episode)
+
+    client.delete(
+        "/api/episode/scene",
+        params={"path": str(episode), "sceneId": "scene-image-0"},
+    )
+
+    scene_plan_on_disk = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    presenter_ids = {s["id"] for s in scene_plan["scenes"] if s["type"] == "presenter"}
+    remaining_presenter_ids = {s["id"] for s in scene_plan_on_disk["scenes"] if s["type"] == "presenter"}
+    assert remaining_presenter_ids == presenter_ids
+
+
+def test_delete_scene_returns_409_when_episode_is_locked(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan_with_image(episode)
+
+    with episode_lock(episode):
+        response = client.delete(
+            "/api/episode/scene",
+            params={"path": str(episode), "sceneId": "scene-image-0"},
+        )
+
+    assert response.status_code == 409
+
+
 def test_edit_scene_plan_returns_404_without_scene_plan(tmp_path):
     episode = _make_episode(tmp_path)
 

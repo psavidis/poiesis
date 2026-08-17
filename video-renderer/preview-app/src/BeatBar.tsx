@@ -111,12 +111,24 @@ export function BeatBar({
     // whenever selection changes rather than plumbing a new field through
     // the whole scene-plan merge just for this reset affordance.
     const [selectedOverriddenFields, setSelectedOverriddenFields] = useState<string[]>([]);
+    // Delete/Backspace on a selected beat shows this inline confirm —
+    // same pattern as MomentBar/ChapterStrip/ImageBar. Beat CREATION stays
+    // chat-only (a beat's text must be a real contiguous transcript-word
+    // span, not free text — there's no manual insert UI for that, unlike
+    // moments/images), but removal is just as safe here as anywhere else.
+    const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
     const selectedAnchorRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
     const trackRef = useRef<HTMLDivElement>(null);
     const dragRef = useRef<DragState | null>(null);
 
-    if (totalFrames <= 0) return null;
-
+    // resolved is computed unconditionally, NOT gated behind an early
+    // return here — every hook in this component must be declared before
+    // any conditional return, or deleting the last beat (item count
+    // N -> 0) renders fewer hooks than the previous pass and React
+    // crashes with "Rendered fewer hooks than expected" (confirmed live
+    // in the identically-shaped ImageBar.tsx — see its own comment on
+    // this exact bug). The actual early return sits just before the JSX
+    // return, after every hook below has run.
     const trackById = new Map<string, PresenterScene>();
     scenePlan.scenes.forEach((s) => {
         if (s.type === "presenter") trackById.set(s.id, s);
@@ -133,8 +145,6 @@ export function BeatBar({
             (b): b is { beat: BeatScene; parent: PresenterScene; startFrame: number } => b !== null
         )
         .sort((a, b) => a.startFrame - b.startFrame);
-
-    if (resolved.length === 0) return null;
 
     // Visible window, in absolute frames — windowFrames shrinks as zoom
     // increases; panStartFrame is clamped so windowStart+windowFrames
@@ -173,6 +183,7 @@ export function BeatBar({
         // stale selection highlighted after the user's attention has moved
         // elsewhere on the timeline.
         setSelectedBeatId(null);
+        setPendingDeleteId(null);
         const rect = e.currentTarget.getBoundingClientRect();
         const pct = clamp((e.clientX - rect.left) / rect.width, 0, 1);
         onSeek(Math.round(windowStartFrame + pct * windowFrames));
@@ -320,6 +331,47 @@ export function BeatBar({
         return () => window.removeEventListener("keydown", onKeyDown);
     }, [selectedBeatId, onEditRequested]);
 
+    // Delete/Backspace on a selected beat shows the inline confirm —
+    // mirrors MomentBar's own delete effect.
+    useEffect(() => {
+        if (!selectedBeatId) return;
+
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key !== "Delete" && e.key !== "Backspace") return;
+            const target = e.target as HTMLElement | null;
+            if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+
+            e.preventDefault();
+            setPendingDeleteId(selectedBeatId);
+        };
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [selectedBeatId]);
+
+    // Removes the beat at pendingDeleteId from the full array and saves —
+    // same "fetch fresh, filter by index, save the whole array" contract
+    // as commitResize, just filtering the index out instead of patching it.
+    const doDelete = async () => {
+        if (!pendingDeleteId) return;
+        const match = /^scene-beat-(\d+)$/.exec(pendingDeleteId);
+        const index = match ? Number(match[1]) : null;
+        if (index === null) return;
+
+        try {
+            const data = await getBeats(episodePath);
+            const beats = data.beats ?? [];
+            const next = beats.filter((_: unknown, i: number) => i !== index);
+
+            await saveBeats(episodePath, next);
+            onSaved();
+            setPendingDeleteId(null);
+            setSelectedBeatId(null);
+        } catch (e) {
+            setSaveError(String(e));
+        }
+    };
+
     // Writes the FULL beats array back (matching saveMoments/
     // saveTitleScenes's own "rewrite the whole file" contract) — fetches
     // emphasis.json fresh rather than reconstructing it from scenePlan's
@@ -354,6 +406,10 @@ export function BeatBar({
 
     const playheadPct = clamp(frameToPct(currentFrame), 0, 100);
     const playheadVisible = currentFrame >= windowStartFrame && currentFrame <= windowStartFrame + windowFrames;
+
+    // Every hook above has now run unconditionally on every render — safe
+    // to bail on rendering anything from here on.
+    if (totalFrames <= 0 || resolved.length === 0) return null;
 
     return (
         <div style={styles.wrap}>
@@ -409,6 +465,7 @@ export function BeatBar({
                                 e.stopPropagation();
                                 selectedAnchorRef.current = { x: e.clientX, y: e.clientY };
                                 setSelectedBeatId(beat.id);
+                                setPendingDeleteId(null);
                                 onSeek(startFrame);
                             }}
                         >
@@ -430,10 +487,22 @@ export function BeatBar({
 
             {saveError && <div style={styles.error}>{saveError}</div>}
 
+            {pendingDeleteId && (
+                <div style={styles.deleteConfirm}>
+                    <span>Delete this beat?</span>
+                    <button type="button" className="secondary small" onClick={doDelete} style={styles.deleteButton}>
+                        Delete
+                    </button>
+                    <button type="button" className="secondary small" onClick={() => setPendingDeleteId(null)}>
+                        Cancel
+                    </button>
+                </div>
+            )}
+
             <div style={styles.hintRow}>
                 <div style={styles.hint}>
                     {selectedBeatId
-                        ? `Selected — press ${MOD_KEY_LABEL}+E to edit its text.`
+                        ? `Selected — press ${MOD_KEY_LABEL}+E to edit its text, Delete to remove it.`
                         : zoom > 1
                         ? "Click a beat to select it, drag its right edge to resize, or click anywhere to seek."
                         : "Zoom in to drag a beat's duration — at full-episode width a 2s beat is too thin to grab reliably."}
@@ -555,6 +624,21 @@ const styles: Record<string, React.CSSProperties> = {
     error: {
         fontSize: typography.size.sm,
         color: colors.error,
+    },
+    deleteConfirm: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "6px 10px",
+        background: colors.surfaceElevated,
+        border: `1px solid ${colors.errorStrong}`,
+        borderRadius: radius.md,
+        fontSize: typography.size.sm,
+        color: colors.textPrimary,
+    },
+    deleteButton: {
+        color: colors.error,
+        borderColor: colors.errorStrong,
     },
     hintRow: {
         display: "flex",

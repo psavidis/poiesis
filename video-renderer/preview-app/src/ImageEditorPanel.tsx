@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ImageScene, ScenePlan } from "video-renderer-src/episode/types";
-import { getAssets, updateSceneFields } from "./api";
+import { deleteScene, getAssets, updateSceneFields } from "./api";
 import { colors, radius, typography } from "./tokens";
 
 interface Asset {
@@ -65,15 +65,17 @@ export function ImageEditorPanel({ episodePath, sceneId, scenePlan, onSaved, onC
         }
     };
 
-    const remove = () => {
-        // Removal (unlike a field update) needs the LLM-free deterministic
-        // "remove" op, not a "fields" update — reuses the same endpoint's
-        // op contract, matching ui/server.py's PUT /api/episode/scene body
-        // shape (sceneId + fields is the only shape that endpoint accepts
-        // for this panel's scope; broader remove support is #42/#46
-        // follow-up work, not needed for the display/asset/caption editing
-        // this panel targets today).
-        setError("Removing an image scene isn't supported here yet — use the edit-plan chat (e.g. \"remove this image\").");
+    const remove = async () => {
+        setStatus("Removing…");
+        setError(null);
+        try {
+            await deleteScene(episodePath, sceneId);
+            onSaved();
+            onClose();
+        } catch (e) {
+            setError(String(e));
+            setStatus("");
+        }
     };
 
     return (

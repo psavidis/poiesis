@@ -158,8 +158,15 @@ export function MomentBar({
     const trackRef = useRef<HTMLDivElement>(null);
     const dragRef = useRef<DragState | null>(null);
 
-    if (totalFrames <= 0) return null;
-
+    // resolved/presenterAtPlayhead/etc. are computed unconditionally, NOT
+    // gated behind an early return here — every hook in this component
+    // must be declared before any conditional return, or deleting the
+    // last moment (item count N -> 0) renders fewer hooks than the
+    // previous pass and React crashes with "Rendered fewer hooks than
+    // expected" (confirmed live in the identically-shaped ImageBar.tsx —
+    // see its own comment on this exact bug). The actual early return for
+    // totalFrames<=0 / resolved.length===0 now sits just before the JSX
+    // return, after every hook below has run.
     const trackById = new Map<string, PresenterScene | TitleScene>();
     scenePlan.scenes.forEach((s) => {
         if (s.type === "presenter" || s.type === "title") trackById.set(s.id, s);
@@ -192,8 +199,6 @@ export function MomentBar({
         })
         .filter((m): m is { moment: MomentScene; parent: PresenterScene | TitleScene; startFrame: number } => m !== null)
         .sort((a, b) => a.startFrame - b.startFrame);
-
-    if (resolved.length === 0) return null;
 
     const windowFrames = totalFrames / zoom;
     const maxPanStartPct = 1 - windowFrames / totalFrames;
@@ -512,6 +517,10 @@ export function MomentBar({
     const selectedIsTextEligible =
         !!selectedEntry &&
         isTextEligible({ kind: "moment", sceneId: selectedEntry.moment.id, treatment: selectedEntry.moment.treatment });
+
+    // Every hook above has now run unconditionally on every render — safe
+    // to bail on rendering anything from here on.
+    if (totalFrames <= 0 || resolved.length === 0) return null;
 
     return (
         <div style={styles.wrap}>

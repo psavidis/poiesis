@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ImageScene, PresenterScene, ScenePlan, TitleScene } from "video-renderer-src/episode/types";
-import { updateSceneFields } from "./api";
+import { deleteScene, updateSceneFields } from "./api";
 import { colors, radius, typography } from "./tokens";
 
 // A fourth, distinct color from SceneBar/MomentBar/BeatBar — image scenes
@@ -71,11 +71,24 @@ export function ImageBar({
     const [liveDuration, setLiveDuration] = useState(0);
     const [saveError, setSaveError] = useState<string | null>(null);
     const [selectedImageId, setSelectedImageId] = useState<string | null>(null);
+    // Delete/Backspace on a selected image shows this inline confirm —
+    // same pattern as MomentBar/ChapterStrip.
+    const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
     const trackRef = useRef<HTMLDivElement>(null);
     const dragRef = useRef<DragState | null>(null);
 
-    if (totalFrames <= 0) return null;
-
+    // resolved/windowFrames etc. are computed unconditionally (not gated
+    // behind the totalFrames/empty-state early returns below) — those
+    // returns must come AFTER every hook in this component is declared.
+    // They used to sit right here, before the useEffect calls further
+    // down: harmless when the item count only ever went from N to N (drag/
+    // resize never changed the array length), but the moment a delete path
+    // existed and could take it from 1 to 0, this component would render
+    // fewer hooks on that transition than on the previous render — React's
+    // "Rendered fewer hooks than expected" crash, confirmed live when
+    // deleting an episode's only image scene. Every one of MomentBar/
+    // BeatBar/ImageBar had this same latent shape; fixed here first since
+    // this is the one that actually crashed.
     const trackById = new Map<string, PresenterScene | TitleScene>();
     scenePlan.scenes.forEach((s) => {
         if (s.type === "presenter" || s.type === "title") trackById.set(s.id, s);
@@ -95,8 +108,9 @@ export function ImageBar({
         .filter((m): m is { image: ImageScene; parent: PresenterScene | TitleScene; startFrame: number } => m !== null)
         .sort((a, b) => a.startFrame - b.startFrame);
 
-    if (resolved.length === 0) return null;
-
+    // windowFrames can be 0/NaN when totalFrames <= 0 — every derived value
+    // below tolerates that (never rendered, since the JSX return is gated
+    // on totalFrames > 0 further down), so no extra guarding needed here.
     const windowFrames = totalFrames / zoom;
     const maxPanStartPct = 1 - windowFrames / totalFrames;
     const clampedPanStartPct = clamp(panStartPct, 0, Math.max(0, maxPanStartPct));
@@ -121,6 +135,7 @@ export function ImageBar({
     const onTrackClick = (e: React.MouseEvent<HTMLDivElement>) => {
         if (dragState) return;
         setSelectedImageId(null);
+        setPendingDeleteId(null);
         const rect = e.currentTarget.getBoundingClientRect();
         const pct = clamp((e.clientX - rect.left) / rect.width, 0, 1);
         onSeek(Math.round(windowStartFrame + pct * windowFrames));
@@ -202,6 +217,37 @@ export function ImageBar({
         return () => window.removeEventListener("keydown", onKeyDown);
     }, [selectedImageId, onEditRequested]);
 
+    // Delete/Backspace on a selected image shows the inline confirm —
+    // mirrors MomentBar's own delete effect.
+    useEffect(() => {
+        if (!selectedImageId) return;
+
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key !== "Delete" && e.key !== "Backspace") return;
+            const target = e.target as HTMLElement | null;
+            if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+
+            e.preventDefault();
+            setPendingDeleteId(selectedImageId);
+        };
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [selectedImageId]);
+
+    const doDelete = async () => {
+        if (!pendingDeleteId) return;
+
+        try {
+            await deleteScene(episodePath, pendingDeleteId);
+            onSaved();
+            setPendingDeleteId(null);
+            setSelectedImageId(null);
+        } catch (e) {
+            setSaveError(String(e));
+        }
+    };
+
     // Seeds selection from an AI chat edit (#54) and re-centers the view on
     // it — mirrors MomentBar's own highlightedId effect.
     useEffect(() => {
@@ -235,6 +281,10 @@ export function ImageBar({
 
     const playheadPct = clamp(frameToPct(currentFrame), 0, 100);
     const playheadVisible = currentFrame >= windowStartFrame && currentFrame <= windowStartFrame + windowFrames;
+
+    // Every hook above has now run unconditionally on every render — safe
+    // to bail on rendering anything from here on.
+    if (totalFrames <= 0 || resolved.length === 0) return null;
 
     return (
         <div style={styles.wrap}>
@@ -287,6 +337,7 @@ export function ImageBar({
                                 if (isDragging) return;
                                 e.stopPropagation();
                                 setSelectedImageId(image.id);
+                                setPendingDeleteId(null);
                                 onSeek(startFrame);
                             }}
                             onMouseDown={(e) => {
@@ -316,9 +367,21 @@ export function ImageBar({
 
             {saveError && <div style={styles.error}>{saveError}</div>}
 
+            {pendingDeleteId && (
+                <div style={styles.deleteConfirm}>
+                    <span>Delete this image?</span>
+                    <button type="button" className="secondary small" onClick={doDelete} style={styles.deleteButton}>
+                        Delete
+                    </button>
+                    <button type="button" className="secondary small" onClick={() => setPendingDeleteId(null)}>
+                        Cancel
+                    </button>
+                </div>
+            )}
+
             <div style={styles.hint}>
                 {selectedImageId
-                    ? `Selected — press ${MOD_KEY_LABEL}+E to edit.`
+                    ? `Selected — press ${MOD_KEY_LABEL}+E to edit, Delete to remove it.`
                     : zoom > 1
                     ? "Click an image to select it, drag its body to move it or its right edge to resize, or click empty track to seek."
                     : "Zoom in for precise dragging — at full-episode width a short image overlay is too thin to grab reliably."}
@@ -424,6 +487,21 @@ const styles: Record<string, React.CSSProperties> = {
     error: {
         fontSize: typography.size.sm,
         color: colors.error,
+    },
+    deleteConfirm: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "6px 10px",
+        background: colors.surfaceElevated,
+        border: `1px solid ${colors.errorStrong}`,
+        borderRadius: radius.md,
+        fontSize: typography.size.sm,
+        color: colors.textPrimary,
+    },
+    deleteButton: {
+        color: colors.error,
+        borderColor: colors.errorStrong,
     },
     hint: {
         fontSize: typography.size.xs,

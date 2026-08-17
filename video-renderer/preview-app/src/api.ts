@@ -198,6 +198,21 @@ export async function updateSceneFields(episodePath: string, sceneId: string, fi
     return res.json();
 }
 
+// Removes a single scene by id — the deterministic counterpart to
+// updateSceneFields, for scene types (image scenes today) with no
+// separate source-of-truth file to also update.
+export async function deleteScene(episodePath: string, sceneId: string) {
+    const res = await fetch(
+        `${API_BASE}/api/episode/scene?path=${encodeURIComponent(episodePath)}&sceneId=${encodeURIComponent(sceneId)}`,
+        { method: "DELETE" }
+    );
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || "Delete failed");
+    }
+    return res.json();
+}
+
 export interface TitleSceneProposal {
     segmentId: string;
     text: string;

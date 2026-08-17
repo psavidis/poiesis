@@ -135,6 +135,12 @@ export function ChapterStrip({
     const [liveFrame, setLiveFrame] = useState(0);
     const [dragError, setDragError] = useState<string | null>(null);
     const dragRef = useRef<DragState | null>(null);
+    // Delete/Backspace on a selected title shows this inline confirm
+    // rather than deleting immediately — same pattern as MomentBar's
+    // pendingDeleteId. Set to the SELECTED title's text (chapters/titles
+    // are correlated by text throughout this file, not id).
+    const [pendingDeleteText, setPendingDeleteText] = useState<string | null>(null);
+    const [deleteError, setDeleteError] = useState<string | null>(null);
 
     // Seeds selection from an AI chat edit (#54) — no zoom/pan to
     // re-center here (unlike MomentBar/BeatBar/ImageBar), this strip
@@ -169,6 +175,48 @@ export function ChapterStrip({
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
     }, [selectedTitle, onSelectTitle]);
+
+    // Delete/Backspace on a selected title shows the inline confirm —
+    // mirrors MomentBar's own delete effect. Unlike Cmd+E (which only
+    // fires when onSelectTitle is wired up), deleting doesn't depend on
+    // that prop, so this listener registers whenever something's selected.
+    useEffect(() => {
+        if (!selectedTitle) return;
+
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key !== "Delete" && e.key !== "Backspace") return;
+            const target = e.target as HTMLElement | null;
+            if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+
+            e.preventDefault();
+            setPendingDeleteText(selectedTitle);
+        };
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [selectedTitle]);
+
+    // Same "fetch fresh, filter by index, save the whole array" contract
+    // as TitleEditorPanel's own remove() — matched by text, the only
+    // identity title_scenes.json entries and merged scene-plan TitleScenes
+    // share (see this file's own comments on that known limitation).
+    const doDelete = async () => {
+        if (!pendingDeleteText) return;
+
+        try {
+            const current = await getTitleScenes(episodePath);
+            const index = current.findIndex((t) => t.text === pendingDeleteText);
+            if (index === -1) return;
+
+            const next = current.filter((_, i) => i !== index);
+            await saveTitleScenes(episodePath, next);
+            onSaved?.();
+            setPendingDeleteText(null);
+            setSelectedTitle(null);
+        } catch (e) {
+            setDeleteError(String(e));
+        }
+    };
 
     // Nearest resolvable segment position to a raw pixel-derived frame —
     // the actual "snap" a drag performs, purely client-side against the
@@ -262,6 +310,7 @@ export function ChapterStrip({
         // stopPropagation) is on empty track space, so it deselects rather
         // than leaving a stale selection highlighted.
         setSelectedTitle(null);
+        setPendingDeleteText(null);
         const rect = e.currentTarget.getBoundingClientRect();
         const pct = clamp((e.clientX - rect.left) / rect.width, 0, 1);
         onSeek(Math.round(pct * totalFrames));
@@ -331,6 +380,7 @@ export function ChapterStrip({
                                           e.stopPropagation();
                                           selectedAnchorRef.current = { x: e.clientX, y: e.clientY };
                                           setSelectedTitle(chapter.title!);
+                                          setPendingDeleteText(null);
                                           onSeek(chapter.startFrame);
                                       }
                                     : undefined
@@ -359,10 +409,23 @@ export function ChapterStrip({
             </div>
 
             {dragError && <div style={styles.error}>{dragError}</div>}
+            {deleteError && <div style={styles.error}>{deleteError}</div>}
+
+            {pendingDeleteText && (
+                <div style={styles.deleteConfirm}>
+                    <span>Delete this chapter's title card?</span>
+                    <button type="button" className="secondary small" onClick={doDelete} style={styles.deleteButton}>
+                        Delete
+                    </button>
+                    <button type="button" className="secondary small" onClick={() => setPendingDeleteText(null)}>
+                        Cancel
+                    </button>
+                </div>
+            )}
 
             <div style={styles.hint}>
                 {selectedTitle
-                    ? `Selected — press ${MOD_KEY_LABEL}+E to edit its title.`
+                    ? `Selected — press ${MOD_KEY_LABEL}+E to edit its title, Delete to remove it.`
                     : `Click anywhere to jump the player there${
                           onSelectTitle ? `, or click a chapter to select it, then ${MOD_KEY_LABEL}+E to edit` : ""
                       }. Drag a chapter's left edge to move its boundary.`}
@@ -451,6 +514,21 @@ const styles: Record<string, React.CSSProperties> = {
     error: {
         fontSize: typography.size.sm,
         color: colors.error,
+    },
+    deleteConfirm: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "6px 10px",
+        background: colors.surfaceElevated,
+        border: `1px solid ${colors.errorStrong}`,
+        borderRadius: radius.md,
+        fontSize: typography.size.sm,
+        color: colors.textPrimary,
+    },
+    deleteButton: {
+        color: colors.error,
+        borderColor: colors.errorStrong,
     },
     playhead: {
         position: "absolute",
