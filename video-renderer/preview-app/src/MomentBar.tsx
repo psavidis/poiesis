@@ -219,6 +219,13 @@ export function MomentBar({
     const onTrackClick = (e: React.MouseEvent<HTMLDivElement>) => {
         if (dragState) return;
         setSelectedMomentId(null);
+        // Any click on the track — empty space or another segment — means
+        // the user has moved on from whatever Cmd+I was doing, including a
+        // still-showing "couldn't insert here" error. Leaving that popup
+        // open while the user selects/deletes an unrelated moment reads as
+        // a stale, confusing leftover (found live: deleting a moment left
+        // the insert picker's error message sitting on screen).
+        setInsertPickerAnchor(null);
         const rect = e.currentTarget.getBoundingClientRect();
         const pct = clamp((e.clientX - rect.left) / rect.width, 0, 1);
         onSeek(Math.round(windowStartFrame + pct * windowFrames));
@@ -574,6 +581,11 @@ export function MomentBar({
                                 if (isDragging) return;
                                 e.stopPropagation();
                                 onSelect?.(moment.id);
+                                // Same reasoning as onTrackClick — a segment
+                                // click bypasses that handler entirely
+                                // (stopPropagation above), so the insert
+                                // picker needs its own dismissal here too.
+                                setInsertPickerAnchor(null);
                                 // selectedMomentId is set on EVERY click,
                                 // text-eligible or not — it's what makes
                                 // Delete/Backspace work (see the delete
