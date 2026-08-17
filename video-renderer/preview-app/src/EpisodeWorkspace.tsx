@@ -707,6 +707,12 @@ const styles: Record<string, React.CSSProperties> = {
         alignSelf: "flex-start",
         height: "100vh",
         overflow: "hidden",
+        // border-box, not the browser default content-box — otherwise this
+        // 16px padding adds on TOP of the 100vh height instead of being
+        // carved out of it, pushing the form (pinned to the bottom of this
+        // box) below the actual viewport with no way to scroll back to it,
+        // since overflow is hidden here by design (see above).
+        boxSizing: "border-box",
     },
     container: {
         fontFamily: typography.fontFamily,
