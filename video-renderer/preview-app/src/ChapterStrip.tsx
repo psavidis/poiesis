@@ -196,6 +196,20 @@ export function ChapterStrip({
         return () => window.removeEventListener("keydown", onKeyDown);
     }, [selectedTitle]);
 
+    // Escape dismisses the delete confirm without deleting (found missing
+    // during a live keyboard-shortcut sweep — mirrors the fix in
+    // MomentBar/BeatBar/ImageBar).
+    useEffect(() => {
+        if (!pendingDeleteText) return;
+
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key === "Escape") setPendingDeleteText(null);
+        };
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [pendingDeleteText]);
+
     // Same "fetch fresh, filter by index, save the whole array" contract
     // as TitleEditorPanel's own remove() — matched by text, the only
     // identity title_scenes.json entries and merged scene-plan TitleScenes

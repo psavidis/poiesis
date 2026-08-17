@@ -404,6 +404,22 @@ export function MomentBar({
         return () => window.removeEventListener("keydown", onKeyDown);
     }, [selectedMomentId]);
 
+    // Escape dismisses the delete confirm without deleting — same
+    // "cancel via Escape" affordance InsertTypePicker already has, applied
+    // to the OTHER confirm-shaped popup in this component (found missing
+    // during a live keyboard-shortcut sweep: the confirm's Cancel button
+    // worked, but Escape silently did nothing).
+    useEffect(() => {
+        if (!pendingDeleteId) return;
+
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key === "Escape") setPendingDeleteId(null);
+        };
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [pendingDeleteId]);
+
     // Appends a new content-empty moment at the playhead (see
     // resolve_manual_moment_creation for what "empty" means per kind), then
     // immediately opens its editor — a text moment gets the inline text

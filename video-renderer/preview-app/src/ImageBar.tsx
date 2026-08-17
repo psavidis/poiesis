@@ -235,6 +235,20 @@ export function ImageBar({
         return () => window.removeEventListener("keydown", onKeyDown);
     }, [selectedImageId]);
 
+    // Escape dismisses the delete confirm without deleting (found missing
+    // during a live keyboard-shortcut sweep — mirrors the fix in
+    // MomentBar/ChapterStrip/BeatBar).
+    useEffect(() => {
+        if (!pendingDeleteId) return;
+
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key === "Escape") setPendingDeleteId(null);
+        };
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [pendingDeleteId]);
+
     const doDelete = async () => {
         if (!pendingDeleteId) return;
 

@@ -349,6 +349,20 @@ export function BeatBar({
         return () => window.removeEventListener("keydown", onKeyDown);
     }, [selectedBeatId]);
 
+    // Escape dismisses the delete confirm without deleting (found missing
+    // during a live keyboard-shortcut sweep — mirrors the fix in
+    // MomentBar/ChapterStrip/ImageBar).
+    useEffect(() => {
+        if (!pendingDeleteId) return;
+
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key === "Escape") setPendingDeleteId(null);
+        };
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [pendingDeleteId]);
+
     // Removes the beat at pendingDeleteId from the full array and saves —
     // same "fetch fresh, filter by index, save the whole array" contract
     // as commitResize, just filtering the index out instead of patching it.
