@@ -59,6 +59,19 @@ export const colors = {
     timelineText: "#4a8fd1",
     timelineVisual: "#9868e0",
     timelineImage: "#33c9a0",
+    // Moment content-type colors (MomentBar.tsx) — split out of the old
+    // single timelineVisual purple bucket so image/code/diagram moments
+    // are each visually distinguishable on the moment strip, not just
+    // "text vs not text." timelineMomentImage is deliberately its own hue
+    // rather than reusing timelineImage (the separate standalone image-
+    // scene color) — the two appear on different strips and don't need to
+    // match each other, only to each read clearly within their own strip.
+    timelineMomentImage: "#33c9a0",
+    // Magenta/pink, not the red/orange family already used by playhead
+    // (#ff6b4a) and error (#ff9484/#e8574a) — a red-toned code color would
+    // be easy to mistake for the playhead line crossing the strip.
+    timelineMomentCode: "#d84f9e",
+    timelineMomentDiagram: "#9868e0",
     timelineBeat: "#d4a24e",
     timelinePresenter: "#2f8f78",
     timelineTitle: "#c99a4a",

@@ -1,26 +1,31 @@
 import { useEffect, useRef, useState } from "react";
 import type { MomentScene, PresenterScene, ScenePlan, TitleScene } from "video-renderer-src/episode/types";
-import { getMoments, saveMoments } from "./api";
+import { getMoments, insertMoment, saveMoments, type MomentInsertKind } from "./api";
 import { isTextEligible } from "./InlineTextEditor";
+import { contentTypeAndPresentationFor } from "./MomentEditorPanel";
 import { momentIndexFromSceneId } from "./momentDuration";
-import { colors, radius, typography } from "./tokens";
+import { colors, radius, shadow, typography } from "./tokens";
 
-// Two-category color scheme, not per-treatment — the question this strip
-// answers is "where does text appear on screen" (see #35), not "what
-// exact treatment is this." Text-bearing: the viewer will see words
-// rendered as this moment's primary content. Visual-bearing: an
-// image/diagram/code block is the primary content (its own caption, if
-// any, is secondary). "full-visual" is data-driven (fullVisualKind), not
-// a fixed treatment->category mapping, so it needs the whole moment, not
-// just its treatment string.
+// Per-content-type color scheme — previously a single purple bucket for
+// every non-text moment (#35's original "where does text appear" answer),
+// which made image/code/diagram moments indistinguishable from each other
+// at a glance. Reuses contentTypeAndPresentationFor (MomentEditorPanel.tsx)
+// rather than a second parallel treatment->category table, so this strip's
+// notion of "what kind of content is this" never drifts from the Asset
+// library panel's. contentTypeAndPresentationFor returns null for every
+// treatment this strip calls "text" (bottom-callout/side-text/side-terms/
+// comparison, and full-visual with fullVisualKind "text") — that's not a
+// coincidence, both were designed around the same content/no-content split.
 const TEXT_COLOR = colors.timelineText;
-const VISUAL_COLOR = colors.timelineVisual;
+const CONTENT_TYPE_COLOR: Record<string, string> = {
+    image: colors.timelineMomentImage,
+    code: colors.timelineMomentCode,
+    diagram: colors.timelineMomentDiagram,
+};
 
-const TEXT_TREATMENTS = new Set(["bottom-callout", "side-text", "side-terms", "comparison"]);
-
-function isTextMoment(moment: MomentScene): boolean {
-    if (moment.treatment === "full-visual") return moment.fullVisualKind === "text";
-    return TEXT_TREATMENTS.has(moment.treatment);
+function momentColor(moment: MomentScene): string {
+    const [contentType] = contentTypeAndPresentationFor(moment);
+    return contentType ? CONTENT_TYPE_COLOR[contentType] : TEXT_COLOR;
 }
 
 // Best-effort label for what a moment actually shows, for the inline
@@ -69,7 +74,12 @@ interface Props {
     // (clicking) a moment highlights it and seeks the player there;
     // editing is a deliberate second step, matching BeatBar's #39 pattern
     // rather than MomentBar's old click-opens-immediately behavior (#41).
-    onEditRequested: (sceneId: string, anchor: { x: number; y: number }) => void;
+    // The third (treatment) arg is passed only by Cmd+I's insert flow,
+    // which already knows the treatment it just created and can't rely on
+    // EpisodeWorkspace's scenePlan closure being fresh yet at that exact
+    // moment (see openInlineMomentEditor's own comment) — the click path
+    // omits it and keeps looking the treatment up as before.
+    onEditRequested: (sceneId: string, anchor: { x: number; y: number }, treatment?: string) => void;
     // Non-text-eligible treatments (side-image/side-terms/side-diagram/
     // side-code/comparison) have no single text field to inline-edit —
     // clicking one still opens the full structured MomentEditorPanel
@@ -134,6 +144,16 @@ export function MomentBar({
     // The clicked-but-not-editing moment — highlighted, and the target of
     // Cmd+E/Ctrl+E for text-eligible treatments.
     const [selectedMomentId, setSelectedMomentId] = useState<string | null>(null);
+    // Cmd+I's type picker — open only while the user is choosing what kind
+    // of moment to insert at the playhead. anchor positions the popup near
+    // wherever the shortcut was pressed, same pattern as the inline text
+    // editor's own anchor.
+    const [insertPickerAnchor, setInsertPickerAnchor] = useState<{ x: number; y: number } | null>(null);
+    const [inserting, setInserting] = useState(false);
+    // Delete/Backspace on a selected moment shows this inline confirm
+    // rather than deleting immediately — set to the moment id awaiting
+    // confirmation, cleared on confirm/cancel/deselect.
+    const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
     const selectedAnchorRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
     const trackRef = useRef<HTMLDivElement>(null);
     const dragRef = useRef<DragState | null>(null);
@@ -144,6 +164,20 @@ export function MomentBar({
     scenePlan.scenes.forEach((s) => {
         if (s.type === "presenter" || s.type === "title") trackById.set(s.id, s);
     });
+
+    // The presenter scene under the playhead right now, if any — Cmd+I
+    // inserts there, at the playhead's own offset into it. A moment can
+    // only be parented to a presenter scene (resolve_manual_moment_
+    // creation rejects a title parent, same as every other moment-creation
+    // path), so Cmd+I is simply unavailable while the playhead sits over a
+    // title card — there's no ambiguity to resolve, just nothing to insert
+    // into.
+    const presenterAtPlayhead = scenePlan.scenes.find(
+        (s): s is PresenterScene =>
+            s.type === "presenter" &&
+            currentFrame >= s.timelineStartFrame &&
+            currentFrame < s.timelineStartFrame + s.durationInFrames
+    );
 
     const resolved = scenePlan.scenes
         .filter((s): s is MomentScene => s.type === "moment")
@@ -309,6 +343,121 @@ export function MomentBar({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedMomentId, onEditRequested]);
 
+    // Cmd+I (Mac) / Ctrl+I (elsewhere) opens the insert type picker at the
+    // playhead — global like Cmd+E, but doesn't require a moment to be
+    // selected first (inserting is independent of selection; only editing/
+    // deleting act on a selection). Requires a presenter scene under the
+    // playhead (see presenterAtPlayhead above) — silently does nothing
+    // otherwise rather than erroring, the same "no valid target, no-op"
+    // behavior Cmd+E already has when nothing text-eligible is selected.
+    // Anchored to the playhead's own DOM position (not selectedAnchorRef,
+    // which only ever gets set by clicking a moment segment and would
+    // still be its unset {0,0} default if the user presses Cmd+I before
+    // ever clicking one) — always correct regardless of click history.
+    useEffect(() => {
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key.toLowerCase() !== "i" || !(e.metaKey || e.ctrlKey)) return;
+            const target = e.target as HTMLElement | null;
+            if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+            if (!presenterAtPlayhead || !trackRef.current) return;
+
+            e.preventDefault();
+            const rect = trackRef.current.getBoundingClientRect();
+            setPendingDeleteId(null);
+            setInsertPickerAnchor({ x: rect.left + frameToPct(currentFrame) * (rect.width / 100), y: rect.bottom });
+        };
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [presenterAtPlayhead?.id, currentFrame, zoom, panStartPct]);
+
+    // Delete/Backspace on a selected moment shows the inline confirm
+    // (pendingDeleteId) rather than deleting immediately — a destructive,
+    // one-keystroke action needs a second deliberate step, unlike Cmd+E's
+    // edit (fully reversible, nothing lost by opening it).
+    useEffect(() => {
+        if (!selectedMomentId) return;
+
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key !== "Delete" && e.key !== "Backspace") return;
+            const target = e.target as HTMLElement | null;
+            if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+
+            e.preventDefault();
+            setPendingDeleteId(selectedMomentId);
+        };
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [selectedMomentId]);
+
+    // Appends a new content-empty moment at the playhead (see
+    // resolve_manual_moment_creation for what "empty" means per kind), then
+    // immediately opens its editor — a text moment gets the inline text
+    // editor (matches clicking a text-eligible moment), everything else
+    // opens the structured panel (matches clicking a non-text-eligible one)
+    // since there's no single field to inline-edit for those.
+    const doInsert = async (kind: MomentInsertKind) => {
+        if (!presenterAtPlayhead) return;
+
+        // The picker's own anchor is exactly where the inline text editor
+        // should open too (both are "a floating box near where the user
+        // was just looking") — captured before it's cleared below.
+        const anchor = insertPickerAnchor ?? selectedAnchorRef.current;
+
+        setInserting(true);
+        setSaveError(null);
+
+        try {
+            const offsetInParentFrames = currentFrame - presenterAtPlayhead.timelineStartFrame;
+            const result = await insertMoment(episodePath, presenterAtPlayhead.id, offsetInParentFrames, kind);
+            onSaved();
+            setInsertPickerAnchor(null);
+            onSelect?.(result.sceneId);
+
+            if (kind === "text") {
+                setSelectedMomentId(result.sceneId);
+                // "bottom-callout" is exactly what MANUAL_CREATION_TREATMENTS
+                // maps "text" to server-side (see resolve_manual_moment_
+                // creation) — passed explicitly so onEditRequested doesn't
+                // need to look the treatment up from a scenePlan that may
+                // not have this brand-new moment in it yet (see
+                // openInlineMomentEditor's own comment on why that lookup
+                // can't be trusted right after onSaved()).
+                onEditRequested(result.sceneId, anchor, "bottom-callout");
+            } else {
+                onOpenStructuredEditor(result.sceneId);
+            }
+        } catch (e) {
+            setSaveError(String(e));
+        } finally {
+            setInserting(false);
+        }
+    };
+
+    // Removes the moment at pendingDeleteId from the full array and saves —
+    // same "fetch fresh, patch by index, save the whole array" contract as
+    // commitDrag, just filtering the index out instead of patching it.
+    const doDelete = async () => {
+        if (!pendingDeleteId) return;
+        const index = momentIndexFromSceneId(pendingDeleteId);
+        if (index === null) return;
+
+        try {
+            const data = await getMoments(episodePath);
+            const moments = data.moments ?? [];
+            const next = moments.filter((_: unknown, i: number) => i !== index);
+
+            await saveMoments(episodePath, next);
+            onSaved();
+            setPendingDeleteId(null);
+            setSelectedMomentId(null);
+        } catch (e) {
+            setSaveError(String(e));
+        }
+    };
+
     // Writes the FULL moments array back (matching BeatBar's commitResize/
     // saveMoments contract) — fetches moments.json fresh rather than
     // reconstructing it from scenePlan's already-merged moment scenes,
@@ -356,7 +505,13 @@ export function MomentBar({
                         <span style={{ ...styles.legendDot, background: TEXT_COLOR }} /> text
                     </span>
                     <span style={styles.legendItem}>
-                        <span style={{ ...styles.legendDot, background: VISUAL_COLOR }} /> image/diagram/code
+                        <span style={{ ...styles.legendDot, background: CONTENT_TYPE_COLOR.image }} /> image
+                    </span>
+                    <span style={styles.legendItem}>
+                        <span style={{ ...styles.legendDot, background: CONTENT_TYPE_COLOR.code }} /> code
+                    </span>
+                    <span style={styles.legendItem}>
+                        <span style={{ ...styles.legendDot, background: CONTENT_TYPE_COLOR.diagram }} /> diagram
                     </span>
                 </span>
                 <div style={styles.zoomControls}>
@@ -386,7 +541,7 @@ export function MomentBar({
 
                     const widthPct = Math.max(rawWidthPct, 0.6);
                     const label = momentLabel(moment);
-                    const color = isTextMoment(moment) ? TEXT_COLOR : VISUAL_COLOR;
+                    const color = momentColor(moment);
                     const textEligible = isTextEligible({ kind: "moment", sceneId: moment.id, treatment: moment.treatment });
                     const isSelected = selectedMomentId === moment.id;
 
@@ -452,13 +607,100 @@ export function MomentBar({
 
             {saveError && <div style={styles.error}>{saveError}</div>}
 
+            {pendingDeleteId && (
+                <div style={styles.deleteConfirm}>
+                    <span>Delete this moment?</span>
+                    <button type="button" className="secondary small" onClick={doDelete} style={styles.deleteButton}>
+                        Delete
+                    </button>
+                    <button type="button" className="secondary small" onClick={() => setPendingDeleteId(null)}>
+                        Cancel
+                    </button>
+                </div>
+            )}
+
+            {insertPickerAnchor && (
+                <InsertTypePicker
+                    anchor={insertPickerAnchor}
+                    disabled={inserting}
+                    onPick={doInsert}
+                    onCancel={() => setInsertPickerAnchor(null)}
+                />
+            )}
+
             <div style={styles.hint}>
                 {selectedMomentId
-                    ? `Selected — press ${MOD_KEY_LABEL}+E to edit its text.`
+                    ? `Selected — press ${MOD_KEY_LABEL}+E to edit its text, Delete to remove it.`
+                    : presenterAtPlayhead
+                    ? `Press ${MOD_KEY_LABEL}+I to insert a moment here.${
+                          zoom > 1
+                              ? " Click a moment to select it, drag its body to move it or its right edge to resize."
+                              : ""
+                      }`
                     : zoom > 1
                     ? "Click a moment to select it, drag its body to move it or its right edge to resize, or click empty track to seek."
                     : "Zoom in for precise dragging — at full-episode width a short moment is too thin to grab reliably."}
             </div>
+        </div>
+    );
+}
+
+const INSERT_KIND_LABELS: { kind: MomentInsertKind; label: string }[] = [
+    { kind: "text", label: "Text callout" },
+    { kind: "image", label: "Image" },
+    { kind: "code", label: "Code" },
+    { kind: "diagram", label: "Diagram" },
+];
+
+// Cmd+I's type picker — a small fixed-position popup near wherever the
+// shortcut was pressed, matching InlineTextEditor's own anchor pattern.
+// Picking a kind hands off immediately to doInsert; there's no separate
+// "confirm" step since picking a kind IS the confirmation (unlike delete,
+// this action creates rather than destroys, so the lighter one-click flow
+// is appropriate — mirrors why Cmd+E needs no confirmation either).
+function InsertTypePicker({
+    anchor,
+    disabled,
+    onPick,
+    onCancel,
+}: {
+    anchor: { x: number; y: number };
+    disabled: boolean;
+    onPick: (kind: MomentInsertKind) => void;
+    onCancel: () => void;
+}) {
+    useEffect(() => {
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key === "Escape") onCancel();
+        };
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [onCancel]);
+
+    return (
+        <div
+            style={{
+                ...styles.insertPicker,
+                left: Math.min(anchor.x, window.innerWidth - 220),
+                top: anchor.y + 12,
+            }}
+        >
+            <div style={styles.insertPickerLabel}>Insert moment</div>
+            {INSERT_KIND_LABELS.map(({ kind, label }) => (
+                <button
+                    key={kind}
+                    type="button"
+                    className="secondary small"
+                    disabled={disabled}
+                    onClick={() => onPick(kind)}
+                    style={styles.insertPickerButton}
+                >
+                    {label}
+                </button>
+            ))}
+            <button type="button" className="secondary small" disabled={disabled} onClick={onCancel}>
+                Cancel
+            </button>
         </div>
     );
 }
@@ -579,5 +821,41 @@ const styles: Record<string, React.CSSProperties> = {
     hint: {
         fontSize: typography.size.xs,
         color: colors.textMuted,
+    },
+    deleteConfirm: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "6px 10px",
+        background: colors.surfaceElevated,
+        border: `1px solid ${colors.errorStrong}`,
+        borderRadius: radius.md,
+        fontSize: typography.size.sm,
+        color: colors.textPrimary,
+    },
+    deleteButton: {
+        color: colors.error,
+        borderColor: colors.errorStrong,
+    },
+    insertPicker: {
+        position: "fixed",
+        zIndex: 50,
+        display: "flex",
+        flexDirection: "column",
+        gap: 4,
+        width: 180,
+        padding: 10,
+        background: colors.surface,
+        border: `1px solid ${colors.borderStrong}`,
+        borderRadius: radius.lg,
+        boxShadow: shadow.elevated,
+    },
+    insertPickerLabel: {
+        fontSize: typography.size.xs,
+        color: colors.textMuted,
+        marginBottom: 2,
+    },
+    insertPickerButton: {
+        textAlign: "left",
     },
 };

@@ -440,6 +440,134 @@ def test_update_moments_writes_file_and_merges_scene_plan(tmp_path):
     assert moment_scenes[0]["offsetInParentFrames"] == 15
 
 
+def test_insert_moment_appends_and_returns_the_new_scene_id(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    response = client.post(
+        "/api/episode/moments/insert",
+        params={"path": str(episode)},
+        json={"sceneId": "scene-001", "offsetInParentFrames": 10, "kind": "text"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["sceneId"] == "scene-moment-0"
+    assert body["moments"][0]["treatment"] == "bottom-callout"
+    assert body["moments"][0]["offsetInParentFrames"] == 10
+
+    moments_on_disk = json.loads((episode / "processing" / "moments.json").read_text())
+    assert moments_on_disk["moments"][0]["treatment"] == "bottom-callout"
+
+    scene_plan_on_disk = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    moment_scenes = [s for s in scene_plan_on_disk["scenes"] if s["type"] == "moment"]
+    assert len(moment_scenes) == 1
+    assert moment_scenes[0]["id"] == "scene-moment-0"
+
+
+def test_insert_moment_assigns_a_window_id_so_a_later_full_array_save_succeeds(tmp_path):
+    # Regression: resolve_manual_moment_creation, like resolve_bottom_
+    # callout_creation before it, never sets windowId — the MomentProposal
+    # model requires it, so a moment saved without one 422s on every LATER
+    # full-array save (any drag/click-commit elsewhere re-sends this moment
+    # verbatim). See test_edit_scene_plan_assigns_window_id_to_created_moment
+    # for the same bug's first occurrence (chat-created moments).
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    insert_response = client.post(
+        "/api/episode/moments/insert",
+        params={"path": str(episode)},
+        json={"sceneId": "scene-001", "offsetInParentFrames": 10, "kind": "text"},
+    )
+
+    assert insert_response.status_code == 200
+    inserted = insert_response.json()["moments"][0]
+    assert inserted.get("windowId")
+
+    resave_response = client.put(
+        "/api/episode/moments",
+        params={"path": str(episode)},
+        json={"moments": [inserted]},
+    )
+
+    assert resave_response.status_code == 200
+
+
+def test_insert_moment_appends_after_existing_moments(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+    (episode / "processing" / "moments.json").write_text(
+        json.dumps({"moments": [_bottom_callout_payload(offsetInParentFrames=0, maxDurationInParentFrames=5)]})
+    )
+
+    response = client.post(
+        "/api/episode/moments/insert",
+        params={"path": str(episode)},
+        json={"sceneId": "scene-001", "offsetInParentFrames": 50, "kind": "image"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["sceneId"] == "scene-moment-1"
+    assert len(body["moments"]) == 2
+    assert body["moments"][1]["treatment"] == "side-image"
+
+
+def test_insert_moment_rejects_an_unknown_kind(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    response = client.post(
+        "/api/episode/moments/insert",
+        params={"path": str(episode)},
+        json={"sceneId": "scene-001", "offsetInParentFrames": 0, "kind": "video"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_insert_moment_rejects_overlap_with_an_existing_moment(tmp_path):
+    episode = _make_episode(tmp_path)
+    scene_plan = _make_scene_plan(episode)
+    # resolve_manual_moment_creation's overlap check reads the CURRENT
+    # scene-plan.json's already-merged moment scenes, not moments.json
+    # directly — mirrors how a real insert would only ever collide with
+    # what's actually on the timeline right now.
+    scene_plan["scenes"].append(
+        {
+            "id": "scene-moment-0",
+            "type": "moment",
+            "treatment": "bottom-callout",
+            "text": "already here",
+            "parentSceneId": "scene-001",
+            "offsetInParentFrames": 0,
+            "durationInFrames": 100,
+        }
+    )
+    (episode / "processing" / "scene-plan.json").write_text(json.dumps(scene_plan))
+
+    response = client.post(
+        "/api/episode/moments/insert",
+        params={"path": str(episode)},
+        json={"sceneId": "scene-001", "offsetInParentFrames": 10, "kind": "text"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_insert_moment_returns_404_without_scene_plan(tmp_path):
+    episode = _make_episode(tmp_path)
+
+    response = client.post(
+        "/api/episode/moments/insert",
+        params={"path": str(episode)},
+        json={"sceneId": "scene-001", "offsetInParentFrames": 0, "kind": "text"},
+    )
+
+    assert response.status_code == 404
+
+
 def test_update_moments_marks_changed_field_as_overridden(tmp_path):
     # #57 — a save that actually changes a field's value from what's on
     # disk records that field name in overriddenFields, so a later --force

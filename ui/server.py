@@ -42,6 +42,7 @@ from edit_plan import (  # noqa: E402
     validate_operations,
     apply_operations,
     reflow_timeline,
+    resolve_manual_moment_creation,
 )
 from llm.client import LLMClient  # noqa: E402
 from overlay_placement import insert_overlay_scene  # noqa: E402
@@ -433,6 +434,81 @@ def update_moments(path: str, body: MomentsUpdate):
         raise HTTPException(status_code=409, detail=str(e))
 
     return {"moments": moments}
+
+
+class MomentInsert(BaseModel):
+    sceneId: str
+    offsetInParentFrames: int
+    kind: str
+
+
+@app.post("/api/episode/moments/insert")
+def insert_moment(path: str, body: MomentInsert):
+    """Cmd+I: a human-initiated moment insertion at the playhead — appends
+    a minimal, content-empty proposal (resolve_manual_moment_creation) to
+    moments.json and re-merges, the same write path update_moments already
+    uses, just with one new proposal appended instead of the client's own
+    edited array round-tripped. Returns the new moment's sceneId
+    (scene-moment-{index}, same convention every moment endpoint in this
+    file uses) so the frontend can select it and open its editor
+    immediately — the moment has no real content yet until that happens."""
+
+    episode = resolve_episode(path)
+    processing = episode / "processing"
+
+    scene_plan_path = processing / "scene-plan.json"
+    moments_path = processing / "moments.json"
+
+    if not scene_plan_path.exists():
+        raise HTTPException(status_code=404, detail="scene-plan.json not found — run the pipeline first")
+
+    with scene_plan_path.open("r", encoding="utf-8") as f:
+        scene_plan = json.load(f)
+
+    proposal = resolve_manual_moment_creation(body.sceneId, body.offsetInParentFrames, body.kind, scene_plan)
+
+    if proposal is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Couldn't insert a moment here — check the scene id, kind, and that there's room at this position.",
+        )
+
+    old_moments = []
+    if moments_path.exists():
+        with moments_path.open("r", encoding="utf-8") as f:
+            old_moments = json.load(f).get("moments", [])
+
+    # windowId is a generate_moments.py-only concept (a candidate window's
+    # position within its own parent scene) that resolve_manual_moment_
+    # creation never sets — meaningless for a moment that didn't come from
+    # that windowing process. The MomentProposal Pydantic model requires it
+    # though, so a moment with none breaks every LATER save of the full
+    # array (any drag/click-commit elsewhere re-sends this moment verbatim
+    # and 422s) — the exact bug already fixed once for chat-created moments
+    # in update_edit_plan below. manual-w{N}, not chat-w{N}/w{N}, so it can
+    # never collide with either.
+    proposal["windowId"] = f"manual-w{len(old_moments)}"
+
+    moments = old_moments + [proposal]
+    new_scene_id = f"scene-moment-{len(moments) - 1}"
+
+    def do_write():
+        with scene_plan_path.open("r", encoding="utf-8") as f:
+            fresh_scene_plan = json.load(f)
+
+        merged = merge_moment_scenes(fresh_scene_plan, moments)
+
+        write_json_atomic(moments_path, {"moments": moments})
+        write_json_atomic(scene_plan_path, merged)
+        regenerate_codegen(episode)
+
+    try:
+        with episode_lock(episode, wait=False):
+            wrap_with_checkpoint(processing, [scene_plan_path, moments_path], "moment insert", do_write)
+    except EpisodeBusyError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    return {"moments": moments, "sceneId": new_scene_id}
 
 
 class MomentTreatmentSwitch(BaseModel):

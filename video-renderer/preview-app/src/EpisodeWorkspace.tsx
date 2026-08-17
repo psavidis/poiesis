@@ -158,13 +158,23 @@ export function EpisodeWorkspace() {
         setInlineEditTarget({ kind: "title", titleText });
     };
 
-    const openInlineMomentEditor = (sceneId: string, anchor: { x: number; y: number }) => {
+    // knownTreatment lets a caller that already knows the treatment (e.g.
+    // MomentBar's Cmd+I insert, immediately after creating a moment whose
+    // treatment it chose itself) skip the scenePlan lookup below entirely —
+    // that lookup reads episodeProps via closure, which is NOT guaranteed
+    // fresh right after an onSaved()/reloadScenePlan() await: the reload's
+    // fetch promise resolving doesn't mean React has re-rendered yet, so
+    // the newly-inserted moment can still be absent from this closure's
+    // scenePlan for one more tick. Every other caller (MomentBar's click
+    // handler) omits it and keeps the existing scenePlan-lookup behavior.
+    const openInlineMomentEditor = (sceneId: string, anchor: { x: number; y: number }, knownTreatment?: string) => {
         const scene = episodeProps?.scenePlan.scenes.find((s) => s.id === sceneId);
-        if (!scene || scene.type !== "moment") return;
-        if (!isTextEligible({ kind: "moment", sceneId, treatment: scene.treatment })) return;
+        const treatment = knownTreatment ?? (scene?.type === "moment" ? scene.treatment : undefined);
+        if (!treatment) return;
+        if (!isTextEligible({ kind: "moment", sceneId, treatment })) return;
         setSelectedEditor(null);
         setInlineEditAnchor(anchor);
-        setInlineEditTarget({ kind: "moment", sceneId, treatment: scene.treatment });
+        setInlineEditTarget({ kind: "moment", sceneId, treatment });
     };
 
     const openInlineBeatEditor = (sceneId: string, anchor: { x: number; y: number }) => {

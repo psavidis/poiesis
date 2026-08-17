@@ -421,6 +421,77 @@ def resolve_beat_creation(op, scene_plan, candidates_by_word_id, scenes_by_id, s
     }
 
 
+# The moment "kind" a human picks from the Cmd+I insert prompt, mapped to
+# the simplest single-content treatment for that kind — side-* rather than
+# full-visual, so a freshly inserted moment keeps the presenter visible by
+# default (CLAUDE.md: "do not obscure the presenter unnecessarily") instead
+# of defaulting to the most visually aggressive option. The user can still
+# switch to full-visual afterward via the existing treatment-switch UI.
+MANUAL_CREATION_TREATMENTS = {
+    "text": "bottom-callout",
+    "image": "side-image",
+    "code": "side-code",
+    "diagram": "side-diagram",
+}
+
+
+def resolve_manual_moment_creation(scene_id, offset_in_parent_frames, kind, scene_plan, style=None):
+    """Resolves a human-initiated (Cmd+I), not AI-proposed, moment
+    insertion into a minimal valid proposal ready to append to
+    moments.json — or None if the scene/kind/placement is invalid. Unlike
+    resolve_bottom_callout_creation and friends, there is no grounding
+    check here: the human is directly authoring this moment (its actual
+    content gets filled in afterward through the existing inline text
+    editor or structured MomentEditorPanel/AssetLibraryPanel), not an AI
+    inventing text/assets that need to be checked against the transcript.
+    Content fields (text/assetId/codeAssetId/diagram) are deliberately left
+    at their empty defaults — the moment renders as a visible-but-empty
+    placeholder until the user fills it in through those existing editors,
+    exactly as if the AI had proposed an empty one."""
+
+    if style is None:
+        style = load_style()
+
+    treatment = MANUAL_CREATION_TREATMENTS.get(kind)
+
+    if treatment is None:
+        return None
+
+    scenes_by_id = {scene["id"]: scene for scene in scene_plan["scenes"]}
+    parent = scenes_by_id.get(scene_id)
+
+    if not parent or parent["type"] != "presenter":
+        return None
+
+    offset = max(0, min(offset_in_parent_frames, parent["durationInFrames"]))
+
+    duration = min(
+        duration_for_treatment(treatment, style),
+        max(0, parent["durationInFrames"] - offset),
+    )
+
+    if duration <= 0:
+        return None
+
+    if _bottom_callout_overlaps_existing_moment(scene_plan, scene_id, offset, duration):
+        return None
+
+    proposal = {
+        "sceneId": scene_id,
+        "videoId": parent["videoId"],
+        "treatment": treatment,
+        "presenterSide": None if treatment in ("bottom-callout",) else "right",
+        "offsetInParentFrames": offset,
+        "maxDurationInParentFrames": duration,
+        "reason": "",
+    }
+
+    if treatment == "bottom-callout":
+        proposal["text"] = ""
+
+    return proposal
+
+
 def _bottom_callout_overlaps_existing_moment(scene_plan, scene_id, offset, duration):
     """Mirrors generate_moments.py's dedupe_overlapping_windows — a moment's
     on-screen window is its own span padded by TRANSITION_FRAMES on both

@@ -109,6 +109,33 @@ export async function saveMoments(episodePath: string, moments: unknown[]) {
     return res.json();
 }
 
+export type MomentInsertKind = "text" | "image" | "code" | "diagram";
+
+// Cmd+I: inserts a minimal, content-empty moment at the playhead — the
+// server resolves default duration/placement (resolve_manual_moment_
+// creation) and appends it, returning the new moment's sceneId so the
+// caller can select it and open its editor immediately.
+export async function insertMoment(
+    episodePath: string,
+    sceneId: string,
+    offsetInParentFrames: number,
+    kind: MomentInsertKind
+): Promise<{ moments: unknown[]; sceneId: string }> {
+    const res = await fetch(
+        `${API_BASE}/api/episode/moments/insert?path=${encodeURIComponent(episodePath)}`,
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sceneId, offsetInParentFrames, kind }),
+        }
+    );
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || "Insert failed");
+    }
+    return res.json();
+}
+
 // Switches an existing moment among the three code presentations
 // (side-code / content-dominant-code / full-visual+code) while keeping
 // the same codeAssetId — see #62, first slice of #42. Unlike saveMoments'

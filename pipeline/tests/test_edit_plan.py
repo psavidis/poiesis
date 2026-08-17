@@ -14,6 +14,7 @@ from edit_plan import (
     resolve_full_screen_image_creation,
     resolve_full_screen_text_creation,
     resolve_image_creation,
+    resolve_manual_moment_creation,
     validate_operations,
 )
 from generate_emphasis import build_candidate_words
@@ -757,6 +758,77 @@ def test_resolve_bottom_callout_creation_returns_none_without_transcript_or_mani
 
     assert resolve_bottom_callout_creation(op, scene_plan, None, _manifest_single_video()) is None
     assert resolve_bottom_callout_creation(op, scene_plan, _transcript_with_segments(), None) is None
+
+
+# resolve_manual_moment_creation — human-initiated (Cmd+I), not AI-proposed,
+# moment insertion. Unlike resolve_bottom_callout_creation and friends,
+# there's no transcript/grounding involved — a human directly authors the
+# content afterward through the existing editors, so these tests only cover
+# placement/duration/overlap, not text fabrication.
+def _presenter_only_scene_plan(duration=300):
+    return {"fps": 30, "scenes": [_presenter("scene-001", 0, duration, 0)]}
+
+
+def test_resolve_manual_moment_creation_creates_a_bottom_callout_for_text_kind():
+    scene_plan = _presenter_only_scene_plan()
+
+    moment = resolve_manual_moment_creation("scene-001", 60, "text", scene_plan)
+
+    assert moment["sceneId"] == "scene-001"
+    assert moment["treatment"] == "bottom-callout"
+    assert moment["offsetInParentFrames"] == 60
+    assert moment["text"] == ""
+    assert moment["presenterSide"] is None
+
+
+def test_resolve_manual_moment_creation_maps_each_kind_to_its_treatment():
+    scene_plan = _presenter_only_scene_plan()
+
+    assert resolve_manual_moment_creation("scene-001", 0, "image", scene_plan)["treatment"] == "side-image"
+    assert resolve_manual_moment_creation("scene-001", 0, "code", scene_plan)["treatment"] == "side-code"
+    assert resolve_manual_moment_creation("scene-001", 0, "diagram", scene_plan)["treatment"] == "side-diagram"
+
+
+def test_resolve_manual_moment_creation_rejects_an_unknown_kind():
+    scene_plan = _presenter_only_scene_plan()
+
+    assert resolve_manual_moment_creation("scene-001", 0, "video", scene_plan) is None
+
+
+def test_resolve_manual_moment_creation_rejects_a_non_presenter_scene():
+    scene_plan = {"fps": 30, "scenes": [_title("scene-title-0", "Hello", 0)]}
+
+    assert resolve_manual_moment_creation("scene-title-0", 0, "text", scene_plan) is None
+
+
+def test_resolve_manual_moment_creation_rejects_an_unknown_scene_id():
+    scene_plan = _presenter_only_scene_plan()
+
+    assert resolve_manual_moment_creation("scene-does-not-exist", 0, "text", scene_plan) is None
+
+
+def test_resolve_manual_moment_creation_clamps_duration_to_remaining_room():
+    # A tiny presenter scene with almost no room left after the offset —
+    # the default bottom-callout duration must be clamped, not overflow
+    # past the parent scene's own end.
+    scene_plan = _presenter_only_scene_plan(duration=70)
+
+    moment = resolve_manual_moment_creation("scene-001", 60, "text", scene_plan)
+
+    assert moment["maxDurationInParentFrames"] == 10
+
+
+def test_resolve_manual_moment_creation_rejects_placement_with_no_room_left():
+    scene_plan = _presenter_only_scene_plan(duration=60)
+
+    assert resolve_manual_moment_creation("scene-001", 60, "text", scene_plan) is None
+
+
+def test_resolve_manual_moment_creation_rejects_overlap_with_an_existing_moment():
+    scene_plan = _presenter_only_scene_plan()
+    scene_plan["scenes"].append(_moment("scene-moment-0", "scene-001", 0, 150, "already here"))
+
+    assert resolve_manual_moment_creation("scene-001", 0, "text", scene_plan) is None
 
 
 # resolve_image_creation — AI creation of inset image scenes via chat
