@@ -1536,6 +1536,51 @@ def test_undo_after_edit_plan_chat_creates_beat_restores_emphasis_json(tmp_path)
     assert scene_plan_restored == scene_plan_before
 
 
+def test_undo_after_multi_op_chat_instruction_reverts_all_ops_in_one_step(tmp_path):
+    """One chat instruction can yield multiple operations from a single LLM
+    call (e.g. "trim both intro scenes") — edit_scene_plan wraps the whole
+    do_write closure in exactly one wrap_with_checkpoint call, so all of
+    them land in a single undo-history entry. Proves that property
+    end-to-end: two scenes changed by one instruction, one undo call
+    reverts both together, not just the most recent one (see spec
+    ai-assisted-editing-and-conversational-control.md's "multi-step AI
+    operations are undoable as one logical edit" criterion — this was the
+    only untested part of that criterion; the checkpointing mechanism
+    itself already existed)."""
+    episode = _make_episode(tmp_path)
+    scene_plan_before = _make_scene_plan(episode, video_ids=("001", "002"))
+
+    scene_plan_after = json.loads(json.dumps(scene_plan_before))
+    scene_plan_after["scenes"][0]["durationInFrames"] = 80
+    scene_plan_after["scenes"][0]["sourceEndFrame"] = 80
+    scene_plan_after["scenes"][1]["durationInFrames"] = 70
+    scene_plan_after["scenes"][1]["sourceEndFrame"] = 70
+
+    fake_result = (scene_plan_after, [], [], [], [], [])
+
+    with patch("server.edit_plan", return_value=fake_result):
+        response = client.post(
+            "/api/episode/edit-plan",
+            params={"path": str(episode)},
+            json={"instruction": "trim both intro scenes by 20 frames"},
+        )
+    assert response.status_code == 200
+
+    scene_plan_written = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    assert scene_plan_written["scenes"][0]["durationInFrames"] == 80
+    assert scene_plan_written["scenes"][1]["durationInFrames"] == 70
+
+    undo_response = client.post("/api/episode/undo", params={"path": str(episode)})
+    assert undo_response.status_code == 200
+    assert undo_response.json()["restored"] is not None
+
+    # A single undo call must restore BOTH scenes at once — this is what
+    # distinguishes "one logical edit" from two separate undo-history
+    # entries that would each need their own undo call.
+    scene_plan_restored = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    assert scene_plan_restored == scene_plan_before
+
+
 def test_edit_scene_plan_creates_a_moment_in_moments_json_and_scene_plan(tmp_path):
     episode = _make_episode(tmp_path)
     scene_plan_before = _make_scene_plan(episode, video_ids=("001",))
