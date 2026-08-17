@@ -496,6 +496,16 @@ export function MomentBar({
     const playheadPct = clamp(frameToPct(currentFrame), 0, 100);
     const playheadVisible = currentFrame >= windowStartFrame && currentFrame <= windowStartFrame + windowFrames;
 
+    // Whether the CURRENTLY SELECTED moment specifically is text-eligible —
+    // selectedMomentId is now set on every click regardless (so Delete
+    // works for every treatment), but Cmd+E only actually does anything
+    // for text-eligible ones, so the hint below must reflect the selected
+    // moment's own treatment, not just "something is selected."
+    const selectedEntry = selectedMomentId ? resolved.find((r) => r.moment.id === selectedMomentId) : undefined;
+    const selectedIsTextEligible =
+        !!selectedEntry &&
+        isTextEligible({ kind: "moment", sceneId: selectedEntry.moment.id, treatment: selectedEntry.moment.treatment });
+
     return (
         <div style={styles.wrap}>
             <div style={styles.labelRow}>
@@ -564,17 +574,24 @@ export function MomentBar({
                                 if (isDragging) return;
                                 e.stopPropagation();
                                 onSelect?.(moment.id);
+                                // selectedMomentId is set on EVERY click,
+                                // text-eligible or not — it's what makes
+                                // Delete/Backspace work (see the delete
+                                // effect above), and a non-text-eligible
+                                // moment is just as deletable as a text
+                                // one. The Cmd+E effect already re-checks
+                                // isTextEligible itself before opening the
+                                // inline editor, so this doesn't change
+                                // when Cmd+E fires — only when Delete does.
+                                selectedAnchorRef.current = { x: e.clientX, y: e.clientY };
+                                setSelectedMomentId(moment.id);
+                                onSeek(startFrame);
                                 if (!textEligible) {
                                     // No single text field to inline-edit — keep
                                     // opening the full structured panel directly,
                                     // same as before #41.
                                     onOpenStructuredEditor(moment.id);
-                                    onSeek(startFrame);
-                                    return;
                                 }
-                                selectedAnchorRef.current = { x: e.clientX, y: e.clientY };
-                                setSelectedMomentId(moment.id);
-                                onSeek(startFrame);
                             }}
                             onMouseDown={(e) => {
                                 // Body-drag = move. Only text-ineligible clicks
@@ -630,7 +647,9 @@ export function MomentBar({
 
             <div style={styles.hint}>
                 {selectedMomentId
-                    ? `Selected — press ${MOD_KEY_LABEL}+E to edit its text, Delete to remove it.`
+                    ? selectedIsTextEligible
+                        ? `Selected — press ${MOD_KEY_LABEL}+E to edit its text, Delete to remove it.`
+                        : "Selected — press Delete to remove it, or click it again to open its editor."
                     : presenterAtPlayhead
                     ? `Press ${MOD_KEY_LABEL}+I to insert a moment here.${
                           zoom > 1
@@ -677,12 +696,23 @@ function InsertTypePicker({
         return () => window.removeEventListener("keydown", onKeyDown);
     }, [onCancel]);
 
+    // Estimated popup height (label + 4 kind buttons + cancel + gaps/
+    // padding) — flips to open ABOVE the anchor when there isn't enough
+    // room below, same reasoning as the horizontal clamp already here.
+    // Cmd+I's anchor is the playhead's own track position, which sits
+    // fairly low in a typically-scrolled page, so opening below by
+    // default clips off-screen (found live: "Code"/"Diagram" options were
+    // unreachable) far more often than InlineTextEditor's click-derived
+    // anchors ever did.
+    const ESTIMATED_HEIGHT = 210;
+    const openAbove = anchor.y + 12 + ESTIMATED_HEIGHT > window.innerHeight;
+
     return (
         <div
             style={{
                 ...styles.insertPicker,
                 left: Math.min(anchor.x, window.innerWidth - 220),
-                top: anchor.y + 12,
+                top: openAbove ? Math.max(8, anchor.y - ESTIMATED_HEIGHT) : anchor.y + 12,
             }}
         >
             <div style={styles.insertPickerLabel}>Insert moment</div>
