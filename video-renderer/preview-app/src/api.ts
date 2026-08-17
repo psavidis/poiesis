@@ -423,6 +423,12 @@ export async function undoLastEdit(episodePath: string): Promise<UndoResult> {
 export type RunMessage =
     | { type: "start"; command: string }
     | { type: "log"; line: string }
+    // Only ever sent for a DaVinci export (export_davinci.py's __TOTAL__/
+    // __PROGRESS__ sentinel lines — see ui/server.py's _stream_command);
+    // every other run (pipeline stage, video render, QA check) never emits
+    // these, so a caller not expecting them simply never receives them.
+    | { type: "total"; count: number }
+    | { type: "progress"; current: number; total: number }
     | { type: "error"; message: string }
     | { type: "done"; exitCode: number }
     | { type: "cancelled" };

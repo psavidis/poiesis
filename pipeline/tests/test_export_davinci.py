@@ -10,8 +10,10 @@ from export_davinci import (
     export_davinci,
     overlay_scenes_of_type,
     presenter_scenes,
+    render_clip,
     render_overlay_clips,
     render_presenter_clips,
+    total_clips,
     validate_export,
 )
 
@@ -101,6 +103,44 @@ def test_overlay_scenes_of_type_captions_respects_parent_effects_flag():
     # scene-caption-0's parent (scene-001) has captions enabled;
     # scene-caption-1's parent (scene-002) has them disabled.
     assert [s["id"] for s in captions] == ["scene-caption-0"]
+
+
+def test_total_clips_counts_presenters_plus_overlays_respecting_caption_filter():
+    scene_plan = _scene_plan_two_clips_and_a_title()
+
+    # 2 presenter + 1 title + 1 moment + 1 caption (the other caption's
+    # parent has captions disabled, same filter overlay_scenes_of_type
+    # applies) = 5.
+    assert total_clips(scene_plan) == 5
+
+
+def test_render_clip_reports_progress_after_a_render(tmp_path, capsys):
+    progress = {"done": 0, "total": 3}
+
+    with patch("export_davinci.subprocess.run"):
+        render_clip(tmp_path / "clip.mov", 0, 10, "presenter", None, resume=False, progress=progress)
+
+    assert progress["done"] == 1
+    assert "__PROGRESS__1/3" in capsys.readouterr().out
+
+
+def test_render_clip_reports_progress_after_a_resume_skip(tmp_path, capsys):
+    clip_path = tmp_path / "clip.mov"
+    clip_path.write_bytes(b"existing content")
+
+    progress = {"done": 1, "total": 3}
+
+    render_clip(clip_path, 0, 10, "presenter", None, resume=True, progress=progress)
+
+    assert progress["done"] == 2
+    assert "__PROGRESS__2/3" in capsys.readouterr().out
+
+
+def test_render_clip_without_progress_arg_prints_no_progress_line(tmp_path, capsys):
+    with patch("export_davinci.subprocess.run"):
+        render_clip(tmp_path / "clip.mov", 0, 10, "presenter", None, resume=False)
+
+    assert "__PROGRESS__" not in capsys.readouterr().out
 
 
 def test_clip_label_uses_title_text_for_title_scenes():

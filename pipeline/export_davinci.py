@@ -91,7 +91,22 @@ def overlay_scenes_of_type(scene_plan, scene_type):
     return sorted(scenes, key=lambda s: absolute_position(s, by_id))
 
 
-def render_clip(clip_path: Path, start_frame, end_frame, only_type, resolution, resume):
+def total_clips(scene_plan):
+    """Total number of clips export_davinci() will render or skip — one per
+    presenter scene plus one per overlay scene of each OVERLAY_TRACK_TYPES
+    type (captions filtered by their parent's effects.captions flag, same
+    as overlay_scenes_of_type/render_overlay_clips actually iterate). Used
+    to print an upfront __TOTAL__ line so a caller streaming this script's
+    stdout (see ui/server.py's _stream_command) can show a real N-of-M
+    progress bar instead of an open-ended scrolling log — see #65's
+    sibling request for the render console UI."""
+
+    return len(presenter_scenes(scene_plan)) + sum(
+        len(overlay_scenes_of_type(scene_plan, scene_type)) for scene_type in OVERLAY_TRACK_TYPES
+    )
+
+
+def render_clip(clip_path: Path, start_frame, end_frame, only_type, resolution, resume, progress=None):
     """Renders one transparent ProRes 4444 .mov covering [start_frame,
     end_frame) of the full episode timeline, with Episode.tsx's onlyTypes
     prop restricting output to a single scene type — e.g. onlyTypes=
@@ -105,10 +120,29 @@ def render_clip(clip_path: Path, start_frame, end_frame, only_type, resolution, 
     With resume=True, a clip that already exists (non-empty) is left in
     place rather than re-rendered — a render that dies partway through a
     long episode shouldn't force re-rendering every clip that already
-    succeeded."""
+    succeeded.
+
+    progress, when given, is a {"done": int, "total": int} dict this
+    function mutates and reports via a __PROGRESS__done/total line after
+    EVERY clip (rendered or skipped) — a single shared dict rather than a
+    return value, since the caller loops (render_presenter_clips/
+    render_overlay_clips) have no other running-total bookkeeping to
+    thread a return value through."""
 
     if resume and clip_path.exists() and clip_path.stat().st_size > 0:
         print(f"Skipping {clip_path.name} (already rendered)...")
+        if progress is not None:
+            progress["done"] += 1
+            # flush=True: stdout is a pipe here (not a TTY), so Python
+            # fully-buffers by default rather than line-buffering — without
+            # an explicit flush this line can sit in the buffer until
+            # process exit, arriving all at once at the very end instead of
+            # incrementally as each clip finishes (confirmed live: the
+            # progress bar stayed frozen on the FIRST clip's own npx
+            # remotion render output the entire time, never reaching
+            # "Rendering" state, because __TOTAL__ itself was stuck in the
+            # same unflushed buffer).
+            print(f"__PROGRESS__{progress['done']}/{progress['total']}", flush=True)
         return
 
     command = [
@@ -129,8 +163,12 @@ def render_clip(clip_path: Path, start_frame, end_frame, only_type, resolution, 
 
     subprocess.run(command, cwd=RENDERER_DIR, check=True)
 
+    if progress is not None:
+        progress["done"] += 1
+        print(f"__PROGRESS__{progress['done']}/{progress['total']}", flush=True)
 
-def render_presenter_clips(scene_plan, clips_dir: Path, resolution=None, resume=False):
+
+def render_presenter_clips(scene_plan, clips_dir: Path, resolution=None, resume=False, progress=None):
     """One clip per presenter scene — video (with keyed alpha, if the
     source video has one) and its own embedded audio track together, since
     they come from the same underlying footage. Returns [(scene_id,
@@ -149,6 +187,7 @@ def render_presenter_clips(scene_plan, clips_dir: Path, resolution=None, resume=
             "presenter",
             resolution,
             resume,
+            progress,
         )
 
         clips.append((scene["id"], clip_path))
@@ -156,7 +195,7 @@ def render_presenter_clips(scene_plan, clips_dir: Path, resolution=None, resume=
     return clips
 
 
-def render_overlay_clips(scene_plan, scene_type, clips_dir: Path, resolution=None, resume=False):
+def render_overlay_clips(scene_plan, scene_type, clips_dir: Path, resolution=None, resume=False, progress=None):
     """One small transparent clip per overlay scene of the given type
     (title/caption/moment/image), each covering just that scene's own
     absolute frame range. Returns [(scene_id, clip_path), ...] in timeline
@@ -175,7 +214,7 @@ def render_overlay_clips(scene_plan, scene_type, clips_dir: Path, resolution=Non
         start_frame = absolute_position(scene, by_id)
         end_frame = start_frame + scene["durationInFrames"]
 
-        render_clip(clip_path, start_frame, end_frame, scene_type, resolution, resume)
+        render_clip(clip_path, start_frame, end_frame, scene_type, resolution, resume, progress)
 
         clips.append((scene["id"], clip_path))
 
@@ -344,10 +383,25 @@ def export_davinci(episode: Path, scene_plan, resolution=None, resume=False):
 
     regenerate_scene_plan_ts(episode)
 
-    presenter_clips = render_presenter_clips(scene_plan, clips_dir, resolution, resume=resume)
+    # Printed once, upfront, so a caller streaming this script's stdout
+    # (ui/server.py's _stream_command) can show a real N-of-M progress bar
+    # instead of an open-ended scrolling log — see total_clips' own
+    # docstring. progress is a single dict shared by every render_clip call
+    # below (both loops), incremented once per clip whether rendered or
+    # skipped (resume mode).
+    total = total_clips(scene_plan)
+    # flush=True — see render_clip's __PROGRESS__ print for why this is
+    # required when stdout is a pipe, not a TTY (confirmed live: without
+    # this, the frontend's progress bar never appeared at all, stuck
+    # showing raw npx remotion render output for the entire multi-minute
+    # export, because this line sat unflushed in Python's stdout buffer).
+    print(f"__TOTAL__{total}", flush=True)
+    progress = {"done": 0, "total": total}
+
+    presenter_clips = render_presenter_clips(scene_plan, clips_dir, resolution, resume=resume, progress=progress)
 
     overlay_clips_by_type = {
-        scene_type: render_overlay_clips(scene_plan, scene_type, clips_dir, resolution, resume=resume)
+        scene_type: render_overlay_clips(scene_plan, scene_type, clips_dir, resolution, resume=resume, progress=progress)
         for scene_type in OVERLAY_TRACK_TYPES
     }
 

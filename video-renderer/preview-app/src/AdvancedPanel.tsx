@@ -25,12 +25,34 @@ export function AdvancedPanel({
     onIncludeCaptionsChange,
     isActive,
 }: Props) {
+    // Raw output is capped to its last MAX_LOG_LINES lines (an array, not
+    // one ever-growing concatenated string) so a long DaVinci export's
+    // per-clip Remotion CLI chatter — hundreds of short-lived websocket
+    // "log" messages — can't force an unbounded string copy + full-panel
+    // re-render on every single line (the previous `log` string state did
+    // exactly that; see #65's sibling render-console request). A real
+    // progress bar (from the "total"/"progress" messages export_davinci.py
+    // now emits) is the primary UI during a run; the capped log stays
+    // available underneath, collapsed, for debugging a failure.
+    const MAX_LOG_LINES = 200;
+
     const [runningId, setRunningId] = useState<string | null>(null);
-    const [log, setLog] = useState("");
+    const [logLines, setLogLines] = useState<string[]>([]);
     const [logVisible, setLogVisible] = useState(false);
+    const [logExpanded, setLogExpanded] = useState(false);
+    const [progressTotal, setProgressTotal] = useState<number | null>(null);
+    const [progressCurrent, setProgressCurrent] = useState(0);
     const [renderFormat, setRenderFormat] = useState<"video" | "davinci">("video");
     const [renderResolution, setRenderResolution] = useState("");
     const runHandleRef = useRef<RunHandle | null>(null);
+
+    const appendLog = (line: string) => {
+        setLogLines((prev) => {
+            const next = prev.length >= MAX_LOG_LINES ? prev.slice(prev.length - MAX_LOG_LINES + 1) : prev.slice();
+            next.push(line);
+            return next;
+        });
+    };
 
     const refreshStatus = () => {
         getEpisodeStatus(episodePath).then(onStatusChange);
@@ -40,23 +62,31 @@ export function AdvancedPanel({
         if (runningId) return;
 
         setRunningId(id);
-        setLog("");
+        setLogLines([]);
         setLogVisible(true);
+        setLogExpanded(false);
+        setProgressTotal(null);
+        setProgressCurrent(0);
 
         runHandleRef.current = runOverWebSocket(wsPath, params, (msg: RunMessage) => {
             if (msg.type === "start") {
-                setLog((prev) => prev + `$ ${msg.command}\n`);
+                appendLog(`$ ${msg.command}`);
+            } else if (msg.type === "total") {
+                setProgressTotal(msg.count);
+            } else if (msg.type === "progress") {
+                setProgressCurrent(msg.current);
+                setProgressTotal(msg.total);
             } else if (msg.type === "log") {
-                setLog((prev) => prev + msg.line + "\n");
+                appendLog(msg.line);
             } else if (msg.type === "error") {
-                setLog((prev) => prev + `\nERROR: ${msg.message}\n`);
+                appendLog(`ERROR: ${msg.message}`);
                 setRunningId(null);
             } else if (msg.type === "done") {
-                setLog((prev) => prev + `\n(exit code ${msg.exitCode})\n`);
+                appendLog(`(exit code ${msg.exitCode})`);
                 setRunningId(null);
                 refreshStatus();
             } else if (msg.type === "cancelled") {
-                setLog((prev) => prev + `\nCancelled.\n`);
+                appendLog("Cancelled.");
                 setRunningId(null);
                 refreshStatus();
             }
@@ -131,16 +161,47 @@ export function AdvancedPanel({
             {logVisible && (
                 <div style={styles.logSection}>
                     <div style={styles.logHeader}>
-                        <span>Output</span>
+                        <span>{progressTotal !== null ? "Rendering" : "Output"}</span>
                         {runningId && (
                             <button className="secondary" onClick={cancelRun} style={styles.cancelBtn}>
                                 Cancel
                             </button>
                         )}
                     </div>
-                    <pre style={styles.logPanel}>{log}</pre>
+
+                    {progressTotal !== null && (
+                        <ProgressBar current={progressCurrent} total={progressTotal} />
+                    )}
+
+                    <button className="secondary" onClick={() => setLogExpanded((v) => !v)} style={styles.logToggle}>
+                        {logExpanded ? "Hide details" : "Show details"}
+                    </button>
+
+                    {logExpanded && <pre style={styles.logPanel}>{logLines.join("\n")}</pre>}
                 </div>
             )}
+        </div>
+    );
+}
+
+function ProgressBar({ current, total }: { current: number; total: number }) {
+    const pct = total > 0 ? Math.min(100, Math.round((current / total) * 100)) : 0;
+    const done = total > 0 && current >= total;
+
+    return (
+        <div style={styles.progressWrap}>
+            <div style={styles.progressTrack}>
+                <div
+                    style={{
+                        ...styles.progressFill,
+                        width: `${pct}%`,
+                        background: done ? colors.success : colors.accent,
+                    }}
+                />
+            </div>
+            <span style={styles.progressLabel}>
+                {current} of {total} clips{done ? " — done" : ""}
+            </span>
         </div>
     );
 }
@@ -235,6 +296,32 @@ const styles: Record<string, React.CSSProperties> = {
         color: colors.textSecondary,
     },
     cancelBtn: {
+        fontSize: typography.size.sm,
+    },
+    progressWrap: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 4,
+    },
+    progressTrack: {
+        height: 8,
+        borderRadius: radius.md,
+        background: colors.background,
+        border: `1px solid ${colors.border}`,
+        overflow: "hidden",
+    },
+    progressFill: {
+        height: "100%",
+        borderRadius: radius.md,
+        transition: "width 0.2s ease",
+    },
+    progressLabel: {
+        fontSize: typography.size.sm,
+        color: colors.textSecondary,
+        fontVariantNumeric: "tabular-nums",
+    },
+    logToggle: {
+        alignSelf: "flex-start",
         fontSize: typography.size.sm,
     },
     logPanel: {

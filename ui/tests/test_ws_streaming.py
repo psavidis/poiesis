@@ -202,6 +202,55 @@ def test_ws_render_run_format_davinci_passes_resolution(tmp_path, monkeypatch):
         assert msg["type"] == "done"
 
 
+def _fake_stream_process_with_progress(command, cwd=None, on_start=None):
+    """Like _fake_stream_process, but emits export_davinci.py's __TOTAL__/
+    __PROGRESS__ sentinel lines (#65's sibling render-console request) so
+    _stream_command's translation of them into structured total/progress
+    websocket messages can be tested without a real render."""
+
+    if on_start is not None:
+        on_start(None)
+
+    yield "__TOTAL__2"
+    yield "Rendering presenter-scene-001.mov (frames 0-99)..."
+    yield "__PROGRESS__1/2"
+    yield "Rendering title-scene-title-002.mov (frames 100-159)..."
+    yield "__PROGRESS__2/2"
+    yield "__EXIT_CODE__0"
+
+
+def test_ws_render_run_translates_total_and_progress_sentinel_lines(tmp_path, monkeypatch):
+    episode = tmp_path / "episode"
+    episode.mkdir()
+
+    monkeypatch.setattr(server, "stream_process", _fake_stream_process_with_progress)
+
+    with client.websocket_connect("/ws/render/run") as ws:
+        ws.send_json({"path": str(episode), "format": "davinci"})
+
+        start_msg = ws.receive_json()
+        assert start_msg["type"] == "start"
+
+        total_msg = ws.receive_json()
+        assert total_msg == {"type": "total", "count": 2}
+
+        log_msg = ws.receive_json()
+        assert log_msg["type"] == "log"
+        assert "Rendering presenter-scene-001.mov" in log_msg["line"]
+
+        progress_msg = ws.receive_json()
+        assert progress_msg == {"type": "progress", "current": 1, "total": 2}
+
+        log_msg_2 = ws.receive_json()
+        assert log_msg_2["type"] == "log"
+
+        progress_msg_2 = ws.receive_json()
+        assert progress_msg_2 == {"type": "progress", "current": 2, "total": 2}
+
+        done_msg = ws.receive_json()
+        assert done_msg["type"] == "done"
+
+
 def test_ws_render_run_rejects_invalid_resolution_for_davinci_format(tmp_path):
     episode = tmp_path / "episode"
     episode.mkdir()
