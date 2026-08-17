@@ -327,7 +327,7 @@ function ChatBubble({ message }: { message: ChatMessage }) {
         <div style={styles.bubbleRowAi}>
             <div style={{ ...styles.bubble, ...styles.bubbleAi }}>
                 {!hasAnyChange && result.rejected.length === 0 && (
-                    <div style={styles.hint}>
+                    <div style={styles.explanationText}>
                         {result.explanation ?? "No matching scene found for that instruction — nothing changed."}
                     </div>
                 )}
@@ -385,7 +385,7 @@ function ChatBubble({ message }: { message: ChatMessage }) {
                 ))}
 
                 {hasAnyChange && (
-                    <div style={styles.hint}>Applied to scene-plan.json — the next render will pick this up.</div>
+                    <div style={styles.metaNote}>Applied to scene-plan.json — the next render will pick this up.</div>
                 )}
             </div>
         </div>
@@ -423,7 +423,12 @@ const styles: Record<string, React.CSSProperties> = {
     },
     emptyHint: {
         fontSize: typography.size.md,
-        color: colors.textMuted,
+        // textSecondary, not textMuted — textMuted's ~3.8:1 contrast on
+        // this dark surface falls below WCAG AA's 4.5:1 minimum for body
+        // text, which read as illegible gray-on-navy. textSecondary is the
+        // muted-but-still-readable tier; textMuted is reserved for
+        // decorative/non-content use only from here on.
+        color: colors.textSecondary,
         lineHeight: typography.lineHeight.relaxed,
     },
     form: {
@@ -501,8 +506,14 @@ const styles: Record<string, React.CSSProperties> = {
     },
     bubbleUser: {
         background: colors.accent,
+        // background (near-black), not textPrimary/white — near-black on
+        // this gold is ~8:1 contrast, by far the best-reading option
+        // tested (light text on this same gold measures ~2:1, well below
+        // AA). Regular weight, not semibold — semibold dark text on a
+        // warm mid-tone reads heavier/muddier at this size rather than
+        // crisper; letter-spacing does the "crisp" job instead.
         color: colors.background,
-        fontWeight: typography.weight.semibold,
+        letterSpacing: 0.1,
         borderBottomRightRadius: radius.sm,
     },
     bubbleAi: {
@@ -513,7 +524,9 @@ const styles: Record<string, React.CSSProperties> = {
     },
     thinkingHint: {
         fontSize: typography.size.base,
-        color: colors.textMuted,
+        // textSecondary — see emptyHint's comment on why textMuted is
+        // avoided for anything read as content.
+        color: colors.textSecondary,
         fontStyle: "italic",
         lineHeight: typography.lineHeight.relaxed,
     },
@@ -553,9 +566,21 @@ const styles: Record<string, React.CSSProperties> = {
         color: colors.error,
         background: "rgba(255, 148, 132, 0.14)",
     },
-    hint: {
+    // The AI's own explanation when it declines an instruction — this IS
+    // the message's content, not a footnote, so it reads at the bubble's
+    // normal textPrimary color/weight rather than muted.
+    explanationText: {
         fontSize: typography.size.base,
-        color: colors.textMuted,
+        color: colors.textPrimary,
+        lineHeight: typography.lineHeight.relaxed,
+    },
+    // The trailing "Applied to scene-plan.json…" confirmation note — a
+    // genuinely secondary meta-line after the real content above it, so
+    // textSecondary (not textMuted, which fails contrast on this surface)
+    // is appropriate here.
+    metaNote: {
+        fontSize: typography.size.sm,
+        color: colors.textSecondary,
         lineHeight: typography.lineHeight.relaxed,
         marginTop: 2,
     },
