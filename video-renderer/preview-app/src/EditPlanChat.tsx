@@ -58,19 +58,41 @@ interface Props {
     scenePlan?: ScenePlan;
 }
 
+// One turn in the visible thread — either what the user typed/spoke, or
+// what came back for it. Kept as a flat list of independent turns, not a
+// nested {instruction, response} pair, since a bubble UI (#66) renders
+// each side as its own row regardless of how they pair up.
+type ChatMessage =
+    | { role: "user"; id: string; text: string }
+    | { role: "ai"; id: string; result: EditPlanResult }
+    | { role: "ai-error"; id: string; message: string };
+
+let messageIdCounter = 0;
+function nextMessageId(): string {
+    messageIdCounter += 1;
+    return `msg-${messageIdCounter}`;
+}
+
 // The in-app natural-language edit loop: type an instruction, the backend
 // asks the LLM to propose remove/update operations against the CURRENT
 // scene-plan.json (validated server-side — unknown scene ids or
 // non-editable fields are rejected, never silently trusted), applies what's
 // valid, and this component shows exactly what happened before the caller
-// reloads the plan. Each submission is an independent request against
-// whatever the plan currently is — there's no multi-turn conversation state
-// kept here, matching the scope decided for the first version.
+// reloads the plan. Each submission is an INDEPENDENT request against
+// whatever the plan currently is — the server has no multi-turn memory, a
+// later instruction doesn't reference earlier ones. `messages` below is
+// purely a client-side visual history (#66 — a real conversation thread of
+// bubbles, not a single input that only ever shows its latest result) and
+// is lost on refresh; it is not conversation state the backend knows about.
 export function EditPlanChat({ episodePath, onApplied, selectedSceneId, scenePlan }: Props) {
     const [instruction, setInstruction] = useState("");
     const [status, setStatus] = useState<"idle" | "submitting">("idle");
-    const [result, setResult] = useState<EditPlanResult | null>(null);
-    const [error, setError] = useState<string | null>(null);
+    const [messages, setMessages] = useState<ChatMessage[]>([]);
+    const threadEndRef = useRef<HTMLDivElement>(null);
+    // Transient mic feedback (permission denied, no speech detected) — kept
+    // separate from `messages` since it's about the INPUT mechanism, not a
+    // failed edit request, so it doesn't belong in the thread as a turn.
+    const [voiceError, setVoiceError] = useState<string | null>(null);
     // Local dismiss, separate from EpisodeWorkspace's own selection state
     // — clicking another chip still re-selects normally; this only lets
     // the user clear "this" from the current instruction without needing
@@ -94,7 +116,7 @@ export function EditPlanChat({ episodePath, onApplied, selectedSceneId, scenePla
         const Ctor = getSpeechRecognitionCtor();
         if (!Ctor || listening) return;
 
-        setError(null);
+        setVoiceError(null);
         const recognition = new Ctor();
         recognition.continuous = false;
         recognition.interimResults = true;
@@ -109,7 +131,7 @@ export function EditPlanChat({ episodePath, onApplied, selectedSceneId, scenePla
         };
 
         recognition.onerror = (event) => {
-            setError(
+            setVoiceError(
                 event.error === "not-allowed" || event.error === "permission-denied"
                     ? "Microphone permission denied — allow microphone access to use voice input."
                     : event.error === "no-speech"
@@ -147,23 +169,30 @@ export function EditPlanChat({ episodePath, onApplied, selectedSceneId, scenePla
     const selectedScene = scenePlan?.scenes.find((s) => s.id === selectedSceneId);
     const showSelection = selectedSceneId && selectedScene && !dismissed;
 
+    // Auto-scrolls the thread to the newest message — matches the
+    // ChatGPT/Canva convention of always landing on the latest turn rather
+    // than leaving the reader scrolled wherever they were.
+    useEffect(() => {
+        threadEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    }, [messages]);
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
 
-        if (!instruction.trim() || status === "submitting") return;
+        const submitted = instruction.trim();
+        if (!submitted || status === "submitting") return;
 
+        setMessages((prev) => [...prev, { role: "user", id: nextMessageId(), text: submitted }]);
         setStatus("submitting");
-        setError(null);
-        setResult(null);
+        setInstruction("");
 
         try {
             const editResult = await editPlan(
                 episodePath,
-                instruction,
+                submitted,
                 showSelection ? selectedSceneId : undefined
             );
-            setResult(editResult);
-            setInstruction("");
+            setMessages((prev) => [...prev, { role: "ai", id: nextMessageId(), result: editResult }]);
 
             if (
                 editResult.applied.length > 0 ||
@@ -174,7 +203,7 @@ export function EditPlanChat({ episodePath, onApplied, selectedSceneId, scenePla
                 onApplied(editResult.createdSceneIds);
             }
         } catch (e) {
-            setError(String(e));
+            setMessages((prev) => [...prev, { role: "ai-error", id: nextMessageId(), message: String(e) }]);
         } finally {
             setStatus("idle");
         }
@@ -183,6 +212,28 @@ export function EditPlanChat({ episodePath, onApplied, selectedSceneId, scenePla
     return (
         <div style={styles.wrap}>
             <div style={styles.heading}>Ask AI</div>
+
+            <div style={styles.thread}>
+                {messages.length === 0 && (
+                    <div style={styles.emptyHint}>
+                        Type an instruction below — e.g. "remove the third title card" or "make this bigger".
+                    </div>
+                )}
+
+                {messages.map((message) => (
+                    <ChatBubble key={message.id} message={message} />
+                ))}
+
+                {status === "submitting" && (
+                    <div style={styles.bubbleRowAi}>
+                        <div style={{ ...styles.bubble, ...styles.bubbleAi }}>
+                            <span style={styles.thinkingHint}>Thinking…</span>
+                        </div>
+                    </div>
+                )}
+
+                <div ref={threadEndRef} />
+            </div>
 
             {showSelection && (
                 <div style={styles.selectionRow}>
@@ -236,82 +287,105 @@ export function EditPlanChat({ episodePath, onApplied, selectedSceneId, scenePla
                 </div>
             </form>
 
-            {error && <div style={styles.error}>{error}</div>}
+            {voiceError && <div style={styles.error}>{voiceError}</div>}
+        </div>
+    );
+}
 
-            {result && (
-                <div style={styles.resultBox}>
-                    {result.applied.length === 0 &&
-                        result.rejected.length === 0 &&
-                        result.created.length === 0 &&
-                        result.createdMoments.length === 0 &&
-                        result.createdImages.length === 0 && (
-                            <div style={styles.hint}>
-                                No matching scene found for that instruction — nothing changed.
-                            </div>
-                        )}
+// One message row — right-aligned/accent-colored for the user, left-aligned
+// for the AI, matching the ChatGPT/Canva convention (#66) instead of the
+// previous single "latest result" block. AI content reuses exactly the
+// same applied/created/rejected rendering the old single-result box had —
+// only where it's mounted (once per turn, inside a bubble) changed.
+function ChatBubble({ message }: { message: ChatMessage }) {
+    if (message.role === "user") {
+        return (
+            <div style={styles.bubbleRowUser}>
+                <div style={{ ...styles.bubble, ...styles.bubbleUser }}>{message.text}</div>
+            </div>
+        );
+    }
 
-                    {result.applied.map((op, i) => (
-                        <div key={`applied-${i}`} style={styles.appliedRow}>
-                            <span style={styles.opBadge}>{op.op === "remove" ? "REMOVED" : "UPDATED"}</span>
-                            <span>
-                                {op.sceneId}
-                                {op.reason ? ` — ${op.reason}` : ""}
-                            </span>
-                        </div>
-                    ))}
-
-                    {result.created.map((beat, i) => (
-                        <div key={`created-beat-${i}`} style={styles.appliedRow}>
-                            <span style={styles.opBadge}>CREATED</span>
-                            <span>
-                                {beat.kind} on {beat.sceneId}: "{beat.text}"
-                                {beat.reason ? ` — ${beat.reason}` : ""}
-                            </span>
-                        </div>
-                    ))}
-
-                    {result.createdMoments.map((moment, i) => {
-                        // A diagram-created moment has no "text" — summarize
-                        // its node labels instead (mirrors edit_plan.py's
-                        // own CLI summary for the same case).
-                        const summary = moment.text ?? moment.diagram?.nodes.map((n) => n.label).join(", ") ?? "";
-                        return (
-                            <div key={`created-moment-${i}`} style={styles.appliedRow}>
-                                <span style={styles.opBadge}>CREATED</span>
-                                <span>
-                                    {moment.treatment} on {moment.sceneId}: "{summary}"
-                                    {moment.reason ? ` — ${moment.reason}` : ""}
-                                </span>
-                            </div>
-                        );
-                    })}
-
-                    {result.createdImages.map((image, i) => (
-                        <div key={`created-image-${i}`} style={styles.appliedRow}>
-                            <span style={styles.opBadge}>CREATED</span>
-                            <span>
-                                inset image on {image.parentSceneId}: {image.assetId}
-                            </span>
-                        </div>
-                    ))}
-
-                    {result.rejected.map((r, i) => (
-                        <div key={`rejected-${i}`} style={styles.rejectedRow}>
-                            <span style={styles.opBadge}>REJECTED</span>
-                            <span>{r.reason}</span>
-                        </div>
-                    ))}
-
-                    {(result.applied.length > 0 ||
-                        result.created.length > 0 ||
-                        result.createdMoments.length > 0 ||
-                        result.createdImages.length > 0) && (
-                        <div style={styles.hint}>
-                            Applied to scene-plan.json — the next render will pick this up.
-                        </div>
-                    )}
+    if (message.role === "ai-error") {
+        return (
+            <div style={styles.bubbleRowAi}>
+                <div style={{ ...styles.bubble, ...styles.bubbleAi }}>
+                    <div style={styles.error}>{message.message}</div>
                 </div>
-            )}
+            </div>
+        );
+    }
+
+    const result = message.result;
+    const hasAnyChange =
+        result.applied.length > 0 ||
+        result.created.length > 0 ||
+        result.createdMoments.length > 0 ||
+        result.createdImages.length > 0;
+
+    return (
+        <div style={styles.bubbleRowAi}>
+            <div style={{ ...styles.bubble, ...styles.bubbleAi }}>
+                {!hasAnyChange && result.rejected.length === 0 && (
+                    <div style={styles.hint}>No matching scene found for that instruction — nothing changed.</div>
+                )}
+
+                {result.applied.map((op, i) => (
+                    <div key={`applied-${i}`} style={styles.appliedRow}>
+                        <span style={styles.opBadge}>{op.op === "remove" ? "REMOVED" : "UPDATED"}</span>
+                        <span>
+                            {op.sceneId}
+                            {op.reason ? ` — ${op.reason}` : ""}
+                        </span>
+                    </div>
+                ))}
+
+                {result.created.map((beat, i) => (
+                    <div key={`created-beat-${i}`} style={styles.appliedRow}>
+                        <span style={styles.opBadge}>CREATED</span>
+                        <span>
+                            {beat.kind} on {beat.sceneId}: "{beat.text}"
+                            {beat.reason ? ` — ${beat.reason}` : ""}
+                        </span>
+                    </div>
+                ))}
+
+                {result.createdMoments.map((moment, i) => {
+                    // A diagram-created moment has no "text" — summarize its
+                    // node labels instead (mirrors edit_plan.py's own CLI
+                    // summary for the same case).
+                    const summary = moment.text ?? moment.diagram?.nodes.map((n) => n.label).join(", ") ?? "";
+                    return (
+                        <div key={`created-moment-${i}`} style={styles.appliedRow}>
+                            <span style={styles.opBadge}>CREATED</span>
+                            <span>
+                                {moment.treatment} on {moment.sceneId}: "{summary}"
+                                {moment.reason ? ` — ${moment.reason}` : ""}
+                            </span>
+                        </div>
+                    );
+                })}
+
+                {result.createdImages.map((image, i) => (
+                    <div key={`created-image-${i}`} style={styles.appliedRow}>
+                        <span style={styles.opBadge}>CREATED</span>
+                        <span>
+                            inset image on {image.parentSceneId}: {image.assetId}
+                        </span>
+                    </div>
+                ))}
+
+                {result.rejected.map((r, i) => (
+                    <div key={`rejected-${i}`} style={styles.rejectedRow}>
+                        <span style={styles.opBadge}>REJECTED</span>
+                        <span>{r.reason}</span>
+                    </div>
+                ))}
+
+                {hasAnyChange && (
+                    <div style={styles.hint}>Applied to scene-plan.json — the next render will pick this up.</div>
+                )}
+            </div>
         </div>
     );
 }
@@ -321,11 +395,31 @@ const styles: Record<string, React.CSSProperties> = {
         display: "flex",
         flexDirection: "column",
         gap: 10,
+        // Fills the sidebar's fixed height so `thread` below (flex: 1,
+        // minHeight: 0) can claim the remaining space and scroll on its
+        // own, while heading/form stay their natural size.
+        height: "100%",
+        minHeight: 0,
     },
     heading: {
         fontSize: typography.size.lg,
         fontWeight: typography.weight.bold,
         color: colors.textPrimary,
+    },
+    // Scrolls independently of the input row below it, which stays pinned
+    // — the conversation grows upward from the input, same as ChatGPT/
+    // Canva's chat panels, rather than pushing the input off-screen.
+    thread: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        flex: 1,
+        minHeight: 0,
+        overflowY: "auto",
+    },
+    emptyHint: {
+        fontSize: typography.size.sm,
+        color: colors.textMuted,
     },
     form: {
         display: "flex",
@@ -378,11 +472,39 @@ const styles: Record<string, React.CSSProperties> = {
         borderColor: "#c94a3c",
         color: "#fff",
     },
-    resultBox: {
+    bubbleRowUser: {
+        display: "flex",
+        justifyContent: "flex-end",
+    },
+    bubbleRowAi: {
+        display: "flex",
+        justifyContent: "flex-start",
+    },
+    bubble: {
         display: "flex",
         flexDirection: "column",
         gap: 4,
+        maxWidth: "88%",
+        padding: "8px 12px",
+        borderRadius: radius.lg,
         fontSize: typography.size.md,
+        wordBreak: "break-word",
+    },
+    bubbleUser: {
+        background: colors.accent,
+        color: colors.background,
+        borderBottomRightRadius: radius.sm,
+    },
+    bubbleAi: {
+        background: colors.surfaceElevated,
+        border: `1px solid ${colors.border}`,
+        color: colors.textPrimary,
+        borderBottomLeftRadius: radius.sm,
+    },
+    thinkingHint: {
+        fontSize: typography.size.sm,
+        color: colors.textMuted,
+        fontStyle: "italic",
     },
     appliedRow: {
         display: "flex",

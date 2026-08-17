@@ -695,16 +695,18 @@ const styles: Record<string, React.CSSProperties> = {
         padding: 16,
         borderRight: `1px solid ${colors.border}`,
         background: colors.surface,
-        // Sticky rather than a second independent scroll container — the
-        // sidebar's own content (instruction box + latest result) is short
-        // enough to never need its own scrollbar, so it just stays pinned
-        // in the viewport while the (much taller) main column scrolls past
-        // it, matching how Canva's left panel behaves relative to the canvas.
+        // Sticky and viewport-height, matching how Canva's left panel stays
+        // pinned while the (much taller) main column scrolls past it.
+        // No overflow here, deliberately — EditPlanChat's own message
+        // thread is the ONE scrollable region inside the sidebar, so its
+        // input row can stay pinned to the sidebar's bottom edge; a second
+        // scroll container here would scroll the whole panel (input
+        // included) instead of just the conversation history.
         position: "sticky",
         top: 0,
         alignSelf: "flex-start",
         height: "100vh",
-        overflowY: "auto",
+        overflow: "hidden",
     },
     container: {
         fontFamily: typography.fontFamily,
