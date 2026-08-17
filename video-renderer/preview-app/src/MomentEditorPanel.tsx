@@ -107,10 +107,13 @@ interface Props {
     // applied, so this panel re-fetches instead of saving stale data back
     // over a chat-applied removal — see EpisodeWorkspace's refreshKey.
     refreshKey: number;
+    // Notifies EpisodeWorkspace to reload scenePlan so the Player picks up
+    // the change — matches ImageEditorPanel's onSaved contract.
+    onSaved: () => void;
     onClose: () => void;
 }
 
-export function MomentEditorPanel({ episodePath, sceneId, scenePlan, currentFrame, onSeek, refreshKey, onClose }: Props) {
+export function MomentEditorPanel({ episodePath, sceneId, scenePlan, currentFrame, onSeek, refreshKey, onSaved, onClose }: Props) {
     const [moments, setMoments] = useState<any[] | null>(null);
     const [assetOptions, setAssetOptions] = useState<Asset[]>([]);
     const [status, setStatus] = useState("");
@@ -208,6 +211,7 @@ export function MomentEditorPanel({ episodePath, sceneId, scenePlan, currentFram
             const result = await switchMomentTreatment(episodePath, sceneId, newTreatment);
             setMoments((result.moments ?? moments).map(normalizeMoment));
             setStatus("Presentation switched — the next render will pick this up.");
+            onSaved();
         } catch (e) {
             setError(String(e));
         } finally {
@@ -247,6 +251,7 @@ export function MomentEditorPanel({ episodePath, sceneId, scenePlan, currentFram
         try {
             await saveMoments(episodePath, next);
             setStatus("Removed.");
+            onSaved();
             onClose();
         } catch (e) {
             setError(String(e));
@@ -265,6 +270,7 @@ export function MomentEditorPanel({ episodePath, sceneId, scenePlan, currentFram
             const result = await saveMoments(episodePath, moments);
             setMoments((result.moments ?? moments).map(normalizeMoment));
             setStatus("Saved — the next render will pick this up.");
+            onSaved();
         } catch (e) {
             setError(String(e));
         }

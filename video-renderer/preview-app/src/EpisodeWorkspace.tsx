@@ -614,6 +614,7 @@ export function EpisodeWorkspace() {
                         currentFrame={currentFrame}
                         onSeek={seekToAbsoluteFrame}
                         refreshKey={refreshKey}
+                        onSaved={reloadScenePlan}
                         onClose={() => setSelectedEditor(null)}
                     />
                 </div>
