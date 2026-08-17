@@ -5,15 +5,16 @@ import { colors, radius, typography } from "./tokens";
 // The full 15-stage + 2-secondary-stage list, individual Run/Re-run,
 // force/skip-captions, and render controls — everything ui/static/app.js's
 // control panel exposed as the PRIMARY interaction. Here it's the same
-// capability, collapsed behind an explicit "Advanced" toggle instead of
-// being the first thing the user sees (see #26 — the collapsed
-// ProgressFlow above this is now the default surface).
+// capability, one tab in EpisodeWorkspace's shared tab strip (#70) instead
+// of the first thing the user sees (see #26 — the collapsed ProgressFlow
+// above the strip is the default surface).
 interface Props {
     episodePath: string;
     status: EpisodeStatus | null;
     onStatusChange: (status: EpisodeStatus) => void;
     includeCaptions: boolean;
     onIncludeCaptionsChange: (value: boolean) => void;
+    isActive: boolean;
 }
 
 export function AdvancedPanel({
@@ -22,8 +23,8 @@ export function AdvancedPanel({
     onStatusChange,
     includeCaptions,
     onIncludeCaptionsChange,
+    isActive,
 }: Props) {
-    const [expanded, setExpanded] = useState(false);
     const [runningId, setRunningId] = useState<string | null>(null);
     const [log, setLog] = useState("");
     const [logVisible, setLogVisible] = useState(false);
@@ -72,20 +73,10 @@ export function AdvancedPanel({
         startRun("/ws/render/run", params, "__render__");
     };
 
-    if (!expanded) {
-        return (
-            <button className="secondary" onClick={() => setExpanded(true)} style={styles.toggle}>
-                Advanced ▸
-            </button>
-        );
-    }
+    if (!isActive) return null;
 
     return (
         <div style={styles.wrap}>
-            <button className="secondary" onClick={() => setExpanded(false)} style={styles.toggle}>
-                Advanced ▾
-            </button>
-
             <label style={styles.captionsRow}>
                 <input
                     type="checkbox"
@@ -183,18 +174,10 @@ function StageRow({
 }
 
 const styles: Record<string, React.CSSProperties> = {
-    toggle: {
-        alignSelf: "flex-start",
-        fontSize: typography.size.md,
-    },
     wrap: {
         display: "flex",
         flexDirection: "column",
         gap: 10,
-        padding: "12px 14px",
-        background: colors.surface,
-        border: `1px solid ${colors.border}`,
-        borderRadius: radius.lg,
     },
     captionsRow: {
         display: "flex",

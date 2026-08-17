@@ -20,7 +20,7 @@ import { ProgressFlow } from "./ProgressFlow";
 import { SceneBar } from "./SceneBar";
 import { StoryboardPanel } from "./StoryboardPanel";
 import { TitleEditorPanel } from "./TitleEditorPanel";
-import { colors, typography } from "./tokens";
+import { colors, radius, typography } from "./tokens";
 
 // Display-only label for the undo shortcut's hint — mirrors BeatBar's own
 // MOD_KEY_LABEL constant.
@@ -97,6 +97,23 @@ export function EpisodeWorkspace() {
     // had visibly clicked one (see #69). Set on every moment click via
     // MomentBar's onSelect, regardless of treatment.
     const [assetLibraryMomentId, setAssetLibraryMomentId] = useState<string | null>(null);
+
+    // Which of the Advanced/Storyboard/Asset library/Episode analysis
+    // panels is open, if any — previously each of these 4 owned its own
+    // "expanded" boolean and rendered its own independent toggle button,
+    // which is why they used to appear as 4 disconnected, left-aligned
+    // buttons stacked vertically with no shared container (#71). Now
+    // exactly one tab strip, one shared body box, one thing open at a
+    // time — closer to a standard tabbed inspector than 4 unrelated
+    // accordions.
+    const [activeTab, setActiveTab] = useState<"advanced" | "storyboard" | "assets" | "analysis" | null>(null);
+    // Storyboard/Episode analysis tabs hide themselves entirely when their
+    // backing data doesn't exist yet (previously each panel's own `return
+    // null`) — both components report this up via onHasContentChange
+    // since the tab STRIP now owns whether the button appears at all, not
+    // each panel body deciding for itself after the fact.
+    const [hasStoryboard, setHasStoryboard] = useState(false);
+    const [hasAnalysis, setHasAnalysis] = useState(false);
 
     // The scene currently selected for chat context (see #51) — set when
     // an ActiveSceneBar scene chip is clicked (see #29). Originally this
@@ -430,23 +447,88 @@ export function EpisodeWorkspace() {
                 </div>
             </div>
             <ProgressFlow episodePath={episodePath} skipCaptions={!includeCaptions} onStatusChange={setEpisodeStatus} />
-            <AdvancedPanel
-                episodePath={episodePath}
-                status={episodeStatus}
-                onStatusChange={setEpisodeStatus}
-                includeCaptions={includeCaptions}
-                onIncludeCaptionsChange={setIncludeCaptions}
-            />
-            <StoryboardPanel episodePath={episodePath} />
-            {episodeProps && (
-                <AssetLibraryPanel
-                    episodePath={episodePath}
-                    scenePlan={episodeProps.scenePlan}
-                    selectedMomentSceneId={assetLibraryMomentId ?? undefined}
-                    onSaved={reloadScenePlan}
-                />
+
+            <div style={styles.tabStrip}>
+                <button
+                    className={activeTab === "advanced" ? undefined : "secondary"}
+                    style={styles.tabStripButton}
+                    onClick={() => setActiveTab((t) => (t === "advanced" ? null : "advanced"))}
+                >
+                    Advanced
+                </button>
+                {hasStoryboard && (
+                    <button
+                        className={activeTab === "storyboard" ? undefined : "secondary"}
+                        style={styles.tabStripButton}
+                        onClick={() => setActiveTab((t) => (t === "storyboard" ? null : "storyboard"))}
+                    >
+                        Storyboard
+                    </button>
+                )}
+                <button
+                    className={activeTab === "assets" ? undefined : "secondary"}
+                    style={styles.tabStripButton}
+                    onClick={() => setActiveTab((t) => (t === "assets" ? null : "assets"))}
+                >
+                    Asset library
+                </button>
+                {hasAnalysis && (
+                    <button
+                        className={activeTab === "analysis" ? undefined : "secondary"}
+                        style={styles.tabStripButton}
+                        onClick={() => setActiveTab((t) => (t === "analysis" ? null : "analysis"))}
+                    >
+                        Episode analysis
+                    </button>
+                )}
+            </div>
+
+            {/* One shared box for whichever tab is open — each panel below
+                is mounted unconditionally (so its own data effects can run
+                and, for Storyboard/Analysis, report hasContent even before
+                its tab is ever opened) but only renders visible content
+                when it's the active one. */}
+            {activeTab && (
+                <div style={styles.tabBody}>
+                    <AdvancedPanel
+                        episodePath={episodePath}
+                        status={episodeStatus}
+                        onStatusChange={setEpisodeStatus}
+                        includeCaptions={includeCaptions}
+                        onIncludeCaptionsChange={setIncludeCaptions}
+                        isActive={activeTab === "advanced"}
+                    />
+                    <StoryboardPanel
+                        episodePath={episodePath}
+                        isActive={activeTab === "storyboard"}
+                        onHasContentChange={setHasStoryboard}
+                    />
+                    {episodeProps && (
+                        <AssetLibraryPanel
+                            episodePath={episodePath}
+                            scenePlan={episodeProps.scenePlan}
+                            selectedMomentSceneId={assetLibraryMomentId ?? undefined}
+                            onSaved={reloadScenePlan}
+                            isActive={activeTab === "assets"}
+                        />
+                    )}
+                    <EpisodeAnalysisPanel
+                        episodePath={episodePath}
+                        isActive={activeTab === "analysis"}
+                        onHasContentChange={setHasAnalysis}
+                    />
+                </div>
             )}
-            <EpisodeAnalysisPanel episodePath={episodePath} />
+
+            {/* Mounted even while no tab is open, so Storyboard/Analysis's
+                own data fetch can still determine tab visibility (#70) —
+                isActive: false keeps their bodies from rendering. */}
+            {!activeTab && (
+                <>
+                    <StoryboardPanel episodePath={episodePath} isActive={false} onHasContentChange={setHasStoryboard} />
+                    <EpisodeAnalysisPanel episodePath={episodePath} isActive={false} onHasContentChange={setHasAnalysis} />
+                </>
+            )}
         </>
     ) : null;
 
@@ -747,6 +829,32 @@ const styles: Record<string, React.CSSProperties> = {
         margin: "0 auto",
         flex: 1,
         minWidth: 0,
+    },
+    // One row of tab buttons (#70/#71) replacing 4 independently-toggled
+    // accordion buttons that used to stack vertically with no shared
+    // container. A bottom border, not a full box — the strip visually
+    // introduces tabBody below it rather than looking like its own
+    // separate panel.
+    tabStrip: {
+        display: "flex",
+        flexWrap: "wrap",
+        gap: 8,
+        borderBottom: `1px solid ${colors.border}`,
+        paddingBottom: 10,
+    },
+    tabStripButton: {
+        fontSize: typography.size.md,
+    },
+    // The one shared box for whichever tab is currently open — every
+    // panel used to carry its own near-identical padding/background/
+    // border/radius; centralizing it here means exactly one visible box
+    // per open tab instead of each panel nesting its own inside this one.
+    tabBody: {
+        padding: "12px 14px",
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderTop: "none",
+        borderRadius: `0 0 ${radius.lg}px ${radius.lg}px`,
     },
     // Three-region row (spacer / brandGroup / undoWrap) instead of the
     // previous "justify-content: center + position: absolute undo button"

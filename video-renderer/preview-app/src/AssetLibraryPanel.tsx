@@ -30,6 +30,7 @@ interface Props {
     // title/image editor selections don't have an applicable moment.
     selectedMomentSceneId?: string;
     onSaved: () => void;
+    isActive: boolean;
 }
 
 // A standing, always-browsable library of the episode's indexed images/
@@ -56,8 +57,7 @@ const TREATMENT_LABELS: Record<string, string> = {
     "content-dominant-code": "content-dominant code",
 };
 
-export function AssetLibraryPanel({ episodePath, scenePlan, selectedMomentSceneId, onSaved }: Props) {
-    const [expanded, setExpanded] = useState(false);
+export function AssetLibraryPanel({ episodePath, scenePlan, selectedMomentSceneId, onSaved, isActive }: Props) {
     const [images, setImages] = useState<ImageAsset[]>([]);
     const [codeAssets, setCodeAssets] = useState<CodeAsset[]>([]);
     // The moment's OWN current assetId/codeAssetId, fetched fresh — not
@@ -75,14 +75,14 @@ export function AssetLibraryPanel({ episodePath, scenePlan, selectedMomentSceneI
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
-        if (!expanded) return;
+        if (!isActive) return;
         getAssets(episodePath).then(setImages).catch(() => setImages([]));
         getCodeAssets(episodePath).then(setCodeAssets).catch(() => setCodeAssets([]));
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [episodePath, expanded]);
+    }, [episodePath, isActive]);
 
     useEffect(() => {
-        if (!expanded || !selectedMomentSceneId) {
+        if (!isActive || !selectedMomentSceneId) {
             setCurrentAssetId(null);
             setCurrentCodeAssetId(null);
             return;
@@ -94,7 +94,7 @@ export function AssetLibraryPanel({ episodePath, scenePlan, selectedMomentSceneI
             setCurrentAssetId(moment?.assetId ?? null);
             setCurrentCodeAssetId(moment?.codeAssetId ?? null);
         });
-    }, [episodePath, expanded, selectedMomentSceneId, hint]);
+    }, [episodePath, isActive, selectedMomentSceneId, hint]);
 
     // Unlike StoryboardPanel (which hides itself until populated), this
     // toggle always renders even with zero indexed assets — "nothing
@@ -170,15 +170,11 @@ export function AssetLibraryPanel({ episodePath, scenePlan, selectedMomentSceneI
         }
     };
 
-    return (
-        <div style={styles.wrap}>
-            <button className="secondary" onClick={() => setExpanded((v) => !v)} style={styles.toggle}>
-                {expanded ? "Asset library ▾" : "Asset library ▸"}
-            </button>
+    if (!isActive) return null;
 
-            {expanded && (
-                <div style={styles.body}>
-                    <p style={styles.hint}>
+    return (
+        <div style={styles.body}>
+            <p style={styles.hint}>
                         Every image and code file the pipeline can draw from for this episode — browse and
                         apply one to the selected moment, independent of what the AI chose.
                     </p>
@@ -287,32 +283,17 @@ export function AssetLibraryPanel({ episodePath, scenePlan, selectedMomentSceneI
                         </div>
                     )}
 
-                    {hint && <div style={styles.statusHint}>{hint}</div>}
-                    {error && <div style={styles.error}>{error}</div>}
-                </div>
-            )}
+            {hint && <div style={styles.statusHint}>{hint}</div>}
+            {error && <div style={styles.error}>{error}</div>}
         </div>
     );
 }
 
 const styles: Record<string, React.CSSProperties> = {
-    wrap: {
-        display: "flex",
-        flexDirection: "column",
-        gap: 8,
-    },
-    toggle: {
-        alignSelf: "flex-start",
-        fontSize: 13,
-    },
     body: {
         display: "flex",
         flexDirection: "column",
         gap: 10,
-        padding: "12px 14px",
-        background: colors.surface,
-        border: `1px solid ${colors.border}`,
-        borderRadius: radius.lg,
     },
     hint: {
         fontSize: typography.size.sm,

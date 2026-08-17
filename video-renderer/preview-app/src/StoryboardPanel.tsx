@@ -3,16 +3,23 @@ import { getStoryboard, saveStoryboard, type StoryboardChapter } from "./api";
 import { colors, radius, typography } from "./tokens";
 
 // Chapter-level visual-story reasoning — not scene-anchored (chapters are
-// keyed by chapterId, not a scene in the timeline), so unlike titles/
-// moments this is an always-visible panel rather than click-to-open.
-// Ports ui/static/app.js's renderStoryboard/wireStoryboardEditor.
+// keyed by chapterId, not a scene in the timeline). Ports ui/static/
+// app.js's renderStoryboard/wireStoryboardEditor. Mounted unconditionally
+// by EpisodeWorkspace's tab strip (#70) so its own data fetch can decide
+// whether the "Storyboard" tab button should even appear — only its BODY
+// is gated on isActive, matching every other panel in that strip.
 interface Props {
     episodePath: string;
+    isActive: boolean;
+    // Reports "there's something to show" up to the tab strip, which
+    // hides the tab entirely when false (empty state was previously this
+    // component's own `return null` — the outer strip needs to know that
+    // before the user ever clicks the tab, not after).
+    onHasContentChange: (hasContent: boolean) => void;
 }
 
-export function StoryboardPanel({ episodePath }: Props) {
+export function StoryboardPanel({ episodePath, isActive, onHasContentChange }: Props) {
     const [chapters, setChapters] = useState<StoryboardChapter[] | null>(null);
-    const [expanded, setExpanded] = useState(false);
     const [status, setStatus] = useState("");
     const [error, setError] = useState<string | null>(null);
 
@@ -22,7 +29,12 @@ export function StoryboardPanel({ episodePath }: Props) {
             .catch(() => setChapters([])); // storyboard.json not produced yet — normal before that stage runs
     }, [episodePath]);
 
-    if (!chapters || chapters.length === 0) return null;
+    useEffect(() => {
+        onHasContentChange(!!chapters && chapters.length > 0);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [chapters]);
+
+    if (!isActive || !chapters || chapters.length === 0) return null;
 
     const updateNotes = (index: number, notes: string) => {
         setChapters((prev) => (prev ? prev.map((c, i) => (i === index ? { ...c, notes } : c)) : prev));
@@ -41,60 +53,39 @@ export function StoryboardPanel({ episodePath }: Props) {
     };
 
     return (
-        <div style={styles.wrap}>
-            <button className="secondary" onClick={() => setExpanded((v) => !v)} style={styles.toggle}>
-                {expanded ? "Storyboard ▾" : "Storyboard ▸"}
-            </button>
+        <div style={styles.body}>
+            <p style={styles.hint}>
+                Claude's chapter-by-chapter visual-story reasoning — this is what "Propose moment
+                scenes" reads before deciding individual treatments. Edit a chapter's notes and
+                save; this doesn't change scene-plan.json or produce scenes on its own.
+            </p>
 
-            {expanded && (
-                <div style={styles.body}>
-                    <p style={styles.hint}>
-                        Claude's chapter-by-chapter visual-story reasoning — this is what "Propose moment
-                        scenes" reads before deciding individual treatments. Edit a chapter's notes and
-                        save; this doesn't change scene-plan.json or produce scenes on its own.
-                    </p>
-
-                    {chapters.map((c, i) => (
-                        <div key={c.chapterId} style={styles.row}>
-                            <span style={styles.chapterLabel}>{c.chapterText || c.chapterId}</span>
-                            <textarea
-                                value={c.notes}
-                                onChange={(e) => updateNotes(i, e.target.value)}
-                                rows={2}
-                                style={styles.textarea}
-                            />
-                        </div>
-                    ))}
-
-                    <div style={styles.actions}>
-                        <button onClick={handleSave}>Save changes</button>
-                        <span style={styles.status}>{status}</span>
-                        {error && <span style={styles.error}>{error}</span>}
-                    </div>
+            {chapters.map((c, i) => (
+                <div key={c.chapterId} style={styles.row}>
+                    <span style={styles.chapterLabel}>{c.chapterText || c.chapterId}</span>
+                    <textarea
+                        value={c.notes}
+                        onChange={(e) => updateNotes(i, e.target.value)}
+                        rows={2}
+                        style={styles.textarea}
+                    />
                 </div>
-            )}
+            ))}
+
+            <div style={styles.actions}>
+                <button onClick={handleSave}>Save changes</button>
+                <span style={styles.status}>{status}</span>
+                {error && <span style={styles.error}>{error}</span>}
+            </div>
         </div>
     );
 }
 
 const styles: Record<string, React.CSSProperties> = {
-    wrap: {
-        display: "flex",
-        flexDirection: "column",
-        gap: 8,
-    },
-    toggle: {
-        alignSelf: "flex-start",
-        fontSize: 13,
-    },
     body: {
         display: "flex",
         flexDirection: "column",
         gap: 8,
-        padding: "12px 14px",
-        background: colors.surface,
-        border: `1px solid ${colors.border}`,
-        borderRadius: radius.lg,
     },
     hint: {
         fontSize: typography.size.sm,
