@@ -799,7 +799,7 @@ def edit_scene_plan(path: str, body: EditPlanRequest):
             prompt_template = load_edit_plan_prompt(EDIT_PLAN_PROMPT_FILE)
 
             try:
-                updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+                updated_plan, valid_ops, rejected, created_beats, created_moments, created_images, explanation = edit_plan(
                     scene_plan, body.instruction, llm, prompt_template,
                     selected_scene_id=body.selectedSceneId,
                     transcript=episode_transcript, manifest=manifest, assets=assets,
@@ -935,6 +935,7 @@ def edit_scene_plan(path: str, body: EditPlanRequest):
         "createdMoments": created_moments,
         "createdImages": created_images,
         "createdSceneIds": created_scene_ids,
+        "explanation": explanation,
     }
 
 

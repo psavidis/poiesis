@@ -1221,6 +1221,7 @@ def test_edit_scene_plan_applies_validated_operations(tmp_path):
         [],
         [],
         [],
+        None,  # explanation
     )
 
     with patch("server.edit_plan", return_value=fake_result) as mock_edit_plan:
@@ -1245,7 +1246,7 @@ def test_edit_scene_plan_passes_selected_scene_id_through_to_edit_plan(tmp_path)
     episode = _make_episode(tmp_path)
     _make_scene_plan(episode)
 
-    fake_result = ({"scenes": []}, [], [], [], [], [])
+    fake_result = ({"scenes": []}, [], [], [], [], [], None)
 
     with patch("server.edit_plan", return_value=fake_result) as mock_edit_plan:
         response = client.post(
@@ -1263,7 +1264,7 @@ def test_edit_scene_plan_defaults_selected_scene_id_to_none(tmp_path):
     episode = _make_episode(tmp_path)
     _make_scene_plan(episode)
 
-    fake_result = ({"scenes": []}, [], [], [], [], [])
+    fake_result = ({"scenes": []}, [], [], [], [], [], None)
 
     with patch("server.edit_plan", return_value=fake_result) as mock_edit_plan:
         response = client.post(
@@ -1326,6 +1327,7 @@ def test_edit_scene_plan_removes_moment_from_moments_json(tmp_path):
         [],
         [],
         [],
+        None,  # explanation
     )
 
     with patch("server.edit_plan", return_value=fake_result):
@@ -1405,6 +1407,7 @@ def test_edit_scene_plan_creates_a_beat_in_emphasis_json_and_scene_plan(tmp_path
         ],
         [],
         [],
+        None,  # explanation
     )
 
     with patch("server.edit_plan", return_value=fake_result) as mock_edit_plan:
@@ -1474,6 +1477,7 @@ def test_edit_scene_plan_appends_created_beat_to_existing_beats(tmp_path):
         ],
         [],
         [],
+        None,  # explanation
     )
 
     with patch("server.edit_plan", return_value=fake_result):
@@ -1512,6 +1516,7 @@ def test_undo_after_edit_plan_chat_creates_beat_restores_emphasis_json(tmp_path)
         ],
         [],
         [],
+        None,  # explanation
     )
 
     with patch("server.edit_plan", return_value=fake_result):
@@ -1556,7 +1561,7 @@ def test_undo_after_multi_op_chat_instruction_reverts_all_ops_in_one_step(tmp_pa
     scene_plan_after["scenes"][1]["durationInFrames"] = 70
     scene_plan_after["scenes"][1]["sourceEndFrame"] = 70
 
-    fake_result = (scene_plan_after, [], [], [], [], [])
+    fake_result = (scene_plan_after, [], [], [], [], [], None)
 
     with patch("server.edit_plan", return_value=fake_result):
         response = client.post(
@@ -1604,6 +1609,7 @@ def test_edit_scene_plan_creates_a_moment_in_moments_json_and_scene_plan(tmp_pat
             }
         ],
         [],
+        None,  # explanation
     )
 
     with patch("server.edit_plan", return_value=fake_result) as mock_edit_plan:
@@ -1649,7 +1655,7 @@ def test_edit_scene_plan_loads_code_assets_and_passes_them_to_edit_plan(tmp_path
         json.dumps({"codeAssets": [{"id": "code-1", "language": "java", "description": "the kafka consumer"}]})
     )
 
-    fake_result = (scene_plan_before, [], [], [], [], [])
+    fake_result = (scene_plan_before, [], [], [], [], [], None)
 
     with patch("server.edit_plan", return_value=fake_result) as mock_edit_plan:
         response = client.post(
@@ -1668,7 +1674,7 @@ def test_edit_scene_plan_passes_none_code_assets_when_code_assets_json_missing(t
     episode = _make_episode(tmp_path)
     scene_plan_before = _make_scene_plan(episode, video_ids=("001",))
 
-    fake_result = (scene_plan_before, [], [], [], [], [])
+    fake_result = (scene_plan_before, [], [], [], [], [], None)
 
     with patch("server.edit_plan", return_value=fake_result) as mock_edit_plan:
         response = client.post(
@@ -1709,6 +1715,7 @@ def test_edit_scene_plan_creates_an_image_scene_directly_in_scene_plan(tmp_path)
                 "durationInFrames": 150,
             }
         ],
+        None,  # explanation
     )
 
     with patch("server.edit_plan", return_value=fake_result) as mock_edit_plan:
@@ -1767,6 +1774,7 @@ def test_edit_scene_plan_creates_a_full_screen_diagram_moment(tmp_path):
             }
         ],
         [],
+        None,  # explanation
     )
 
     with patch("server.edit_plan", return_value=fake_result):
@@ -1828,6 +1836,7 @@ def test_edit_scene_plan_appends_created_moment_to_existing_moments(tmp_path):
             }
         ],
         [],
+        None,  # explanation
     )
 
     with patch("server.edit_plan", return_value=fake_result):
@@ -1867,6 +1876,7 @@ def test_undo_after_edit_plan_chat_creates_moment_restores_moments_json(tmp_path
             }
         ],
         [],
+        None,  # explanation
     )
 
     with patch("server.edit_plan", return_value=fake_result):
@@ -1922,6 +1932,7 @@ def test_edit_scene_plan_removes_title_from_title_scenes_json(tmp_path):
         [],
         [],
         [],
+        None,  # explanation
     )
 
     with patch("server.edit_plan", return_value=fake_result):
@@ -2007,6 +2018,7 @@ def test_edit_scene_plan_regenerates_codegen(tmp_path):
         [],
         [],
         [],
+        None,  # explanation
     )
 
     with patch("server.edit_plan", return_value=fake_result), patch(
@@ -2224,6 +2236,7 @@ def test_undo_after_edit_plan_chat_restores_removed_title_scene(tmp_path):
             [],
             [],
             [],
+            None,
         )
 
         chat_response = client.post(

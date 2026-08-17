@@ -292,6 +292,12 @@ export interface EditPlanResult {
     // see CreatedBeat/CreatedMoment/CreatedImage above). Used to
     // highlight/scroll to what changed on the relevant timeline bar(s).
     createdSceneIds: string[];
+    // Only ever set when every other field above is empty — the model's
+    // own reason for proposing no operations at all (e.g. "that exact
+    // wording isn't something said in the transcript"), so a declined
+    // instruction reaches the creator as an explanation, not a bare
+    // generic message (#67).
+    explanation: string | null;
 }
 
 // selectedSceneId (#51) — the scene currently selected in the editor when

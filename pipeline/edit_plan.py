@@ -1026,6 +1026,11 @@ def edit_plan(
     response = llm.complete_json(prompt, thinking=True)
 
     operations = response.get("operations", [])
+    # Only meaningful when operations ends up empty — the prompt asks for
+    # this specifically so a genuine "nothing could be done" (e.g. custom
+    # beat/callout text that isn't an actual transcript phrase) reaches the
+    # creator as a real reason instead of a bare empty result (see #67).
+    explanation = response.get("explanation")
 
     valid_ops, rejected = validate_operations(scene_plan, operations)
 
@@ -1118,7 +1123,7 @@ def edit_plan(
     updated_plan = apply_operations(scene_plan, remove_update_ops)
     updated_plan = reflow_timeline(updated_plan)
 
-    return updated_plan, remove_update_ops, rejected, created_beats, created_moments, created_images
+    return updated_plan, remove_update_ops, rejected, created_beats, created_moments, created_images, explanation
 
 
 def main():
@@ -1145,7 +1150,7 @@ def main():
     llm = LLMClient(PROJECT_ROOT / "config.json")
     prompt_template = load_prompt(PROMPT_FILE)
 
-    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images, explanation = edit_plan(
         scene_plan, args.instruction, llm, prompt_template
     )
 
@@ -1187,6 +1192,9 @@ def main():
         print(f"\nRejected {len(rejected)} operation(s):")
         for r in rejected:
             print(f"  {r['operation']}: {r['reason']}")
+
+    if explanation:
+        print(f"\n{explanation}")
 
 
 if __name__ == "__main__":

@@ -327,7 +327,9 @@ function ChatBubble({ message }: { message: ChatMessage }) {
         <div style={styles.bubbleRowAi}>
             <div style={{ ...styles.bubble, ...styles.bubbleAi }}>
                 {!hasAnyChange && result.rejected.length === 0 && (
-                    <div style={styles.hint}>No matching scene found for that instruction — nothing changed.</div>
+                    <div style={styles.hint}>
+                        {result.explanation ?? "No matching scene found for that instruction — nothing changed."}
+                    </div>
                 )}
 
                 {result.applied.map((op, i) => (

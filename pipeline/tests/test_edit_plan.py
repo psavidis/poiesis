@@ -479,7 +479,7 @@ def test_edit_plan_creates_a_beat_grounded_against_real_transcript_words():
         }
     )
 
-    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images, explanation = edit_plan(
         scene_plan, "add a beat popping the word injection", llm, PROMPT_TEMPLATE,
         transcript=_transcript_with_words(), manifest=_manifest_single_video(),
     )
@@ -509,7 +509,7 @@ def test_edit_plan_rejects_an_ungroundable_beat_creation():
         }
     )
 
-    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images, explanation = edit_plan(
         scene_plan, "add a weird beat", llm, PROMPT_TEMPLATE,
         transcript=_transcript_with_words(), manifest=_manifest_single_video(),
     )
@@ -532,13 +532,62 @@ def test_edit_plan_without_transcript_cannot_create_beats():
         }
     )
 
-    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images, explanation = edit_plan(
         scene_plan, "add a beat", llm, PROMPT_TEMPLATE,
     )
 
     assert created_beats == []
     assert len(rejected) == 1
     assert "no word-level transcript data available" in llm.last_prompt
+
+
+def test_edit_plan_surfaces_explanation_when_model_returns_no_operations():
+    # Regression (#67): a request the model correctly declines (e.g. custom
+    # invented text for a beat, which must be an exact transcript phrase)
+    # used to reach the creator as a bare empty result with no reason why —
+    # the prompt now asks the model to explain itself whenever it returns
+    # zero operations, and this value must survive edit_plan()'s return.
+    scene_plan = _scene_plan_with_words_scene()
+
+    llm = _FakeLLMClient(
+        {
+            "operations": [],
+            "explanation": "\"Hello this is Petros\" isn't a phrase actually said in the transcript.",
+        }
+    )
+
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images, explanation = edit_plan(
+        scene_plan, "add a beat saying Hello this is Petros", llm, PROMPT_TEMPLATE,
+        transcript=_transcript_with_words(), manifest=_manifest_single_video(),
+    )
+
+    assert valid_ops == []
+    assert created_beats == []
+    assert explanation == "\"Hello this is Petros\" isn't a phrase actually said in the transcript."
+
+
+def test_edit_plan_explanation_is_none_when_operations_are_returned():
+    scene_plan = _scene_plan_with_words_scene()
+
+    llm = _FakeLLMClient(
+        {
+            "operations": [
+                {
+                    "op": "create", "type": "beat",
+                    "wordIds": ["scene-001-w1"], "kind": "word-pop",
+                    "reason": "the key term",
+                }
+            ]
+        }
+    )
+
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images, explanation = edit_plan(
+        scene_plan, "add a beat popping the word injection", llm, PROMPT_TEMPLATE,
+        transcript=_transcript_with_words(), manifest=_manifest_single_video(),
+    )
+
+    assert len(created_beats) == 1
+    assert explanation is None
 
 
 def _scene_plan_with_segments_scene():
@@ -837,7 +886,7 @@ def test_edit_plan_creates_an_inset_image_grounded_against_a_real_asset():
         }
     )
 
-    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images, explanation = edit_plan(
         scene_plan, "show the architecture diagram in the corner", llm, PROMPT_TEMPLATE, assets=_assets()
     )
 
@@ -861,7 +910,7 @@ def test_edit_plan_rejects_an_ungroundable_image_creation():
         }
     )
 
-    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images, explanation = edit_plan(
         scene_plan, "show some image", llm, PROMPT_TEMPLATE, assets=_assets()
     )
 
@@ -883,7 +932,7 @@ def test_edit_plan_without_assets_cannot_create_images():
         }
     )
 
-    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images, explanation = edit_plan(
         scene_plan, "show the diagram", llm, PROMPT_TEMPLATE
     )
 
@@ -1197,7 +1246,7 @@ def test_edit_plan_creates_a_full_screen_diagram_grounded_against_scene_transcri
         }
     )
 
-    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images, explanation = edit_plan(
         scene_plan, "create a full screen diagram of how DI relates to testing", llm, PROMPT_TEMPLATE,
         transcript=_transcript_with_segments(), manifest=_manifest_single_video(),
     )
@@ -1222,7 +1271,7 @@ def test_edit_plan_creates_a_full_screen_image_grounded_against_a_real_asset():
         }
     )
 
-    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images, explanation = edit_plan(
         scene_plan, "show the architecture diagram full screen", llm, PROMPT_TEMPLATE,
         transcript=_transcript_with_segments(), manifest=_manifest_single_video(), assets=_assets(),
     )
@@ -1248,7 +1297,7 @@ def test_edit_plan_creates_a_full_screen_code_grounded_against_a_real_code_asset
         }
     )
 
-    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images, explanation = edit_plan(
         scene_plan, "show the kafka consumer code full screen", llm, PROMPT_TEMPLATE,
         transcript=_transcript_with_segments(), manifest=_manifest_single_video(), code_assets=_code_assets(),
     )
@@ -1274,7 +1323,7 @@ def test_edit_plan_creates_a_full_screen_text_grounded_against_the_transcript():
         }
     )
 
-    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images, explanation = edit_plan(
         scene_plan, "make this statement full screen", llm, PROMPT_TEMPLATE,
         transcript=_transcript_with_segments(), manifest=_manifest_single_video(),
     )
@@ -1300,7 +1349,7 @@ def test_edit_plan_rejects_a_full_screen_creation_with_an_unrecognized_full_visu
         }
     )
 
-    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images, explanation = edit_plan(
         scene_plan, "show a full screen video", llm, PROMPT_TEMPLATE,
         transcript=_transcript_with_segments(), manifest=_manifest_single_video(),
     )
@@ -1321,7 +1370,7 @@ def test_edit_plan_rejects_an_ungroundable_diagram_creation():
         {"operations": [{"op": "create", "type": "diagram", "sceneId": "scene-001", "diagram": diagram, "reason": "x"}]}
     )
 
-    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images, explanation = edit_plan(
         scene_plan, "create a full screen diagram about kubernetes", llm, PROMPT_TEMPLATE,
         transcript=_transcript_with_segments(), manifest=_manifest_single_video(),
     )
@@ -1341,7 +1390,7 @@ def test_edit_plan_without_transcript_cannot_create_diagrams():
         }
     )
 
-    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images, explanation = edit_plan(
         scene_plan, "create a diagram", llm, PROMPT_TEMPLATE
     )
 
@@ -1363,7 +1412,7 @@ def test_edit_plan_creates_a_bottom_callout_grounded_against_scene_transcript():
         }
     )
 
-    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images, explanation = edit_plan(
         scene_plan, "add a callout saying dependency injection matters", llm, PROMPT_TEMPLATE,
         transcript=_transcript_with_segments(), manifest=_manifest_single_video(),
     )
@@ -1390,7 +1439,7 @@ def test_edit_plan_rejects_an_ungroundable_moment_creation():
         }
     )
 
-    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images, explanation = edit_plan(
         scene_plan, "add a weird callout", llm, PROMPT_TEMPLATE,
         transcript=_transcript_with_segments(), manifest=_manifest_single_video(),
     )
@@ -1518,7 +1567,7 @@ def test_edit_plan_end_to_end_applies_valid_operation_and_reflows():
         }
     )
 
-    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images, explanation = edit_plan(
         scene_plan, "change the title to New title", llm, PROMPT_TEMPLATE
     )
 
@@ -1547,7 +1596,7 @@ def test_edit_plan_end_to_end_filters_out_invalid_operations():
         }
     )
 
-    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images, explanation = edit_plan(
         scene_plan, "some instruction", llm, PROMPT_TEMPLATE
     )
 
@@ -1566,7 +1615,7 @@ def test_edit_plan_handles_instruction_containing_template_like_braces():
 
     tricky_instruction = 'remove the scene that says "{scene_plan}" in it'
 
-    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images, explanation = edit_plan(
         scene_plan, tricky_instruction, llm, PROMPT_TEMPLATE
     )
 
@@ -1643,7 +1692,7 @@ def test_edit_plan_degrades_to_nothing_selected_for_a_stale_selection():
 
     llm = _FakeLLMClient({"operations": []})
 
-    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images, explanation = edit_plan(
         scene_plan, "make this bigger", llm, PROMPT_TEMPLATE, selected_scene_id="scene-does-not-exist"
     )
 
@@ -1764,7 +1813,7 @@ def test_edit_plan_applies_a_vague_instructions_field_change_on_a_moment():
         }
     )
 
-    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images, explanation = edit_plan(
         scene_plan, "make this more dramatic", llm, PROMPT_TEMPLATE, selected_scene_id="scene-moment-0"
     )
 
@@ -1801,7 +1850,7 @@ def test_edit_plan_applies_a_concrete_entrance_animation_request():
         }
     )
 
-    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images, explanation = edit_plan(
         scene_plan, "make this fade in instead", llm, PROMPT_TEMPLATE, selected_scene_id="scene-moment-0"
     )
 
@@ -1833,7 +1882,7 @@ def test_edit_plan_applies_a_vague_instructions_field_change_on_a_beat():
         }
     )
 
-    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images, explanation = edit_plan(
         scene_plan, "make this pop more", llm, PROMPT_TEMPLATE, selected_scene_id="scene-beat-0"
     )
 
@@ -1858,7 +1907,7 @@ def test_edit_plan_applies_a_vague_instructions_field_change_on_a_title():
         }
     )
 
-    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images, explanation = edit_plan(
         scene_plan, "make this more dramatic", llm, PROMPT_TEMPLATE, selected_scene_id="scene-title-0"
     )
 
@@ -1875,7 +1924,7 @@ def test_edit_plan_vague_instruction_with_no_plausible_field_returns_no_operatio
 
     llm = _FakeLLMClient({"operations": []})
 
-    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images = edit_plan(
+    updated_plan, valid_ops, rejected, created_beats, created_moments, created_images, explanation = edit_plan(
         scene_plan, "make this more dramatic", llm, PROMPT_TEMPLATE
     )
 

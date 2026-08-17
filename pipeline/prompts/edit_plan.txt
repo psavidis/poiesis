@@ -197,6 +197,7 @@ string values on a single line.
 Schema:
 
 {
+  "explanation": "string — REQUIRED whenever operations is empty: a short, specific sentence explaining why nothing could be done (e.g. the exact wording isn't something said in the target scene, so it can't be used as beat/callout text; no scene matched the described position or content). Omit this field entirely when operations is non-empty.",
   "operations": [
     {
       "op": "remove" or "update" or "create",
@@ -225,4 +226,7 @@ present for "create"/"beat" operations. "type"/"sceneId"/"text" are only present
 "diagram" are only present for "create"/"diagram" operations. "type"/"sceneId"/"fullVisualKind"
 are only present for "create"/"full-screen" operations, plus exactly one of "assetId"/
 "codeAssetId"/"text" depending on fullVisualKind. If the instruction doesn't match anything in
-the current plan, return {"operations": []}.
+the current plan, or asks for something no operation type can do (e.g. custom/invented text for
+a beat or bottom-callout, which must be an exact phrase from the transcript), return
+{"explanation": "...", "operations": []} — never leave the creator with no idea why nothing
+happened.
