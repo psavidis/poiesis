@@ -992,19 +992,53 @@ OVERRIDABLE_MOMENT_FIELDS = {
 # different prominence, grouped by content type — see #62 (code, first
 # slice of #42, the content-type-vs-presentation epic) and its extension
 # to image/diagram. Confirmed structurally compatible by reading
-# Episode.tsx's layoutWindowsForScene, which already resolves every
-# "side-*" treatment to presenterSide left/right, "content-dominant-code"
-# to a corner PiP, and "full-visual" to hidden — all compatible presenter-
-# layout states regardless of which content type is involved. Code has
-# three siblings (it alone also has a Content Dominant treatment); image
-# and diagram each have exactly two (their own side-* treatment plus
-# full-visual). fullVisualKind is what full-visual uses to say WHICH
-# content type it's currently showing — not a separate axis to switch
-# independently here.
+# The content-type/presentation model (docs/specs/content-types-and-
+# presentation-editing.md, sections 1/2/14/16 — see #63): each top-level
+# key is a CONTENT TYPE ("what the asset represents"), and each inner dict
+# maps a treatment string to its human-readable PRESENTATION label ("how
+# that content is shown"). This single table is the source of truth for
+# both axes — TREATMENT_GROUPS/SWITCHABLE_TREATMENTS below are derived
+# views over it, not independently maintained, so the two concepts can
+# never drift out of sync with each other the way the old flat
+# TREATMENT_GROUPS set and MomentEditorPanel.tsx's separate
+# PRESENTATION_GROUPS label table used to.
+#
+# Mirrors Episode.tsx's layoutWindowsForScene, which already resolves
+# every "side-*" treatment to presenterSide left/right, "content-dominant-
+# code" to a corner PiP, and "full-visual" to hidden — all compatible
+# presenter-layout states regardless of which content type is involved.
+# Code has three siblings (it alone also has a Content Dominant
+# treatment); image and diagram each have exactly two (their own side-*
+# treatment plus full-visual). fullVisualKind is what full-visual uses to
+# say WHICH content type it's currently showing — not a separate axis to
+# switch independently here.
+#
+# "Split Screen" is side-code's real label, not "Inline" — investigated
+# and confirmed in #48: side-code's existing 60/40 layout already
+# satisfies the spec's Split Screen requirement, so no separate
+# implementation was built for it.
+CONTENT_TYPE_PRESENTATIONS = {
+    "code": {
+        "side-code": "Split Screen",
+        "content-dominant-code": "Content Dominant",
+        "full-visual": "Full Screen",
+    },
+    "image": {
+        "side-image": "Inline",
+        "full-visual": "Full Screen",
+    },
+    "diagram": {
+        "side-diagram": "Inline",
+        "full-visual": "Full Screen",
+    },
+}
+
+# Derived from CONTENT_TYPE_PRESENTATIONS above — kept as a plain
+# treatment->set(treatments) shape since switch_moment_treatment only ever
+# needs group membership, not the presentation labels.
 TREATMENT_GROUPS = {
-    "code": {"side-code", "content-dominant-code", "full-visual"},
-    "image": {"side-image", "full-visual"},
-    "diagram": {"side-diagram", "full-visual"},
+    content_type: set(presentations)
+    for content_type, presentations in CONTENT_TYPE_PRESENTATIONS.items()
 }
 
 # Any treatment outside its own group is out of scope for
@@ -1042,6 +1076,31 @@ def _moment_treatment_group(moment):
             return group
 
     return None
+
+
+def content_type_and_presentation_for(moment):
+    """The explicit (contentType, presentation) pair this moment's raw
+    treatment/fullVisualKind implies — see #63. Additive projection, NOT a
+    stored field: scene-plan.json/moments.json keep "treatment" as the
+    only on-disk source of truth (zero migration risk for existing
+    episodes), this just names what CONTENT_TYPE_PRESENTATIONS already
+    encodes so callers (the AI prompt, API responses) can work with the
+    two axes directly instead of re-deriving group membership themselves
+    the way _moment_treatment_group/switch_moment_treatment still do
+    internally. Returns (None, None) for a treatment/fullVisualKind
+    combination with no entry in the table (e.g. "bottom-callout",
+    "side-text", or full-visual "text" — content types that don't
+    participate in this switchable-presentation model at all)."""
+
+    content_type = _moment_treatment_group(moment)
+
+    if content_type is None:
+        return None, None
+
+    treatment = moment.get("treatment")
+    presentation = CONTENT_TYPE_PRESENTATIONS[content_type].get(treatment)
+
+    return content_type, presentation
 
 
 def switch_moment_treatment(moment, new_treatment, scene_plan, style=None):

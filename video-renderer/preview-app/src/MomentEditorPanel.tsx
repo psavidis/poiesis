@@ -21,15 +21,22 @@ const VALID_TERM_LEVELS = ["muted", "primary", "accent"] as const;
 // treatment here.
 const NO_TEXT_EDIT_TREATMENTS = new Set(["side-diagram", "side-code", "comparison", "content-dominant-code"]);
 
-// Treatments PUT /api/episode/moment-treatment knows how to switch
-// between, grouped by content type — mirrors generate_moments.py's
-// TREATMENT_GROUPS. Human-readable labels per group, since the raw
-// treatment strings don't read well as UI copy (matches the spec's own
-// presentation-name vocabulary — docs/specs/content-types-and-presentation-editing.md,
-// section 2: code gets Split Screen/Content Dominant/Full Screen; image
-// and diagram — which have no Content Dominant/Split Screen equivalent —
-// get Inline/Full Screen instead).
-const PRESENTATION_GROUPS: Record<string, Record<string, string>> = {
+// The content-type/presentation model (docs/specs/content-types-and-
+// presentation-editing.md, sections 1/2/14/16 — see #63): each top-level
+// key is a CONTENT TYPE ("what the asset represents"), and each inner
+// record maps a treatment string to its human-readable PRESENTATION label
+// ("how that content is shown"). Mirrors pipeline/generate_moments.py's
+// CONTENT_TYPE_PRESENTATIONS exactly (same keys, same labels) — this is
+// the TypeScript half of the same shared model; Python and the browser
+// can't literally share one implementation, so the two are kept in sync
+// by mirroring rather than by one being derived from the other.
+//
+// "Split Screen" is side-code's real label, not "Inline" — investigated
+// and confirmed in #48: side-code's existing 60/40 layout already
+// satisfies the spec's Split Screen requirement, so no separate
+// implementation was built for it. Image and diagram — which have no
+// Content Dominant/Split Screen equivalent — get Inline/Full Screen only.
+export const CONTENT_TYPE_PRESENTATIONS: Record<string, Record<string, string>> = {
     code: {
         "side-code": "Split Screen",
         "content-dominant-code": "Content Dominant",
@@ -45,20 +52,36 @@ const PRESENTATION_GROUPS: Record<string, Record<string, string>> = {
     },
 };
 
-// Which PRESENTATION_GROUPS key a moment's CURRENT treatment belongs to —
-// full-visual is shared across every group, so it's resolved via
-// fullVisualKind (the field that says which content it's currently
-// showing), same as the server does.
-function presentationGroupFor(moment: any): string | null {
+// The explicit (contentType, presentation) pair this moment's raw
+// treatment/fullVisualKind implies — mirrors generate_moments.py's
+// content_type_and_presentation_for exactly. "full-visual" is shared
+// across every content type (it's the one treatment string every group
+// contains), so it's resolved via fullVisualKind (the field that says
+// which content it's currently showing) rather than the treatment string
+// alone. Returns [null, null] for a treatment/fullVisualKind combination
+// with no entry in the table (e.g. "bottom-callout", "side-text", or
+// full-visual "text" — content types that don't participate in this
+// switchable-presentation model at all), same as the Python function.
+export function contentTypeAndPresentationFor(moment: any): [string | null, string | null] {
+    let contentType: string | null = null;
+
     if (moment.treatment === "full-visual") {
-        return moment.fullVisualKind === "code" || moment.fullVisualKind === "image" || moment.fullVisualKind === "diagram"
-            ? moment.fullVisualKind
-            : null;
+        contentType =
+            moment.fullVisualKind === "code" || moment.fullVisualKind === "image" || moment.fullVisualKind === "diagram"
+                ? moment.fullVisualKind
+                : null;
+    } else {
+        for (const [type, presentations] of Object.entries(CONTENT_TYPE_PRESENTATIONS)) {
+            if (moment.treatment in presentations) {
+                contentType = type;
+                break;
+            }
+        }
     }
-    for (const [group, labels] of Object.entries(PRESENTATION_GROUPS)) {
-        if (moment.treatment in labels) return group;
-    }
-    return null;
+
+    if (contentType === null) return [null, null];
+
+    return [contentType, CONTENT_TYPE_PRESENTATIONS[contentType][moment.treatment] ?? null];
 }
 
 function summarizeMomentContent(m: any): string {
@@ -168,12 +191,13 @@ export function MomentEditorPanel({ episodePath, sceneId, scenePlan, currentFram
     };
 
     // A presentation switch is only offered when the moment's content
-    // type resolves to one of PRESENTATION_GROUPS — "full-visual" also
-    // covers a "text" fullVisualKind, which has no sibling treatment to
-    // switch to/from (text-as-full-visual has no "side-text-as-full-visual"
-    // equivalent — side-text is a genuinely different content shape), so
-    // presentationGroupFor returns null for it and no selector is shown.
-    const presentationGroup = presentationGroupFor(moment);
+    // type resolves to one of CONTENT_TYPE_PRESENTATIONS — "full-visual"
+    // also covers a "text" fullVisualKind, which has no sibling treatment
+    // to switch to/from (text-as-full-visual has no
+    // "side-text-as-full-visual" equivalent — side-text is a genuinely
+    // different content shape), so contentTypeAndPresentationFor returns
+    // [null, null] for it and no selector is shown.
+    const [contentType] = contentTypeAndPresentationFor(moment);
 
     const switchTreatment = async (newTreatment: string) => {
         if (newTreatment === moment.treatment) return;
@@ -255,7 +279,7 @@ export function MomentEditorPanel({ episodePath, sceneId, scenePlan, currentFram
                 </button>
             </div>
 
-            {presentationGroup && (
+            {contentType && (
                 <div style={styles.fieldRow}>
                     <label style={styles.presentationLabel}>Presentation</label>
                     <select
@@ -264,7 +288,7 @@ export function MomentEditorPanel({ episodePath, sceneId, scenePlan, currentFram
                         disabled={switchingTreatment}
                         style={{ ...styles.input, flex: 1 }}
                     >
-                        {Object.entries(PRESENTATION_GROUPS[presentationGroup]).map(([t, label]) => (
+                        {Object.entries(CONTENT_TYPE_PRESENTATIONS[contentType]).map(([t, label]) => (
                             <option key={t} value={t}>
                                 {label}
                             </option>

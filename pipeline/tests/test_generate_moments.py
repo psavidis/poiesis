@@ -1,5 +1,6 @@
 from episode_context import NO_CONTEXT_TEXT
 from generate_moments import (
+    CONTENT_TYPE_PRESENTATIONS,
     TRANSITION_FRAMES,
     TREATMENT_GROUPS,
     build_candidate_windows,
@@ -7,6 +8,7 @@ from generate_moments import (
     chapter_for_absolute_frame,
     chapters_from_scene_plan,
     compute_overridden_fields,
+    content_type_and_presentation_for,
     dedupe_overlapping_windows,
     duration_for_treatment,
     format_assets_for_prompt,
@@ -2791,6 +2793,62 @@ def _scene_plan_for_switch(parent_duration=600):
             {"id": "scene-001", "type": "presenter", "durationInFrames": parent_duration},
         ]
     }
+
+
+def test_treatment_groups_is_derived_from_content_type_presentations():
+    # TREATMENT_GROUPS must stay a pure projection of
+    # CONTENT_TYPE_PRESENTATIONS (see #63) — same set of treatments per
+    # content type, just without the presentation labels.
+    for content_type, presentations in CONTENT_TYPE_PRESENTATIONS.items():
+        assert TREATMENT_GROUPS[content_type] == set(presentations)
+
+
+def test_content_type_and_presentation_for_side_code():
+    assert content_type_and_presentation_for(_code_moment("side-code")) == ("code", "Split Screen")
+
+
+def test_content_type_and_presentation_for_content_dominant_code():
+    assert content_type_and_presentation_for(_code_moment("content-dominant-code")) == (
+        "code",
+        "Content Dominant",
+    )
+
+
+def test_content_type_and_presentation_for_full_visual_code():
+    assert content_type_and_presentation_for(_code_moment("full-visual")) == ("code", "Full Screen")
+
+
+def test_content_type_and_presentation_for_side_image():
+    assert content_type_and_presentation_for(_image_moment("side-image")) == ("image", "Inline")
+
+
+def test_content_type_and_presentation_for_full_visual_image():
+    assert content_type_and_presentation_for(_image_moment("full-visual")) == ("image", "Full Screen")
+
+
+def test_content_type_and_presentation_for_side_diagram():
+    assert content_type_and_presentation_for(_diagram_moment("side-diagram")) == ("diagram", "Inline")
+
+
+def test_content_type_and_presentation_for_full_visual_diagram():
+    assert content_type_and_presentation_for(_diagram_moment("full-visual")) == ("diagram", "Full Screen")
+
+
+def test_content_type_and_presentation_for_bottom_callout_is_none():
+    # bottom-callout doesn't participate in the switchable content-type/
+    # presentation model at all (no sibling presentations exist for it) —
+    # (None, None), not a guess or a KeyError.
+    moment = {"treatment": "bottom-callout"}
+    assert content_type_and_presentation_for(moment) == (None, None)
+
+
+def test_content_type_and_presentation_for_full_visual_text_is_none():
+    # "text" is a valid fullVisualKind but has no entry in
+    # CONTENT_TYPE_PRESENTATIONS (no side-* sibling to switch to/from) —
+    # must not raise, must return (None, None) same as any other
+    # non-participating treatment.
+    moment = {"treatment": "full-visual", "fullVisualKind": "text"}
+    assert content_type_and_presentation_for(moment) == (None, None)
 
 
 def test_switch_moment_treatment_preserves_code_content():
