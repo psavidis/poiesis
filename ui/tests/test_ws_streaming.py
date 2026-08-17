@@ -1,8 +1,10 @@
+import asyncio
 import json
 import sys
 
 import pytest
 from fastapi.testclient import TestClient
+from fastapi.websockets import WebSocketDisconnect
 
 import server
 from server import app
@@ -249,6 +251,86 @@ def test_ws_render_run_translates_total_and_progress_sentinel_lines(tmp_path, mo
 
         done_msg = ws.receive_json()
         assert done_msg["type"] == "done"
+
+
+class _DisconnectingWebSocket:
+    """Stands in for a real WebSocket whose connection has died partway
+    through a run — a page refresh, in production, raises WebSocketDisconnect
+    (or another Exception; _stream_command's _send helper is deliberately
+    broad) from send_json once the underlying socket is actually gone.
+    starlette.testclient.TestClient's in-memory transport does NOT
+    reproduce this: its send() never raises on a "closed" test connection
+    (there's no real socket for an OSError to come from — see
+    starlette.websockets.WebSocket.send, which only converts OSError into
+    WebSocketDisconnect), so this bug can only be regression-tested by
+    calling _stream_command directly with a fake that DOES raise, bypassing
+    the ASGI transport entirely rather than going through
+    client.websocket_connect()."""
+
+    def __init__(self, fail_after: int):
+        self.fail_after = fail_after
+        self.sent: list[dict] = []
+
+    async def send_json(self, payload: dict):
+        self.sent.append(payload)
+        if len(self.sent) > self.fail_after:
+            raise WebSocketDisconnect(code=1006)
+
+    async def receive_json(self):
+        # _watch_for_cancel's own receive loop — never sends a cancel in
+        # this test, just needs to not resolve before the run finishes.
+        await asyncio.sleep(3600)
+
+
+def _fake_stream_process_two_progress_lines(command, cwd=None, on_start=None):
+    if on_start is not None:
+        on_start(None)
+    yield "__TOTAL__2"
+    yield "__PROGRESS__1/2"
+    yield "__PROGRESS__2/2"
+    yield "__EXIT_CODE__0"
+
+
+def test_stream_command_keeps_updating_render_progress_after_a_send_failure(tmp_path, monkeypatch):
+    # Regression: a page refresh kills the websocket long before the actual
+    # subprocess (export_davinci.py -> npx remotion render) exits. Before
+    # this fix, letting a failed send_json propagate out of
+    # _stream_command's loop unwound past the `with episode_lock(...)`
+    # block in _run_websocket, releasing the lock — and abandoning
+    # _render_progress updates — while the real subprocess (unaffected by
+    # any of this; it isn't killed) was still running. That let a second
+    # render start concurrently against the same episode, and made GET
+    # /api/episode/render-status lie that nothing was running (confirmed
+    # live against a real DaVinci export). _send must swallow the failure
+    # and let the loop keep consuming the queue (and therefore keep
+    # updating _render_progress) until the process itself actually
+    # finishes, not until the socket dies.
+    #
+    # No pytest-asyncio in this project — _stream_command is driven
+    # directly via asyncio.run() rather than an `async def test_`, which
+    # plain pytest would otherwise silently skip without ever actually
+    # awaiting it (a false-positive pass, not a real regression guard).
+    episode = tmp_path / "episode"
+    episode.mkdir()
+
+    monkeypatch.setattr(server, "stream_process", _fake_stream_process_two_progress_lines)
+
+    # fail_after=2: "start" and "total" succeed, then every send starting
+    # with the first "progress" message raises — simulating the socket
+    # dying right after the client has seen the total but before any
+    # per-clip progress arrives, same shape as the live bug.
+    ws = _DisconnectingWebSocket(fail_after=2)
+
+    try:
+        asyncio.run(server._stream_command(ws, ["fake-command"], episode))
+
+        # The loop must have run to completion despite every send after the
+        # 2nd one failing — _render_progress reflects the LAST line the fake
+        # subprocess produced (2/2), not wherever it was when sends started
+        # failing (1/2), proving the loop kept consuming the queue throughout.
+        assert server._render_progress.get(str(episode)) == {"current": 2, "total": 2}
+    finally:
+        server._clear_render_progress(episode)
 
 
 def test_ws_render_run_rejects_invalid_resolution_for_davinci_format(tmp_path):

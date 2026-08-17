@@ -1490,9 +1490,38 @@ async def _stream_command(websocket: WebSocket, command, episode: Path | None = 
     DIFFERENT client (e.g. this same tab after a refresh, or a second tab)
     can recover the current N-of-M via GET /api/episode/render-status
     instead of only ever seeing progress live over this one websocket
-    connection — see that dict's own comment."""
+    connection — see that dict's own comment.
 
-    await websocket.send_json({"type": "start", "command": " ".join(command)})
+    Critically, this function's own loop — and therefore the episode_lock
+    this is called from inside (see _run_websocket) — stays alive for the
+    SUBPROCESS's real lifetime, not the websocket's. A page refresh closes
+    the websocket (send_json starts raising) long before the subprocess
+    actually exits; if that exception were allowed to propagate out of
+    this function, it would unwind past episode_lock's `with` block and
+    release the lock while export_davinci.py/npx remotion render keep
+    running and writing files completely untracked — is_episode_locked()
+    would then report the episode as free while a render is still
+    genuinely in flight (confirmed live: this exact bug shipped in an
+    earlier version of this function). _send, below, swallows a
+    send-to-a-dead-socket failure (marking the socket dead so further
+    sends are skipped rather than retried) without stopping the loop
+    itself — the loop keeps draining the queue and updating
+    _render_progress/holding the lock until the subprocess's own
+    __EXIT_CODE__/__CANCELLED__/produce()-finished signal says it's
+    actually done."""
+
+    socket_dead = False
+
+    async def _send(payload):
+        nonlocal socket_dead
+        if socket_dead:
+            return
+        try:
+            await websocket.send_json(payload)
+        except Exception:
+            socket_dead = True
+
+    await _send({"type": "start", "command": " ".join(command)})
 
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
@@ -1510,6 +1539,10 @@ async def _stream_command(websocket: WebSocket, command, episode: Path | None = 
 
     loop.run_in_executor(None, produce)
 
+    # _watch_for_cancel reads from the websocket itself — once the socket
+    # is dead there's nothing more it can usefully wait on, but it already
+    # degrades safely on WebSocketDisconnect (see its own try/except), so
+    # no special handling is needed here beyond the existing cleanup below.
     cancel_task = asyncio.ensure_future(_watch_for_cancel(websocket, handle_holder))
 
     try:
@@ -1518,16 +1551,16 @@ async def _stream_command(websocket: WebSocket, command, episode: Path | None = 
 
             if line is None:
                 if "error" in error_holder:
-                    await websocket.send_json({"type": "error", "message": error_holder["error"]})
+                    await _send({"type": "error", "message": error_holder["error"]})
                 return
 
             if line.startswith("__EXIT_CODE__"):
                 exit_code = int(line.removeprefix("__EXIT_CODE__"))
-                await websocket.send_json({"type": "done", "exitCode": exit_code})
+                await _send({"type": "done", "exitCode": exit_code})
                 continue
 
             if line.startswith("__CANCELLED__"):
-                await websocket.send_json({"type": "cancelled"})
+                await _send({"type": "cancelled"})
                 continue
 
             # export_davinci.py (#65's sibling render-console request)
@@ -1537,12 +1570,18 @@ async def _stream_command(websocket: WebSocket, command, episode: Path | None = 
             # __EXIT_CODE__/__CANCELLED__ above, so AdvancedPanel can show
             # a real progress bar instead of parsing raw log text for it.
             # Other scripts never print these prefixes, so this is a no-op
-            # for every other websocket-driven run (stage/QA).
+            # for every other websocket-driven run (stage/QA). This is
+            # deliberately updated even once socket_dead is true (_send
+            # itself no-ops the actual websocket call, but the
+            # _set_render_progress call above/outside _send always runs) —
+            # a refreshed tab's later GET /api/episode/render-status poll
+            # needs this to keep advancing after the original connection
+            # is gone, which is the entire point of this recovery path.
             if line.startswith("__TOTAL__"):
                 total = int(line.removeprefix("__TOTAL__"))
                 if episode is not None:
                     _set_render_progress(episode, 0, total)
-                await websocket.send_json({"type": "total", "count": total})
+                await _send({"type": "total", "count": total})
                 continue
 
             if line.startswith("__PROGRESS__"):
@@ -1550,10 +1589,10 @@ async def _stream_command(websocket: WebSocket, command, episode: Path | None = 
                 current, total = int(current), int(total)
                 if episode is not None:
                     _set_render_progress(episode, current, total)
-                await websocket.send_json({"type": "progress", "current": current, "total": total})
+                await _send({"type": "progress", "current": current, "total": total})
                 continue
 
-            await websocket.send_json({"type": "log", "line": line})
+            await _send({"type": "log", "line": line})
     finally:
         cancel_task.cancel()
         try:
