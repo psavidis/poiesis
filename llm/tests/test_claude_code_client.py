@@ -103,6 +103,44 @@ def test_complete_json_strips_markdown_code_fence():
         assert json.loads(result) == {"status": "ok"}
 
 
+def test_complete_json_extracts_object_when_model_adds_prose():
+    # Regression: the model sometimes reasons in prose before the JSON
+    # object despite being told to return ONLY the object (e.g. explaining
+    # why it picked a fallback operation) — this used to raise
+    # JSONDecodeError and surface as a 502 to the caller.
+    with patch("llm.claude_code_client.subprocess.run") as mock_run:
+        mock_run.return_value = _mock_cli_result(
+            {
+                "is_error": False,
+                "result": 'Frame 9920 falls in scene-009.\n\n{"status": "ok"}',
+            }
+        )
+
+        from llm.claude_code_client import ClaudeCodeClient
+
+        client = ClaudeCodeClient("sonnet")
+        result = client.complete_json("analyze this")
+
+        assert json.loads(result) == {"status": "ok"}
+
+
+def test_complete_json_still_raises_when_no_object_present():
+    with patch("llm.claude_code_client.subprocess.run") as mock_run:
+        mock_run.return_value = _mock_cli_result(
+            {"is_error": False, "result": "I cannot help with that."}
+        )
+
+        from llm.claude_code_client import ClaudeCodeClient
+
+        client = ClaudeCodeClient("sonnet")
+
+        try:
+            client.complete_json("analyze this")
+            assert False, "expected JSONDecodeError"
+        except json.JSONDecodeError:
+            pass
+
+
 def test_raises_on_nonzero_exit():
     with patch("llm.claude_code_client.subprocess.run") as mock_run:
         result = MagicMock()

@@ -88,4 +88,17 @@ class ClaudeCodeClient:
                 text = text[4:]
             text = text.strip()
 
-        return json.dumps(json.loads(text))
+        try:
+            return json.dumps(json.loads(text))
+        except json.JSONDecodeError:
+            # The model sometimes reasons in prose before the JSON object
+            # despite being told not to (e.g. explaining why it's using a
+            # fallback operation type) — fall back to extracting the
+            # outermost {...} span rather than failing the whole request
+            # on output that does contain a valid object, just not ONLY
+            # that object.
+            start = text.find("{")
+            end = text.rfind("}")
+            if start == -1 or end == -1 or end < start:
+                raise
+            return json.dumps(json.loads(text[start : end + 1]))
