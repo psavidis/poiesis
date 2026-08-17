@@ -169,6 +169,30 @@ def main():
     run(index_code_command)
 
 
+    # 6a-3. Propose mid-take pause cuts for human review (#65) — measured
+    # directly from word-level transcript timing, no LLM judgment involved
+    # (pauses are a mechanical/measurable signal, not a subjective one).
+    # Runs after analyze_scenes.py (needs scene-plan.json's presenter
+    # source ranges) and before any stage that computes overlay offsets
+    # against the CURRENT timeline. KNOWN LIMITATION: cuts proposed here
+    # are only APPLIED when a human explicitly accepts one via PUT
+    # /api/episode/cut-candidates — if that happens after later stages
+    # (title scenes, moments, emphasis) already ran against the pre-cut
+    # timeline, their overlay offsets can go stale the same way any other
+    # manual scene-plan edit already risks today. Not gated/solved here —
+    # see generate_cut_candidates.py's own module docstring.
+    cut_candidates_command = [
+        sys.executable,
+        str(pipeline / "generate_cut_candidates.py"),
+        str(episode)
+    ]
+
+    if args.force:
+        cut_candidates_command.append("--force")
+
+    run(cut_candidates_command)
+
+
     # 6b. Propose title scenes
     title_scenes_command = [
         sys.executable,

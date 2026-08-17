@@ -152,6 +152,36 @@ def validate_operations(scene_plan, operations):
             valid_ops.append(op)
             continue
 
+        if op.get("op") == "trim":
+
+            if scene["type"] != "presenter":
+                rejected.append(
+                    {"operation": op, "reason": f"trim only applies to presenter scenes, not '{scene['type']}'"}
+                )
+                continue
+
+            cut_start = op.get("cutStartFrame")
+            cut_end = op.get("cutEndFrame")
+
+            if (
+                not isinstance(cut_start, int)
+                or not isinstance(cut_end, int)
+                or not (scene["sourceStartFrame"] <= cut_start < cut_end <= scene["sourceEndFrame"])
+            ):
+                rejected.append(
+                    {
+                        "operation": op,
+                        "reason": (
+                            f"cut range [{cut_start}, {cut_end}) must fall strictly within the "
+                            f"scene's own source range [{scene['sourceStartFrame']}, {scene['sourceEndFrame']}]"
+                        ),
+                    }
+                )
+                continue
+
+            valid_ops.append(op)
+            continue
+
         if op.get("op") == "update":
 
             fields = op.get("fields", {})
@@ -196,25 +226,131 @@ def validate_operations(scene_plan, operations):
     return valid_ops, rejected
 
 
+def resolve_trim(scene, cut_start_frame, cut_end_frame):
+    """Excises an interior [cut_start_frame, cut_end_frame) sub-range from
+    a presenter scene's own source range by splitting it into up to two
+    presenter scenes — NOT by introducing a multi-range source schema.
+    Verified against Episode.tsx: presenter rendering is already one
+    <OffthreadVideo trimBefore trimAfter> per scene, and the existing
+    crossfade-at-scene-boundary logic (crossfadeInFramesForScene) doesn't
+    care whether two adjacent presenter scenes share a videoId — so two
+    scenes from the SAME video, back to back, render exactly like a clean
+    cut with zero renderer changes (see #65). The second scene's
+    transition is set to "crossfade" (this repo's existing default, see
+    create_scene_plan in analyze_scenes.py) — at CROSSFADE_TRANSITION_FRAMES
+    (9 frames, Episode.tsx) this reads as a clean cut, not a visible fade.
+
+    Returns (first_scene, second_scene) — either may be None if the cut is
+    flush against that edge of the scene's source range, degenerating to a
+    single adjusted scene rather than a spurious zero-length one. The
+    caller (apply_operations) is responsible for calling reflow_timeline
+    afterward, same as any other duration-changing op."""
+
+    keeps_front = cut_start_frame > scene["sourceStartFrame"]
+    keeps_back = cut_end_frame < scene["sourceEndFrame"]
+
+    first_scene = None
+    second_scene = None
+
+    if keeps_front:
+        first_scene = {
+            **scene,
+            "sourceEndFrame": cut_start_frame,
+            "durationInFrames": cut_start_frame - scene["sourceStartFrame"],
+        }
+
+    if keeps_back:
+        second_scene = {
+            **scene,
+            # Only renamed when BOTH halves survive — a cut flush against
+            # either edge degenerates to a single adjusted scene that
+            # keeps the ORIGINAL id, not a spurious "-b" rename of the
+            # only remaining half (which would silently break anything
+            # still addressing this scene by its original id, e.g. a
+            # not-yet-applied overlay op referencing it in the same batch).
+            "id": f"{scene['id']}-b" if keeps_front else scene["id"],
+            "sourceStartFrame": cut_end_frame,
+            "durationInFrames": scene["sourceEndFrame"] - cut_end_frame,
+            "effects": {**scene.get("effects", {}), "transition": "crossfade"} if keeps_front else scene.get("effects", {}),
+        }
+
+    return first_scene, second_scene
+
+
+def _reparent_overlays_for_trim(
+    scenes, original_scene_id, original_source_start_frame, first_scene, second_scene, cut_start_frame, cut_end_frame
+):
+    """For every overlay scene anchored to original_scene_id via
+    parentSceneId (moment/caption/image/beat all share this shape — see
+    types.ts): an overlay entirely before the cut stays on first_scene, one
+    at/after the cut is re-parented onto second_scene with its
+    offsetInParentFrames reduced by the removed span (and rebased onto
+    second_scene's own sourceStartFrame origin), and one strictly inside
+    the cut span is dropped — it anchored to a moment now excised from the
+    footage, so there's no valid position for it anymore. Dropped overlays
+    are returned separately (not silently discarded) so callers can
+    surface them, mirroring apply_operations' own "don't silently clean
+    up a dangling parentSceneId" discipline for plain removal.
+
+    original_source_start_frame is the PRE-trim scene's own
+    sourceStartFrame — the stable reference point offsetInParentFrames was
+    always relative to, regardless of which half (if either) keeps the
+    original scene id after the split.
+
+    Returns (kept_overlays, dropped_overlay_ids)."""
+
+    kept = []
+    dropped = []
+
+    for scene in scenes:
+
+        if scene.get("parentSceneId") != original_scene_id:
+            kept.append(scene)
+            continue
+
+        absolute_offset = original_source_start_frame + scene["offsetInParentFrames"]
+
+        if absolute_offset < cut_start_frame and first_scene is not None:
+            kept.append({**scene, "parentSceneId": first_scene["id"]})
+        elif absolute_offset >= cut_end_frame and second_scene is not None:
+            kept.append(
+                {
+                    **scene,
+                    "parentSceneId": second_scene["id"],
+                    "offsetInParentFrames": absolute_offset - second_scene["sourceStartFrame"],
+                }
+            )
+        else:
+            dropped.append(scene["id"])
+
+    return kept, dropped
+
+
 def apply_operations(scene_plan, operations):
-    """Applies already-validated remove/update operations to the scene
-    plan. "create" operations are deliberately NOT applied here — a
+    """Applies already-validated remove/update/trim operations to the
+    scene plan. "create" operations are deliberately NOT applied here — a
     created beat is resolved (resolve_beat_creation) and written to
     emphasis.json + re-merged via merge_beat_scenes, the same two-step
     write PUT /api/episode/beats already performs, not a direct
-    scene_plan["scenes"] mutation the way remove/update are. Keeping that
-    write path out of this function preserves apply_operations' existing
-    scope (pure scene-plan transform, no other file's concerns) — see
-    resolve_beat_creation's own docstring for where "create" actually gets
-    handled.
+    scene_plan["scenes"] mutation the way remove/update/trim are. Keeping
+    that write path out of this function preserves apply_operations'
+    existing scope (pure scene-plan transform, no other file's concerns) —
+    see resolve_beat_creation's own docstring for where "create" actually
+    gets handled.
 
     Removing a scene doesn't cascade to overlays anchored to it
     (parentSceneId pointing at a now-missing scene) — Episode.tsx already
     no-ops an overlay whose parent lookup fails, and qa_check.py's
     overlay-bounds check will flag the dangling reference so it's visible
-    rather than silently cleaned up."""
+    rather than silently cleaned up.
 
-    scenes_by_id = {scene["id"]: scene for scene in scene_plan["scenes"]}
+    Trimming a scene DOES cascade to its overlays (see
+    _reparent_overlays_for_trim) — unlike remove, a trim doesn't destroy
+    the parent scene's identity outright, so leaving stale offsets in
+    place would silently misplace a moment/beat/caption/image rather than
+    surface a clearly-dangling reference the way remove's no-op does.
+    Callers must run reflow_timeline() afterward — trim changes
+    durationInFrames on track scenes, same as any duration-changing edit."""
 
     remove_ids = {op["sceneId"] for op in operations if op["op"] == "remove"}
 
@@ -222,9 +358,13 @@ def apply_operations(scene_plan, operations):
         op["sceneId"]: op["fields"] for op in operations if op["op"] == "update"
     }
 
+    trims_by_id = {
+        op["sceneId"]: op for op in operations if op["op"] == "trim"
+    }
+
     # "create" ops pass through this function untouched (see docstring) —
-    # explicitly excluded from remove_ids/updates_by_id above via the
-    # op-type filters already in place, nothing further needed here.
+    # explicitly excluded from remove_ids/updates_by_id/trims_by_id above
+    # via the op-type filters already in place, nothing further needed here.
 
     new_scenes = []
 
@@ -233,12 +373,44 @@ def apply_operations(scene_plan, operations):
         if scene["id"] in remove_ids:
             continue
 
+        trim_op = trims_by_id.get(scene["id"])
+
+        if trim_op:
+            first_scene, second_scene = resolve_trim(scene, trim_op["cutStartFrame"], trim_op["cutEndFrame"])
+
+            if first_scene is not None:
+                new_scenes.append(first_scene)
+
+            if second_scene is not None:
+                new_scenes.append(second_scene)
+
+            continue
+
         fields = updates_by_id.get(scene["id"])
 
         if fields:
             scene = {**scene, **fields}
 
         new_scenes.append(scene)
+
+    # Overlay reparenting runs as a second pass over the ALREADY-trimmed
+    # track scenes above, since it needs to know which of first_scene/
+    # second_scene (if either) survived each trim.
+    for trim_op in trims_by_id.values():
+
+        original_id = trim_op["sceneId"]
+        original_scene = next((s for s in scene_plan["scenes"] if s["id"] == original_id), None)
+
+        if original_scene is None:
+            continue
+
+        first_scene = next((s for s in new_scenes if s["id"] == original_id), None)
+        second_scene = next((s for s in new_scenes if s["id"] == f"{original_id}-b"), None)
+
+        new_scenes, _dropped = _reparent_overlays_for_trim(
+            new_scenes, original_id, original_scene["sourceStartFrame"], first_scene, second_scene,
+            trim_op["cutStartFrame"], trim_op["cutEndFrame"],
+        )
 
     scene_plan = dict(scene_plan)
     scene_plan["scenes"] = new_scenes

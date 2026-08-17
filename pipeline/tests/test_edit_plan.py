@@ -189,6 +189,143 @@ def test_validate_operations_rejects_update_with_disallowed_field():
     assert "timelineStartFrame" in rejected[0]["reason"]
 
 
+# --- trim op (#65 — mid-take pause cuts) ---
+
+
+def test_validate_operations_accepts_trim_within_source_range():
+    scene_plan = {"scenes": [_presenter("scene-001", 0, 300, 0)]}
+
+    ops = [{"op": "trim", "sceneId": "scene-001", "cutStartFrame": 100, "cutEndFrame": 150, "reason": "pause"}]
+
+    valid, rejected = validate_operations(scene_plan, ops)
+
+    assert valid == ops
+    assert rejected == []
+
+
+def test_validate_operations_rejects_trim_on_non_presenter_scene():
+    scene_plan = {"scenes": [_title("scene-title-0", "Hello", 0)]}
+
+    ops = [{"op": "trim", "sceneId": "scene-title-0", "cutStartFrame": 0, "cutEndFrame": 10, "reason": "pause"}]
+
+    valid, rejected = validate_operations(scene_plan, ops)
+
+    assert valid == []
+    assert "presenter" in rejected[0]["reason"]
+
+
+def test_validate_operations_rejects_trim_outside_source_range():
+    scene_plan = {"scenes": [_presenter("scene-001", 0, 300, 0)]}
+
+    ops = [{"op": "trim", "sceneId": "scene-001", "cutStartFrame": 280, "cutEndFrame": 320, "reason": "pause"}]
+
+    valid, rejected = validate_operations(scene_plan, ops)
+
+    assert valid == []
+    assert "source range" in rejected[0]["reason"]
+
+
+def test_validate_operations_rejects_trim_with_start_at_or_after_end():
+    scene_plan = {"scenes": [_presenter("scene-001", 0, 300, 0)]}
+
+    ops = [{"op": "trim", "sceneId": "scene-001", "cutStartFrame": 150, "cutEndFrame": 100, "reason": "pause"}]
+
+    valid, rejected = validate_operations(scene_plan, ops)
+
+    assert valid == []
+    assert "source range" in rejected[0]["reason"]
+
+
+def test_apply_operations_trim_splits_an_interior_cut_into_two_scenes():
+    scene_plan = {
+        "scenes": [
+            _presenter("scene-001", 0, 300, 0),
+            _presenter("scene-002", 0, 100, 300),
+        ]
+    }
+
+    ops = [{"op": "trim", "sceneId": "scene-001", "cutStartFrame": 100, "cutEndFrame": 150, "reason": "pause"}]
+
+    result = reflow_timeline(apply_operations(scene_plan, ops))
+    scenes_by_id = {s["id"]: s for s in result["scenes"]}
+
+    assert scenes_by_id["scene-001"]["sourceStartFrame"] == 0
+    assert scenes_by_id["scene-001"]["sourceEndFrame"] == 100
+    assert scenes_by_id["scene-001"]["durationInFrames"] == 100
+    assert scenes_by_id["scene-001"]["timelineStartFrame"] == 0
+
+    assert scenes_by_id["scene-001-b"]["sourceStartFrame"] == 150
+    assert scenes_by_id["scene-001-b"]["sourceEndFrame"] == 300
+    assert scenes_by_id["scene-001-b"]["durationInFrames"] == 150
+    assert scenes_by_id["scene-001-b"]["timelineStartFrame"] == 100
+    assert scenes_by_id["scene-001-b"]["videoId"] == "001"
+    assert scenes_by_id["scene-001-b"]["effects"]["transition"] == "crossfade"
+
+    # reflow_timeline rippled the later, untouched scene by the removed span.
+    assert scenes_by_id["scene-002"]["timelineStartFrame"] == 250
+
+
+def test_apply_operations_trim_flush_against_scene_start_keeps_original_id():
+    scene_plan = {"scenes": [_presenter("scene-001", 0, 300, 0)]}
+
+    ops = [{"op": "trim", "sceneId": "scene-001", "cutStartFrame": 0, "cutEndFrame": 50, "reason": "pause"}]
+
+    result = reflow_timeline(apply_operations(scene_plan, ops))
+
+    assert [s["id"] for s in result["scenes"]] == ["scene-001"]
+    assert result["scenes"][0]["sourceStartFrame"] == 50
+    assert result["scenes"][0]["sourceEndFrame"] == 300
+    assert result["scenes"][0]["effects"]["transition"] == "none"
+
+
+def test_apply_operations_trim_flush_against_scene_end_keeps_original_id():
+    scene_plan = {"scenes": [_presenter("scene-001", 0, 300, 0)]}
+
+    ops = [{"op": "trim", "sceneId": "scene-001", "cutStartFrame": 250, "cutEndFrame": 300, "reason": "pause"}]
+
+    result = reflow_timeline(apply_operations(scene_plan, ops))
+
+    assert [s["id"] for s in result["scenes"]] == ["scene-001"]
+    assert result["scenes"][0]["sourceEndFrame"] == 250
+
+
+def test_apply_operations_trim_reparents_overlays_before_and_after_the_cut():
+    scene_plan = {
+        "scenes": [
+            _presenter("scene-001", 0, 300, 0),
+            _moment("m-before", "scene-001", 50, 10, "before the cut"),
+            _moment("m-after", "scene-001", 200, 10, "after the cut"),
+        ]
+    }
+
+    ops = [{"op": "trim", "sceneId": "scene-001", "cutStartFrame": 100, "cutEndFrame": 150, "reason": "pause"}]
+
+    result = apply_operations(scene_plan, ops)
+    scenes_by_id = {s["id"]: s for s in result["scenes"]}
+
+    assert scenes_by_id["m-before"]["parentSceneId"] == "scene-001"
+    assert scenes_by_id["m-before"]["offsetInParentFrames"] == 50
+
+    # 200 (absolute) - 150 (second scene's new sourceStartFrame) == 50
+    assert scenes_by_id["m-after"]["parentSceneId"] == "scene-001-b"
+    assert scenes_by_id["m-after"]["offsetInParentFrames"] == 50
+
+
+def test_apply_operations_trim_drops_an_overlay_strictly_inside_the_cut():
+    scene_plan = {
+        "scenes": [
+            _presenter("scene-001", 0, 300, 0),
+            _moment("m-inside", "scene-001", 120, 10, "inside the cut"),
+        ]
+    }
+
+    ops = [{"op": "trim", "sceneId": "scene-001", "cutStartFrame": 100, "cutEndFrame": 150, "reason": "pause"}]
+
+    result = apply_operations(scene_plan, ops)
+
+    assert "m-inside" not in {s["id"] for s in result["scenes"]}
+
+
 def _image(scene_id, parent_id, offset, duration, asset_id, display="inset"):
     return {
         "id": scene_id,

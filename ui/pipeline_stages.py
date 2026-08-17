@@ -94,6 +94,12 @@ PIPELINE_STAGES = [
         "code_assets.json",
     ),
     Stage(
+        "generate_cut_candidates",
+        "Propose pause cuts (mechanical, no AI)",
+        lambda ep: [PYTHON, PIPELINE_DIR / "generate_cut_candidates.py", ep],
+        "cut_candidates.json",
+    ),
+    Stage(
         "generate_title_scenes",
         "Propose title scenes (AI)",
         lambda ep: [PYTHON, PIPELINE_DIR / "generate_title_scenes.py", ep],

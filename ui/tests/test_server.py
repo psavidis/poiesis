@@ -1240,6 +1240,148 @@ def test_update_beats_reset_to_automatic_clears_a_prior_override(tmp_path):
     assert beats_on_disk["beats"][0]["overriddenFields"] == []
 
 
+def _cut_payload(scene_id="scene-001", cut_start=30, cut_end=50, status="pending", overriddenFields=None):
+    return {
+        "sceneId": scene_id,
+        "videoId": "001",
+        "cutStartFrame": cut_start,
+        "cutEndFrame": cut_end,
+        "durationSeconds": round((cut_end - cut_start) / 30, 2),
+        "reason": "1.5s silence with no speech",
+        "status": status,
+        "overriddenFields": overriddenFields or [],
+    }
+
+
+def test_update_cut_candidates_returns_404_without_scene_plan(tmp_path):
+    episode = _make_episode(tmp_path)
+
+    response = client.put(
+        "/api/episode/cut-candidates",
+        params={"path": str(episode)},
+        json={"cuts": [_cut_payload()]},
+    )
+
+    assert response.status_code == 404
+
+
+def test_update_cut_candidates_rejects_a_cut_outside_the_scenes_source_range(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)  # scene-001 spans source frames [0, 100)
+
+    response = client.put(
+        "/api/episode/cut-candidates",
+        params={"path": str(episode)},
+        json={"cuts": [_cut_payload(cut_start=90, cut_end=150, status="accepted")]},
+    )
+
+    assert response.status_code == 422
+
+
+def test_update_cut_candidates_rejecting_a_cut_never_touches_scene_plan(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    response = client.put(
+        "/api/episode/cut-candidates",
+        params={"path": str(episode)},
+        json={"cuts": [_cut_payload(status="rejected")]},
+    )
+
+    assert response.status_code == 200
+
+    cuts_on_disk = json.loads((episode / "processing" / "cut_candidates.json").read_text())
+    assert cuts_on_disk["cuts"][0]["status"] == "rejected"
+
+    scene_plan_on_disk = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    presenter_scenes = [s for s in scene_plan_on_disk["scenes"] if s["type"] == "presenter"]
+    assert len(presenter_scenes) == 2
+    assert {s["id"] for s in presenter_scenes} == {"scene-001", "scene-002"}
+
+
+def test_update_cut_candidates_accepting_a_cut_applies_a_trim(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)  # scene-001 [0,100) @ timelineStartFrame 0, scene-002 [0,100) @ 100
+
+    response = client.put(
+        "/api/episode/cut-candidates",
+        params={"path": str(episode)},
+        json={"cuts": [_cut_payload(cut_start=30, cut_end=50, status="accepted")]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["cuts"][0]["status"] == "accepted"
+
+    cuts_on_disk = json.loads((episode / "processing" / "cut_candidates.json").read_text())
+    assert cuts_on_disk["cuts"][0]["status"] == "accepted"
+
+    scene_plan_on_disk = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    scenes_by_id = {s["id"]: s for s in scene_plan_on_disk["scenes"]}
+
+    assert scenes_by_id["scene-001"]["sourceEndFrame"] == 30
+    assert scenes_by_id["scene-001-b"]["sourceStartFrame"] == 50
+    assert scenes_by_id["scene-001-b"]["sourceEndFrame"] == 100
+    # reflow_timeline rippled scene-002 by the removed 20-frame span.
+    assert scenes_by_id["scene-002"]["timelineStartFrame"] == 80
+
+
+def test_update_cut_candidates_resaving_an_accepted_cut_does_not_double_cut(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    accept_response = client.put(
+        "/api/episode/cut-candidates",
+        params={"path": str(episode)},
+        json={"cuts": [_cut_payload(cut_start=30, cut_end=50, status="accepted")]},
+    )
+    assert accept_response.status_code == 200
+
+    resave_response = client.put(
+        "/api/episode/cut-candidates",
+        params={"path": str(episode)},
+        json=accept_response.json(),
+    )
+    assert resave_response.status_code == 200
+
+    scene_plan_on_disk = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    presenter_scenes = [s for s in scene_plan_on_disk["scenes"] if s["type"] == "presenter"]
+    # Still exactly 3 presenter scenes (scene-001, scene-001-b, scene-002) —
+    # a second apply of the same accepted cut would have split scene-001
+    # again and produced a 4th.
+    assert len(presenter_scenes) == 3
+
+
+def test_update_cut_candidates_marks_a_nudged_boundary_as_overridden(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+    (episode / "processing" / "cut_candidates.json").write_text(
+        json.dumps({"cuts": [_cut_payload(cut_start=30, cut_end=50)]})
+    )
+
+    response = client.put(
+        "/api/episode/cut-candidates",
+        params={"path": str(episode)},
+        json={"cuts": [_cut_payload(cut_start=35, cut_end=50)]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["cuts"][0]["overriddenFields"] == ["cutStartFrame"]
+
+
+def test_update_cut_candidates_returns_409_when_episode_is_locked(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    with episode_lock(episode):
+        response = client.put(
+            "/api/episode/cut-candidates",
+            params={"path": str(episode)},
+            json={"cuts": [_cut_payload(status="rejected")]},
+        )
+
+    assert response.status_code == 409
+
+
 def _make_scene_plan_with_image(episode, video_ids=("001", "002")):
     """Same as _make_scene_plan but with an image scene overlaid on the
     first presenter scene — used by the new direct-field-update endpoint's

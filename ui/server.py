@@ -44,6 +44,9 @@ from edit_plan import (  # noqa: E402
     reflow_timeline,
     resolve_manual_moment_creation,
 )
+from generate_cut_candidates import (  # noqa: E402
+    compute_overridden_cut_fields,
+)
 from llm.client import LLMClient  # noqa: E402
 from overlay_placement import insert_overlay_scene  # noqa: E402
 
@@ -156,6 +159,7 @@ def episode_artifact(path: str, name: str):
         "storyboard.json",
         "moments.json",
         "emphasis.json",
+        "cut_candidates.json",
         "captions.json",
         "assets.json",
         "code_assets.json",
@@ -692,6 +696,110 @@ def update_beats(path: str, body: BeatsUpdate):
     return {"beats": beats}
 
 
+class CutCandidate(BaseModel):
+    sceneId: str
+    videoId: str
+    cutStartFrame: int
+    cutEndFrame: int
+    durationSeconds: float
+    reason: str = ""
+    status: str = "pending"
+    # Same recompute-on-save contract as moments'/beats' overriddenFields —
+    # a client only needs to round-trip whatever getCutCandidates()
+    # returned; this endpoint recomputes it below (see
+    # compute_overridden_cut_fields in generate_cut_candidates.py).
+    overriddenFields: list[str] = []
+
+
+class CutCandidatesUpdate(BaseModel):
+    cuts: list[CutCandidate]
+
+
+@app.put("/api/episode/cut-candidates")
+def update_cut_candidates(path: str, body: CutCandidatesUpdate):
+    """Human accept/reject/boundary-edit of AI-proposed pause cuts (#65).
+    Unlike update_moments/update_beats, this does NOT rebuild scene-plan.json's
+    overlay scenes wholesale on every save — cut_candidates.json's entries are
+    inert proposals until a human acts on them. Only a cut whose status
+    transitions from "pending" to "accepted" in THIS save (compared against
+    what's already on disk, so re-saving an already-accepted cut is a no-op
+    against scene-plan.json — idempotent, no double-cut) triggers a
+    validate_operations/apply_operations/reflow_timeline "trim" op, the same
+    scene-plan mutation path update_scene_fields/delete_scene already use for
+    direct, non-LLM edits. Rejecting a cut (or nudging its boundary before
+    accepting) is a pure metadata write to cut_candidates.json, no
+    scene-plan.json touch at all.
+
+    There is deliberately no "un-accept" here: once a cut's trim has
+    reflowed the downstream timeline and re-parented (or dropped) whatever
+    overlays fell after/inside the cut, flipping status back to "pending"
+    can't undo any of that from this endpoint — reverting a mistaken accept
+    is the existing global undo/checkpoint system's job (Cmd+Z /
+    POST /api/episode/undo), same as any other mistaken edit, not a
+    bespoke revert path on this endpoint."""
+
+    episode = resolve_episode(path)
+    processing = episode / "processing"
+
+    scene_plan_path = processing / "scene-plan.json"
+    cut_candidates_path = processing / "cut_candidates.json"
+
+    if not scene_plan_path.exists():
+        raise HTTPException(status_code=404, detail="scene-plan.json not found — run the pipeline first")
+
+    cuts = [c.model_dump() for c in body.cuts]
+
+    old_cuts = []
+    if cut_candidates_path.exists():
+        with cut_candidates_path.open("r", encoding="utf-8") as f:
+            old_cuts = json.load(f).get("cuts", [])
+
+    for i, cut in enumerate(cuts):
+        old_cut = old_cuts[i] if i < len(old_cuts) else {}
+        cut["overriddenFields"] = compute_overridden_cut_fields(old_cut, cut)
+
+    # Only cuts transitioning INTO "accepted" this save get trimmed — a cut
+    # already "accepted" on disk has already had its trim applied; treating
+    # it as newly-accepted again here would double-cut the footage.
+    newly_accepted = [
+        cut
+        for i, cut in enumerate(cuts)
+        if cut["status"] == "accepted" and (i >= len(old_cuts) or old_cuts[i].get("status") != "accepted")
+    ]
+
+    trim_ops = [
+        {"op": "trim", "sceneId": cut["sceneId"], "cutStartFrame": cut["cutStartFrame"], "cutEndFrame": cut["cutEndFrame"]}
+        for cut in newly_accepted
+    ]
+
+    with scene_plan_path.open("r", encoding="utf-8") as f:
+        scene_plan = json.load(f)
+
+    valid_ops, rejected = validate_operations(scene_plan, trim_ops)
+
+    if rejected:
+        raise HTTPException(status_code=422, detail=rejected[0]["reason"])
+
+    def do_write():
+        updated_plan = scene_plan
+
+        if valid_ops:
+            updated_plan = apply_operations(updated_plan, valid_ops)
+            updated_plan = reflow_timeline(updated_plan)
+
+        write_json_atomic(cut_candidates_path, {"cuts": cuts})
+        write_json_atomic(scene_plan_path, updated_plan)
+        regenerate_codegen(episode)
+
+    try:
+        with episode_lock(episode, wait=False):
+            wrap_with_checkpoint(processing, [scene_plan_path, cut_candidates_path], "cut accept/reject", do_write)
+    except EpisodeBusyError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    return {"cuts": cuts}
+
+
 class SceneFieldUpdate(BaseModel):
     sceneId: str
     fields: dict
@@ -884,6 +992,43 @@ def _sync_removed_titles(processing: Path, scene_plan_before, removed_ids: set[s
     return next_titles
 
 
+def _sync_removed_cut_candidates(processing: Path, removed_ids: set[str]):
+    """A presenter scene removed via chat-driven edit or DELETE
+    /api/episode/scene may still have pending pause-cut candidates
+    referencing it as their sceneId (#65) — unlike moments/titles, a cut
+    candidate's sceneId points DIRECTLY at the presenter scene (no derived
+    id pattern), so this is a simpler filter than
+    _sync_removed_moments/_sync_removed_titles: any cut whose sceneId is in
+    removed_ids no longer has a scene to apply a trim against. Marks it
+    "rejected" (with a reason) rather than deleting the entry outright, so
+    the artifact keeps a record of why it's no longer actionable instead of
+    silently vanishing — consistent with cut_candidates.json never having
+    entries silently removed elsewhere in this file. No-ops if nothing
+    removed had pending cuts, or cut_candidates.json doesn't exist yet."""
+
+    cut_candidates_path = processing / "cut_candidates.json"
+    if not cut_candidates_path.exists():
+        return None
+
+    with cut_candidates_path.open("r", encoding="utf-8") as f:
+        cuts = json.load(f).get("cuts", [])
+
+    changed = False
+    next_cuts = []
+
+    for cut in cuts:
+        if cut["sceneId"] in removed_ids and cut["status"] == "pending":
+            cut = {**cut, "status": "rejected", "reason": cut["reason"] + " (scene removed)"}
+            changed = True
+        next_cuts.append(cut)
+
+    if not changed:
+        return None
+
+    write_json_atomic(cut_candidates_path, {"cuts": next_cuts})
+    return next_cuts
+
+
 @app.post("/api/episode/edit-plan")
 def edit_scene_plan(path: str, body: EditPlanRequest):
     """Applies a natural-language instruction to scene-plan.json — the
@@ -992,6 +1137,7 @@ def edit_scene_plan(path: str, body: EditPlanRequest):
                 if removed_ids:
                     _sync_removed_moments(processing, scene_plan, removed_ids)
                     _sync_removed_titles(processing, scene_plan, removed_ids)
+                    _sync_removed_cut_candidates(processing, removed_ids)
 
                 plan_to_write = updated_plan
 
@@ -1323,6 +1469,23 @@ async def _stream_command(websocket: WebSocket, command):
 
             if line.startswith("__CANCELLED__"):
                 await websocket.send_json({"type": "cancelled"})
+                continue
+
+            # export_davinci.py (#65's sibling render-console request)
+            # prints one __TOTAL__N line upfront and one __PROGRESS__i/N
+            # line per clip rendered or skipped — translated into
+            # structured messages here, same sentinel-line convention as
+            # __EXIT_CODE__/__CANCELLED__ above, so AdvancedPanel can show
+            # a real progress bar instead of parsing raw log text for it.
+            # Other scripts never print these prefixes, so this is a no-op
+            # for every other websocket-driven run (stage/QA).
+            if line.startswith("__TOTAL__"):
+                await websocket.send_json({"type": "total", "count": int(line.removeprefix("__TOTAL__"))})
+                continue
+
+            if line.startswith("__PROGRESS__"):
+                current, total = line.removeprefix("__PROGRESS__").split("/")
+                await websocket.send_json({"type": "progress", "current": int(current), "total": int(total)})
                 continue
 
             await websocket.send_json({"type": "log", "line": line})
