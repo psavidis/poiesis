@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Player, type PlayerRef } from "@remotion/player";
 import { Episode } from "video-renderer-src/episode/Episode";
 import type { EpisodeProps, Scene, ScenePlan } from "video-renderer-src/episode/types";
-import { getAssets, getCodeAssets, getManifest, getScenePlan, undoLastEdit, type EpisodeStatus } from "./api";
+import { getAssets, getCaptionsInfo, getCodeAssets, getManifest, getScenePlan, undoLastEdit, type EpisodeStatus } from "./api";
 import { ActiveSceneBar } from "./ActiveSceneBar";
 import { AdvancedPanel } from "./AdvancedPanel";
 import { AssetLibraryPanel } from "./AssetLibraryPanel";
@@ -53,12 +53,20 @@ export function EpisodeWorkspace() {
     const [episodeProps, setEpisodeProps] = useState<EpisodeProps | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [episodeStatus, setEpisodeStatus] = useState<EpisodeStatus | null>(null);
-    // Persisted per browser session, matching ui/static/app.js's
-    // `includeCaptions` default (unticked = don't generate them —
-    // full-sentence captions are tiresome on some episodes). Owned here
-    // (not inside AdvancedPanel) since ProgressFlow's "Start" button needs
-    // to read it too.
+    // Starts false (matching ui/static/app.js's old default — full-
+    // sentence captions are tiresome on some episodes) but is corrected
+    // to the episode's ACTUAL last-run state as soon as captions.json
+    // loads (see #72 — this used to always show unticked on load even for
+    // an episode that already had real captions enabled, which read as
+    // "captions are off" when they weren't). Owned here (not inside
+    // AdvancedPanel) since ProgressFlow's "Start" button needs to read it
+    // too.
     const [includeCaptions, setIncludeCaptions] = useState(false);
+    // null = captions.json doesn't exist yet (stage never ran on this
+    // episode) — genuinely different from {enabled:false/true, count:0},
+    // which means it ran and produced zero/some captions. Drives whether
+    // "Show captions in this preview" is actionable at all (#72).
+    const [captionsInfo, setCaptionsInfo] = useState<{ enabled: boolean; count: number } | null>(null);
 
     // Bumped every time an edit-plan chat instruction is applied — passed
     // to TitleEditorPanel/MomentEditorPanel so their own fetch effects
@@ -247,10 +255,20 @@ export function EpisodeWorkspace() {
             getManifest(episodePath),
             getAssets(episodePath),
             getCodeAssets(episodePath),
+            getCaptionsInfo(episodePath),
         ])
-            .then(([scenePlan, manifest, assets, codeAssets]) => {
+            .then(([scenePlan, manifest, assets, codeAssets, captions]) => {
                 const baseProps = manifestToEpisodeBaseProps(manifest, assets, codeAssets);
                 setEpisodeProps({ ...baseProps, scenePlan: scenePlan as ScenePlan });
+                // Corrects "Include captions" from the episode's real
+                // last-run state (#72) — only when captions.json actually
+                // exists; a fresh episode that's never run this stage
+                // keeps whatever the user has already chosen rather than
+                // being silently reset to false on every reload.
+                if (captions) {
+                    setCaptionsInfo(captions);
+                    setIncludeCaptions(captions.enabled);
+                }
             })
             .catch((e) => {
                 // A raw network failure (browser's generic "Failed to
@@ -697,13 +715,23 @@ export function EpisodeWorkspace() {
             )}
 
             <div style={styles.playerWrap}>
-                <label style={styles.checkboxRow}>
+                <label
+                    style={styles.checkboxRow}
+                    title={
+                        captionsInfo && captionsInfo.count === 0
+                            ? 'No captions exist for this episode yet — tick "Include captions" in Advanced and re-run "Generate captions" first.'
+                            : undefined
+                    }
+                >
                     <input
                         type="checkbox"
                         checked={showCaptions}
                         onChange={(e) => setShowCaptions(e.target.checked)}
+                        disabled={!!captionsInfo && captionsInfo.count === 0}
                     />
-                    Show captions in this preview (view-only — does not change scene-plan.json)
+                    {captionsInfo && captionsInfo.count === 0
+                        ? "Show captions in this preview (none generated yet for this episode)"
+                        : "Show captions in this preview (view-only — does not change scene-plan.json)"}
                 </label>
             </div>
 

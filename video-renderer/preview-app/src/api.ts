@@ -75,6 +75,22 @@ export const getCodeAssets = (episodePath: string) =>
     getArtifact(episodePath, "code_assets.json")
         .then((data) => data.codeAssets ?? [])
         .catch(() => []); // code_assets.json is optional — no code/ folder is a normal, common case
+
+// Lets the UI initialize "Include captions"/"Show captions" from the
+// episode's ACTUAL last-run state instead of a fixed default that's the
+// same for every episode regardless of what really happened (see #72 —
+// "Show captions" stayed checked and silently did nothing on an episode
+// where generate_captions.py had run with --disable, and "Include
+// captions" showed unticked even on an episode that already had real
+// captions). null return means the stage hasn't produced captions.json
+// yet at all — genuinely different from "ran and produced zero captions."
+export const getCaptionsInfo = (episodePath: string) =>
+    getArtifact(episodePath, "captions.json")
+        .then((data) => ({
+            enabled: data.disabled !== true,
+            count: Array.isArray(data.captions) ? data.captions.length : 0,
+        }))
+        .catch(() => null);
 export const getMoments = (episodePath: string) => getArtifact(episodePath, "moments.json");
 
 export async function saveMoments(episodePath: string, moments: unknown[]) {
