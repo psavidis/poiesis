@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import type { ScenePlan } from "video-renderer-src/episode/types";
-import { sceneLabel } from "./ActiveSceneBar";
 import { contentTypeAndPresentationFor } from "./MomentEditorPanel";
 import { momentIndexFromSceneId, normalizeMoment } from "./momentDuration";
 import { getAssets, getCodeAssets, getMoments, saveMoments } from "./api";
@@ -42,10 +41,34 @@ interface Props {
 // StoryboardPanel's already-established "always visible, collapsible"
 // pattern in this same header row rather than being buried in a
 // per-moment editor.
+// Human-readable treatment names — shown in the "Editing: …" status line
+// instead of MomentEditorPanel's raw treatment string, since "side-image"/
+// "side-diagram" read as internal jargon to someone just trying to tell
+// which moment is selected.
+const TREATMENT_LABELS: Record<string, string> = {
+    "side-image": "inline image",
+    "side-code": "inline code",
+    "side-diagram": "inline diagram",
+    "side-text": "side text",
+    "side-terms": "term list",
+    "bottom-callout": "bottom callout",
+    "full-visual": "full screen",
+    "content-dominant-code": "content-dominant code",
+};
+
 export function AssetLibraryPanel({ episodePath, scenePlan, selectedMomentSceneId, onSaved }: Props) {
     const [expanded, setExpanded] = useState(false);
     const [images, setImages] = useState<ImageAsset[]>([]);
     const [codeAssets, setCodeAssets] = useState<CodeAsset[]>([]);
+    // The moment's OWN current assetId/codeAssetId, fetched fresh — not
+    // derived from scenePlan, which only carries the fields a given
+    // treatment already renders (a side-diagram scene has no assetId key
+    // at all in scenePlan even if moments.json happens to carry a stray
+    // one). This is what lets a card show "current" and the status line
+    // confirm what's actually applied right now, not just what was last
+    // clicked.
+    const [currentAssetId, setCurrentAssetId] = useState<string | null>(null);
+    const [currentCodeAssetId, setCurrentCodeAssetId] = useState<string | null>(null);
     const [tab, setTab] = useState<"images" | "code">("images");
     const [applyingId, setApplyingId] = useState<string | null>(null);
     const [hint, setHint] = useState<string | null>(null);
@@ -57,6 +80,21 @@ export function AssetLibraryPanel({ episodePath, scenePlan, selectedMomentSceneI
         getCodeAssets(episodePath).then(setCodeAssets).catch(() => setCodeAssets([]));
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [episodePath, expanded]);
+
+    useEffect(() => {
+        if (!expanded || !selectedMomentSceneId) {
+            setCurrentAssetId(null);
+            setCurrentCodeAssetId(null);
+            return;
+        }
+        const index = momentIndexFromSceneId(selectedMomentSceneId);
+        if (index === null) return;
+        getMoments(episodePath).then((data) => {
+            const moment = (data.moments ?? [])[index];
+            setCurrentAssetId(moment?.assetId ?? null);
+            setCurrentCodeAssetId(moment?.codeAssetId ?? null);
+        });
+    }, [episodePath, expanded, selectedMomentSceneId, hint]);
 
     // Unlike StoryboardPanel (which hides itself until populated), this
     // toggle always renders even with zero indexed assets — "nothing
@@ -73,7 +111,12 @@ export function AssetLibraryPanel({ episodePath, scenePlan, selectedMomentSceneI
     // those, since neither an image nor a code asset applies to them.
     const [selectedContentType] = selectedMoment ? contentTypeAndPresentationFor(selectedMoment) : [null];
 
-    const applyAsset = async (assetId: string, field: "assetId" | "codeAssetId") => {
+    const selectedTreatmentLabel =
+        selectedMoment && "treatment" in selectedMoment
+            ? TREATMENT_LABELS[selectedMoment.treatment as string] ?? (selectedMoment.treatment as string)
+            : undefined;
+
+    const applyAsset = async (assetId: string, field: "assetId" | "codeAssetId", assetLabel: string) => {
         if (!selectedMomentSceneId) {
             setHint("Select a moment on the timeline first.");
             return;
@@ -96,6 +139,12 @@ export function AssetLibraryPanel({ episodePath, scenePlan, selectedMomentSceneI
             await saveMoments(episodePath, moments);
             onSaved();
 
+            if (field === "assetId") {
+                setCurrentAssetId(assetId);
+            } else {
+                setCurrentCodeAssetId(assetId);
+            }
+
             // The panel's own fetch above is the authoritative "what's
             // actually indexed" list — comparing against it (not against
             // episodeProps, which only refreshes on enrichment-stage
@@ -109,8 +158,8 @@ export function AssetLibraryPanel({ episodePath, scenePlan, selectedMomentSceneI
 
             setHint(
                 stillIndexed
-                    ? "Applied."
-                    : `Saved, but "${assetId}" isn't indexed yet — re-run "${
+                    ? `Applied "${assetLabel}" to this moment. Seek the player to this moment's timestamp to see it, or reopen its editor panel below the timeline.`
+                    : `Saved "${assetLabel}", but it isn't indexed yet — re-run "${
                           field === "assetId" ? "Index graphics assets" : "Index code assets"
                       }" in Advanced before it will render.`
             );
@@ -132,10 +181,22 @@ export function AssetLibraryPanel({ episodePath, scenePlan, selectedMomentSceneI
                     <p style={styles.hint}>
                         Every image and code file the pipeline can draw from for this episode — browse and
                         apply one to the selected moment, independent of what the AI chose.
-                        {selectedMoment
-                            ? ` Editing: ${selectedMoment.type} — ${sceneLabel(selectedMoment)}.`
-                            : " Select a moment on the timeline to apply an asset."}
                     </p>
+
+                    {selectedMoment ? (
+                        <p style={styles.selectionStatus}>
+                            Editing the <strong>{selectedTreatmentLabel}</strong> moment you selected on the
+                            timeline
+                            {selectedContentType === "image" || selectedContentType === "code"
+                                ? ` — click ${selectedContentType === "image" ? "an image" : "a code file"} below to replace it.`
+                                : ". This treatment doesn't use an image or code file, so every card below is disabled."}
+                        </p>
+                    ) : (
+                        <p style={styles.selectionStatus}>
+                            No moment selected — click a moment on the timeline first, then come back here to
+                            change its image or code.
+                        </p>
+                    )}
 
                     <div style={styles.tabRow}>
                         <button
@@ -168,14 +229,20 @@ export function AssetLibraryPanel({ episodePath, scenePlan, selectedMomentSceneI
                                 // silently ignored on click, so a mismatched click
                                 // isn't a confusing no-op.
                                 const disabled = !!selectedMoment && selectedContentType !== "image";
+                                const isCurrent = !!selectedMoment && currentAssetId === asset.id;
                                 return (
                                     <button
                                         key={asset.id}
-                                        style={{ ...styles.card, ...(disabled ? styles.cardDisabled : {}) }}
-                                        onClick={() => applyAsset(asset.id, "assetId")}
+                                        style={{
+                                            ...styles.card,
+                                            ...(disabled ? styles.cardDisabled : {}),
+                                            ...(isCurrent ? styles.cardCurrent : {}),
+                                        }}
+                                        onClick={() => applyAsset(asset.id, "assetId", asset.caption || asset.filename)}
                                         disabled={applyingId === asset.id}
                                         title={disabled ? "Selected moment doesn't use an image asset" : asset.filename}
                                     >
+                                        {isCurrent && <span style={styles.currentBadge}>Currently used</span>}
                                         <img src={`/${asset.renderPath}`} alt="" style={styles.thumb} />
                                         <span style={styles.cardCaption}>{asset.caption || asset.filename}</span>
                                     </button>
@@ -194,14 +261,20 @@ export function AssetLibraryPanel({ episodePath, scenePlan, selectedMomentSceneI
                             )}
                             {codeAssets.map((asset) => {
                                 const disabled = !!selectedMoment && selectedContentType !== "code";
+                                const isCurrent = !!selectedMoment && currentCodeAssetId === asset.id;
                                 return (
                                     <button
                                         key={asset.id}
-                                        style={{ ...styles.codeCard, ...(disabled ? styles.cardDisabled : {}) }}
-                                        onClick={() => applyAsset(asset.id, "codeAssetId")}
+                                        style={{
+                                            ...styles.codeCard,
+                                            ...(disabled ? styles.cardDisabled : {}),
+                                            ...(isCurrent ? styles.cardCurrent : {}),
+                                        }}
+                                        onClick={() => applyAsset(asset.id, "codeAssetId", asset.filename)}
                                         disabled={applyingId === asset.id}
                                         title={disabled ? "Selected moment doesn't use a code asset" : asset.filename}
                                     >
+                                        {isCurrent && <span style={styles.currentBadge}>Currently used</span>}
                                         <span style={styles.codeFilename}>{asset.filename}</span>
                                         {asset.description && <span style={styles.cardCaption}>{asset.description}</span>}
                                         <span style={styles.codeMeta}>
@@ -245,6 +318,19 @@ const styles: Record<string, React.CSSProperties> = {
         fontSize: typography.size.sm,
         color: colors.textSecondary,
         margin: 0,
+        lineHeight: typography.lineHeight.relaxed,
+    },
+    // Deliberately more prominent than `hint` above — this is the direct
+    // answer to "what am I about to change," not background explanation,
+    // so it reads at full brightness rather than muted.
+    selectionStatus: {
+        fontSize: typography.size.sm,
+        color: colors.textPrimary,
+        margin: 0,
+        padding: "6px 10px",
+        background: colors.surfaceElevated,
+        border: `1px solid ${colors.border}`,
+        borderRadius: radius.md,
         lineHeight: typography.lineHeight.relaxed,
     },
     tabRow: {
@@ -298,6 +384,22 @@ const styles: Record<string, React.CSSProperties> = {
     cardDisabled: {
         opacity: 0.4,
         cursor: "default",
+    },
+    // Gold accent border — the same signal EditPlanChat's own user-bubble
+    // glow uses for "this is yours/active," reused here for "this is
+    // what's currently assigned," so the two don't invent unrelated
+    // visual languages for a similar idea.
+    cardCurrent: {
+        borderColor: colors.accent,
+        borderWidth: 2,
+    },
+    currentBadge: {
+        alignSelf: "flex-start",
+        fontSize: typography.size.xs,
+        fontWeight: typography.weight.bold,
+        letterSpacing: 0.4,
+        textTransform: "uppercase",
+        color: colors.accent,
     },
     thumb: {
         width: "100%",

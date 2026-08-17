@@ -87,6 +87,17 @@ export function EpisodeWorkspace() {
         | null
     >(null);
 
+    // Which moment AssetLibraryPanel is targeting — deliberately separate
+    // from selectedEditor above, which only tracks a moment when its
+    // STRUCTURED editor panel is open. A text-eligible moment (full-visual/
+    // side-text/bottom-callout) is clickable and highlightable on
+    // MomentBar but never opens that structured panel (Cmd+E does, not a
+    // click), so relying on selectedEditor alone left those moments
+    // permanently unselectable for the asset panel even though the user
+    // had visibly clicked one (see #69). Set on every moment click via
+    // MomentBar's onSelect, regardless of treatment.
+    const [assetLibraryMomentId, setAssetLibraryMomentId] = useState<string | null>(null);
+
     // The scene currently selected for chat context (see #51) — set when
     // an ActiveSceneBar scene chip is clicked (see #29). Originally this
     // pre-filled the chat's TEXT with "edit <id>: " so the user had to
@@ -431,7 +442,7 @@ export function EpisodeWorkspace() {
                 <AssetLibraryPanel
                     episodePath={episodePath}
                     scenePlan={episodeProps.scenePlan}
-                    selectedMomentSceneId={selectedEditor?.kind === "moment" ? selectedEditor.sceneId : undefined}
+                    selectedMomentSceneId={assetLibraryMomentId ?? undefined}
                     onSaved={reloadScenePlan}
                 />
             )}
@@ -554,6 +565,7 @@ export function EpisodeWorkspace() {
                         setInlineEditTarget(null);
                         setSelectedEditor({ kind: "moment", sceneId });
                     }}
+                    onSelect={setAssetLibraryMomentId}
                     highlightedId={highlightedByType.momentId}
                 />
             </div>

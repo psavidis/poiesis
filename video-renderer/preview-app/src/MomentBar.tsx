@@ -80,6 +80,14 @@ interface Props {
     // same way clicking the segment yourself would, so the AI's change is
     // immediately visible instead of requiring the user to hunt for it.
     highlightedId?: string | null;
+    // Fired on every moment click, text-eligible or not — separate from
+    // onEditRequested (Cmd+E only) and onOpenStructuredEditor (non-text-
+    // eligible treatments only). AssetLibraryPanel needs to know which
+    // moment is focused regardless of treatment (a full-visual/side-text/
+    // bottom-callout moment never opens a structured editor, so relying on
+    // EpisodeWorkspace's selectedEditor alone left those permanently
+    // unselectable there — see #69).
+    onSelect?: (sceneId: string) => void;
 }
 
 type DragMode = "move" | "resize";
@@ -115,6 +123,7 @@ export function MomentBar({
     onEditRequested,
     onOpenStructuredEditor,
     highlightedId,
+    onSelect,
 }: Props) {
     const [zoom, setZoom] = useState(1);
     const [panStartPct, setPanStartPct] = useState(0);
@@ -399,6 +408,7 @@ export function MomentBar({
                             onClick={(e) => {
                                 if (isDragging) return;
                                 e.stopPropagation();
+                                onSelect?.(moment.id);
                                 if (!textEligible) {
                                     // No single text field to inline-edit — keep
                                     // opening the full structured panel directly,
