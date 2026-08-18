@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from index_assets import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, detect_key_color
-from prepare_footage import generate_episode_props_ts
+from prepare_footage import generate_episode_props_ts, load_backgrounds_for_codegen
 
 
 # Kept as a small, non-exhaustive allowlist — extend as needed rather than
@@ -249,7 +249,13 @@ def main():
 
         assets = load_json(assets_path)["assets"] if assets_path.exists() else []
 
-        generate_episode_props_ts(manifest, renderer_folder, assets=assets, code_assets=code_assets)
+        generate_episode_props_ts(
+            manifest,
+            renderer_folder,
+            assets=assets,
+            code_assets=code_assets,
+            backgrounds=load_backgrounds_for_codegen(episode)
+        )
 
 
 if __name__ == "__main__":

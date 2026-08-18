@@ -196,7 +196,7 @@ def render_clip(clip_path: Path, start_frame, end_frame, only_type, resolution, 
         "--prores-profile=4444",
         "--pixel-format=yuva444p10le",
         "--image-format=png",
-        f'--props={{"backgroundVideo": null, "onlyTypes": ["{only_type}"]}}',
+        f'--props={{"onlyTypes": ["{only_type}"]}}',
     ]
 
     if resolution:

@@ -70,11 +70,21 @@ export interface EpisodeCodeAsset {
     keyColor?: "black" | "green";
 }
 
-export interface BackgroundVideo {
+// One selectable background from the episode's background/ folder (see
+// index_backgrounds.py) — the library a user picks from when assigning a
+// BackgroundScene span. Always rendered as an opaque full-frame fill — a
+// background REPLACES whatever is behind the presenter, it doesn't
+// composite with anything under it — so unlike EpisodeAsset there is no
+// keyColor here.
+export interface EpisodeBackground {
+    id: string;
     filename: string;
     path: string;
-    duration: number;
-    fps: number;
+    caption: string;
+    mediaType: "image" | "video";
+    // Only present for mediaType "video".
+    duration?: number;
+    fps?: number;
 }
 
 export interface SceneEffects {
@@ -114,6 +124,37 @@ export interface TitleScene {
     text: string;
     timelineStartFrame: number;
     durationInFrames: number;
+}
+
+// A user-selected background, active behind the presenter for its own
+// timeline span — see generate_background_scenes.py's merge_background_
+// scenes, which auto-closes each span at the next one's start (or episode
+// end for the last one), the same "sorted list of start points" model
+// chapters/titles already use. Absent for any stretch with no
+// BackgroundScene covering it, meaning "no override — presenter's own
+// natural footage" (unchanged rendering, per the feature's own design
+// decision), not a synthetic "none" entry.
+// A slow, deliberately subtle drift applied to a STATIC IMAGE background
+// over its own span's full duration — "does not distract" is a hard
+// design constraint here (see the feature's own ask), so this is not a
+// tunable intensity, just a direction. Only meaningful when the
+// referenced EpisodeBackground has mediaType "image" — a video
+// background already has its own motion and this field is ignored for
+// it. "none" (absent/undefined also means this) is a flat, static image
+// with no motion at all, unchanged from before this field existed.
+// "zoom-in"/"zoom-out" run linearly across the whole span; "palindrome"
+// zooms in across the first half and back out across the second half, so
+// one full cycle always exactly matches the span's own length regardless
+// of how long it ends up being (see BackgroundLayer.tsx).
+export type BackgroundImageMotion = "none" | "zoom-in" | "zoom-out" | "palindrome";
+
+export interface BackgroundScene {
+    type: "background";
+    id: string;
+    backgroundId: string;
+    timelineStartFrame: number;
+    durationInFrames: number;
+    imageMotion?: BackgroundImageMotion;
 }
 
 // A moment's treatment implies whether/how the presenter moves:
@@ -328,7 +369,7 @@ export interface BeatScene {
     durationInFrames: number;
 }
 
-export type Scene = PresenterScene | TitleScene | MomentScene | ImageScene | CaptionScene | BeatScene;
+export type Scene = PresenterScene | TitleScene | MomentScene | ImageScene | CaptionScene | BeatScene | BackgroundScene;
 
 export interface ScenePlan {
     version: number;
@@ -349,7 +390,11 @@ export type EpisodeBaseProps = {
     videos: EpisodeVideo[];
     assets: EpisodeAsset[];
     codeAssets?: EpisodeCodeAsset[];
-    backgroundVideo?: BackgroundVideo;
+    // The selectable library backgroundScene entries reference by
+    // backgroundId (see EpisodeBackground) — absent/empty for an episode
+    // with no background/ folder contents, same "additive, never a hard
+    // requirement" convention assets/codeAssets already follow.
+    backgrounds?: EpisodeBackground[];
 };
 
 export type EpisodeProps = EpisodeBaseProps & {

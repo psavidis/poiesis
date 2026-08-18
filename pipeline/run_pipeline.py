@@ -169,6 +169,19 @@ def main():
     run(index_code_command)
 
 
+    # 6a-3. Index episode background/ into a selectable background
+    # manifest (the library a human picks from — see
+    # generate_background_scenes.py below for the per-span selection
+    # itself, which is manual/deterministic, never AI-proposed).
+    index_backgrounds_command = [
+        sys.executable,
+        str(pipeline / "index_backgrounds.py"),
+        str(episode)
+    ]
+
+    run(index_backgrounds_command)
+
+
     # 6a-3. Propose mid-take pause cuts for human review (#65) — measured
     # directly from word-level transcript timing, no LLM judgment involved
     # (pauses are a mechanical/measurable signal, not a subjective one).
@@ -261,6 +274,20 @@ def main():
         emphasis_command.append("--force")
 
     run(emphasis_command)
+
+
+    # 6g. Re-merge any human-authored background selections on top of the
+    # scene plan every AI stage above just (re)wrote — never AI-proposed
+    # itself (the user is the only author of background_scenes.json), so
+    # this always runs, --force or not, purely to carry forward whatever
+    # background spans already exist onto the freshly regenerated plan.
+    background_scenes_command = [
+        sys.executable,
+        str(pipeline / "generate_background_scenes.py"),
+        str(episode)
+    ]
+
+    run(background_scenes_command)
 
 
     # 7. Generate Remotion scene plan

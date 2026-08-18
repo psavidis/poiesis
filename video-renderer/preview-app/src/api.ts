@@ -124,6 +124,48 @@ export const getCodeAssets = (episodePath: string) =>
         .then((data) => data.codeAssets ?? [])
         .catch(() => []); // code_assets.json is optional — no code/ folder is a normal, common case
 
+// The selectable background library (see index_backgrounds.py) — every
+// image/video discovered under background/. Optional/empty is a normal,
+// common case (no background/ folder at all), same as codeAssets above.
+export const getBackgrounds = (episodePath: string) =>
+    getArtifact(episodePath, "backgrounds.json")
+        .then((data) => data.backgrounds ?? [])
+        .catch(() => []);
+
+export interface BackgroundSceneProposal {
+    segmentId: string;
+    backgroundId: string;
+    // Slow zoom drift for a static-image background (see
+    // BackgroundImageMotion in episode/types.ts). Absent means no
+    // motion, only meaningful when the referenced background's own
+    // mediaType is "image".
+    imageMotion?: "none" | "zoom-in" | "zoom-out" | "palindrome";
+}
+
+// The human-authored per-span selections (see
+// generate_background_scenes.py) — unlike titles/moments/beats, never
+// AI-proposed, so there is no "regenerate" concept here, only get/save.
+export const getBackgroundScenes = (episodePath: string) =>
+    getArtifact(episodePath, "background_scenes.json")
+        .then((data) => (data.scenes ?? []) as BackgroundSceneProposal[])
+        .catch(() => [] as BackgroundSceneProposal[]);
+
+export async function saveBackgroundScenes(episodePath: string, scenes: BackgroundSceneProposal[]) {
+    const res = await fetch(
+        `${API_BASE}/api/episode/background-scenes?path=${encodeURIComponent(episodePath)}`,
+        {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ scenes }),
+        }
+    );
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || "Save failed");
+    }
+    return res.json();
+}
+
 // Lets the UI initialize "Include captions"/"Show captions" from the
 // episode's ACTUAL last-run state instead of a fixed default that's the
 // same for every episode regardless of what really happened (see #72 —

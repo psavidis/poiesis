@@ -48,6 +48,9 @@ from edit_plan import (  # noqa: E402
 from generate_cut_candidates import (  # noqa: E402
     compute_overridden_cut_fields,
 )
+from generate_background_scenes import (  # noqa: E402
+    merge_background_scenes,
+)
 from llm.client import LLMClient  # noqa: E402
 from overlay_placement import insert_overlay_scene  # noqa: E402
 
@@ -227,6 +230,8 @@ def episode_artifact(path: str, name: str):
         "captions.json",
         "assets.json",
         "code_assets.json",
+        "backgrounds.json",
+        "background_scenes.json",
         "scene-plan.json",
         "qa-report.json",
         "episode_analysis.json",
@@ -329,6 +334,72 @@ def update_title_scenes(path: str, body: TitleScenesUpdate):
         raise HTTPException(status_code=409, detail=str(e))
 
     return {"titles": titles}
+
+
+class BackgroundSceneEntry(BaseModel):
+    segmentId: str
+    backgroundId: str
+    # Slow zoom drift for a static-image background — only meaningful
+    # when the referenced background's mediaType is "image" (see
+    # BackgroundImageMotion in types.ts). Absent/None means no motion,
+    # same as every background entry before this field existed.
+    imageMotion: str | None = None
+
+
+class BackgroundScenesUpdate(BaseModel):
+    scenes: list[BackgroundSceneEntry]
+
+
+@app.put("/api/episode/background-scenes")
+def update_background_scenes(path: str, body: BackgroundScenesUpdate):
+    """Human-authored background selections (#87) — unlike titles/moments/
+    beats, backgrounds are never AI-proposed, so there is no
+    overriddenFields to recompute here, only a direct write-and-remerge.
+    Writes the edited entries back to background_scenes.json, then
+    deterministically re-merges them into scene-plan.json the same way
+    merge_background_scenes always does — safe to re-run even if
+    backgrounds were already merged before, since it rebuilds every
+    BackgroundScene from scratch each call."""
+
+    episode = resolve_episode(path)
+    processing = episode / "processing"
+
+    scene_plan_path = processing / "scene-plan.json"
+    background_scenes_path = processing / "background_scenes.json"
+    episode_transcript_path = processing / "episode_transcript.json"
+    manifest_path = processing / "manifest.json"
+
+    if not scene_plan_path.exists():
+        raise HTTPException(status_code=404, detail="scene-plan.json not found — run the pipeline first")
+
+    if not episode_transcript_path.exists() or not manifest_path.exists():
+        raise HTTPException(status_code=404, detail="episode_transcript.json/manifest.json not found — run the pipeline first")
+
+    entries = [entry.model_dump() for entry in body.scenes]
+
+    def do_write():
+        with scene_plan_path.open("r", encoding="utf-8") as f:
+            scene_plan = json.load(f)
+
+        with episode_transcript_path.open("r", encoding="utf-8") as f:
+            episode_transcript = json.load(f)
+
+        with manifest_path.open("r", encoding="utf-8") as f:
+            manifest = json.load(f)
+
+        scene_plan = merge_background_scenes(scene_plan, entries, episode_transcript, manifest)
+
+        write_json_atomic(background_scenes_path, {"scenes": entries})
+        write_json_atomic(scene_plan_path, scene_plan)
+        regenerate_codegen(episode)
+
+    try:
+        with episode_lock(episode, wait=False):
+            wrap_with_checkpoint(processing, [scene_plan_path, background_scenes_path], "background edit", do_write)
+    except EpisodeBusyError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    return {"scenes": entries}
 
 
 @app.get("/api/episode/chapter-boundary-positions")

@@ -106,6 +106,13 @@ def validate_original_footage(folder: Path):
     )
 
 
+# The pixel formats ffmpeg/Remotion actually treat as carrying real alpha
+# — not an exhaustive list of every alpha-capable codec, just the ones
+# this pipeline's own outputs (key_footage.py's yuva420p webm) and common
+# alpha-exported graphics are likely to use.
+ALPHA_PIXEL_FORMATS = {"yuva420p", "yuva444p", "rgba", "bgra", "argb", "abgr"}
+
+
 def get_video_metadata(video: Path):
     result = subprocess.run(
         [
@@ -145,6 +152,14 @@ def get_video_metadata(video: Path):
         "fps": fps,
         "width": stream["width"],
         "height": stream["height"],
+        # True for pixel formats that carry a real alpha channel (e.g.
+        # yuva420p, the format key_footage.py's own chroma-keyed output
+        # uses) — informational only here; nothing in prepare_footage.py
+        # itself branches on it. index_backgrounds.py reads this to flag a
+        # background source that's already alpha-transparent, since
+        # compositing an alpha video as a background fill (rather than
+        # behind the presenter) would just show through to nothing.
+        "hasAlpha": stream.get("pix_fmt", "") in ALPHA_PIXEL_FORMATS,
     }
 
 
@@ -199,27 +214,6 @@ def create_episode_symlink(
     )
 
 
-def find_background_video(episode_folder: Path):
-
-    background_dir = episode_folder / "background"
-
-    if not background_dir.exists():
-        return None
-
-    candidates = sorted(
-        f
-        for f in background_dir.iterdir()
-        if f.is_file()
-           and f.name not in IGNORED_FILES
-           and f.suffix.lower() in VIDEO_EXTENSIONS
-    )
-
-    if not candidates:
-        return None
-
-    return candidates[0]
-
-
 def load_previous_manifest(episode_folder: Path):
 
     manifest_path = episode_folder / "processing" / "manifest.json"
@@ -229,6 +223,25 @@ def load_previous_manifest(episode_folder: Path):
 
     with manifest_path.open("r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def load_backgrounds_for_codegen(episode_folder: Path):
+    """The selectable background library (see index_backgrounds.py),
+    loaded the same defensive "exists? then read, else empty" way every
+    OTHER generate_episode_props_ts call site already loads assets.json/
+    code_assets.json — every stage that regenerates the codegen
+    (index_assets.py, index_code.py, index_backgrounds.py, key_footage.py,
+    prepare_footage.py itself) must pass this through, or whichever stage
+    runs last "wins" and silently drops backgrounds from the generated
+    episode-props.ts."""
+
+    backgrounds_path = episode_folder / "processing" / "backgrounds.json"
+
+    if not backgrounds_path.exists():
+        return []
+
+    with backgrounds_path.open("r", encoding="utf-8") as f:
+        return json.load(f).get("backgrounds", [])
 
 
 def create_manifest(
@@ -262,29 +275,7 @@ def create_manifest(
         "fps": render["fps"],
         "videos": [],
         "scenes": [],
-        "backgroundVideo": None
     }
-
-    background_video = find_background_video(episode_folder)
-
-    if background_video:
-
-        background_metadata = get_video_metadata(background_video)
-
-        manifest["backgroundVideo"] = {
-            "filename": background_video.name,
-            "path": str(
-                background_video.relative_to(episode_folder)
-            ),
-            "renderPath": str(
-                Path("episodes")
-                / episode_folder.name
-                / background_video.relative_to(episode_folder)
-            ),
-            "duration": background_metadata["duration"],
-            "fps": background_metadata["fps"],
-        }
-
 
     for index, video in enumerate(
             videos,
@@ -344,7 +335,8 @@ def generate_episode_props_ts(
         manifest,
         renderer_folder: Path,
         assets=None,
-        code_assets=None
+        code_assets=None,
+        backgrounds=None
 ):
 
     if assets is None:
@@ -352,6 +344,9 @@ def generate_episode_props_ts(
 
     if code_assets is None:
         code_assets = []
+
+    if backgrounds is None:
+        backgrounds = []
 
     output = (
             renderer_folder
@@ -453,19 +448,25 @@ def generate_episode_props_ts(
 
         lines.append("  ],")
 
-    background_video = manifest.get("backgroundVideo")
+    if backgrounds:
+        lines.append("  backgrounds: [")
 
-    if background_video:
-        lines.extend(
-            [
-                "  backgroundVideo: {",
-                f'    filename: {json.dumps(background_video["filename"])},',
-                f'    path: {json.dumps(background_video["renderPath"])},',
-                f'    duration: {background_video["duration"]},',
-                f'    fps: {background_video["fps"]},',
-                "  },",
-            ]
-        )
+        for background in backgrounds:
+            lines.extend(
+                [
+                    "    {",
+                    f'      id: {json.dumps(background["id"])},',
+                    f'      filename: {json.dumps(background["filename"])},',
+                    f'      path: {json.dumps(background["renderPath"])},',
+                    f'      caption: {json.dumps(background["caption"])},',
+                    f'      mediaType: {json.dumps(background["mediaType"])},',
+                    *([f'      duration: {background["duration"]},'] if "duration" in background else []),
+                    *([f'      fps: {background["fps"]},'] if "fps" in background else []),
+                    "    },",
+                ]
+            )
+
+        lines.append("  ],")
 
     lines.extend(
         [
@@ -606,7 +607,8 @@ def main():
         manifest,
         renderer_folder,
         assets=assets,
-        code_assets=code_assets
+        code_assets=code_assets,
+        backgrounds=load_backgrounds_for_codegen(episode_folder)
     )
 
 

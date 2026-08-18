@@ -1,12 +1,55 @@
+import json
+import subprocess
 from unittest.mock import patch
 
 from prepare_footage import (
     create_manifest,
-    find_background_video,
     footage_sort_key,
     generate_episode_props_ts,
+    get_video_metadata,
+    load_backgrounds_for_codegen,
     validate_original_footage,
 )
+
+
+def _ffprobe_result(pix_fmt="yuv420p"):
+    payload = {
+        "streams": [
+            {
+                "codec_type": "video",
+                "r_frame_rate": "30/1",
+                "width": 1920,
+                "height": 1080,
+                "pix_fmt": pix_fmt,
+            }
+        ],
+        "format": {"duration": "12.5"},
+    }
+    return subprocess.CompletedProcess(
+        args=[], returncode=0, stdout=json.dumps(payload), stderr=""
+    )
+
+
+def test_get_video_metadata_reports_no_alpha_for_ordinary_pixel_format(tmp_path):
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"fake")
+
+    with patch("prepare_footage.subprocess.run", return_value=_ffprobe_result("yuv420p")):
+        metadata = get_video_metadata(video)
+
+    assert metadata["hasAlpha"] is False
+    assert metadata["fps"] == 30.0
+    assert metadata["duration"] == 12.5
+
+
+def test_get_video_metadata_reports_alpha_for_yuva_pixel_format(tmp_path):
+    video = tmp_path / "keyed.webm"
+    video.write_bytes(b"fake")
+
+    with patch("prepare_footage.subprocess.run", return_value=_ffprobe_result("yuva420p")):
+        metadata = get_video_metadata(video)
+
+    assert metadata["hasAlpha"] is True
 
 
 def _manifest(videos):
@@ -64,60 +107,50 @@ def test_generate_episode_props_ts_includes_keyed_path_when_present(tmp_path):
     assert 'keyedPath: "episodes/ep/processing/keyed/001.webm"' in output
 
 
-def test_find_background_video_returns_none_when_no_folder(tmp_path):
-    assert find_background_video(tmp_path) is None
+def test_load_backgrounds_for_codegen_returns_empty_when_file_absent(tmp_path):
+    assert load_backgrounds_for_codegen(tmp_path) == []
 
 
-def test_find_background_video_returns_none_when_folder_empty(tmp_path):
-    (tmp_path / "background").mkdir()
+def test_load_backgrounds_for_codegen_reads_backgrounds_json(tmp_path):
+    processing = tmp_path / "processing"
+    processing.mkdir()
+    (processing / "backgrounds.json").write_text(
+        json.dumps({"backgrounds": [{"id": "bg-001", "filename": "loop.mp4"}]})
+    )
 
-    assert find_background_video(tmp_path) is None
-
-
-def test_find_background_video_finds_video_file(tmp_path):
-    background = tmp_path / "background"
-    background.mkdir()
-    (background / "loop.mp4").write_bytes(b"fake")
-
-    result = find_background_video(tmp_path)
-
-    assert result is not None
-    assert result.name == "loop.mp4"
+    assert load_backgrounds_for_codegen(tmp_path) == [{"id": "bg-001", "filename": "loop.mp4"}]
 
 
-def test_find_background_video_ignores_non_video_files(tmp_path):
-    background = tmp_path / "background"
-    background.mkdir()
-    (background / ".DS_Store").write_bytes(b"fake")
-    (background / "notes.txt").write_bytes(b"fake")
-
-    assert find_background_video(tmp_path) is None
-
-
-def test_generate_episode_props_ts_omits_background_video_when_absent(tmp_path):
+def test_generate_episode_props_ts_omits_backgrounds_when_absent(tmp_path):
     manifest = _manifest([])
 
     generate_episode_props_ts(manifest, tmp_path)
 
     output = (tmp_path / "generated" / "episode" / "episode-props.ts").read_text()
 
-    assert "backgroundVideo" not in output
+    assert "backgrounds" not in output
 
 
-def test_generate_episode_props_ts_includes_background_video_when_present(tmp_path):
+def test_generate_episode_props_ts_includes_backgrounds_when_present(tmp_path):
     manifest = _manifest([])
-    manifest["backgroundVideo"] = {
-        "filename": "loop.mp4",
-        "renderPath": "episodes/ep/background/loop.mp4",
-        "duration": 29.029,
-        "fps": 29.97,
-    }
+    backgrounds = [
+        {
+            "id": "bg-001",
+            "filename": "loop.mp4",
+            "renderPath": "episodes/ep/background/loop.mp4",
+            "caption": "loop",
+            "mediaType": "video",
+            "duration": 29.029,
+            "fps": 29.97,
+        }
+    ]
 
-    generate_episode_props_ts(manifest, tmp_path)
+    generate_episode_props_ts(manifest, tmp_path, backgrounds=backgrounds)
 
     output = (tmp_path / "generated" / "episode" / "episode-props.ts").read_text()
 
-    assert "backgroundVideo: {" in output
+    assert "backgrounds: [" in output
+    assert 'id: "bg-001",' in output
     assert 'path: "episodes/ep/background/loop.mp4"' in output
     assert 'filename: "loop.mp4"' in output
     assert "duration: 29.029," in output

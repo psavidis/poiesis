@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from prepare_footage import generate_episode_props_ts, get_video_metadata
+from prepare_footage import generate_episode_props_ts, get_video_metadata, load_backgrounds_for_codegen
 
 
 IMAGE_EXTENSIONS = {
@@ -408,7 +408,13 @@ def main():
         code_assets_path = episode / "processing" / "code_assets.json"
         code_assets = load_json(code_assets_path)["codeAssets"] if code_assets_path.exists() else []
 
-        generate_episode_props_ts(manifest, renderer_folder, assets=assets, code_assets=code_assets)
+        generate_episode_props_ts(
+            manifest,
+            renderer_folder,
+            assets=assets,
+            code_assets=code_assets,
+            backgrounds=load_backgrounds_for_codegen(episode)
+        )
 
 
 if __name__ == "__main__":

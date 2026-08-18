@@ -2,17 +2,16 @@ import {
     AbsoluteFill,
     Audio,
     Easing,
-    Loop,
     OffthreadVideo,
     Sequence,
     interpolate,
     staticFile,
     useCurrentFrame,
-    useVideoConfig,
 } from "remotion";
 
-import type { EpisodeAsset, EpisodeCodeAsset, EpisodeProps, EpisodeVideo, MomentScene, PresenterScene, Scene, TitleScene } from "./types";
+import type { BackgroundScene, EpisodeAsset, EpisodeCodeAsset, EpisodeProps, EpisodeVideo, MomentScene, PresenterScene, Scene, TitleScene } from "./types";
 import { AnimatedTitle } from "./AnimatedTitle";
+import { BackgroundLayer } from "./BackgroundLayer";
 import { BeatOverlay } from "./BeatOverlay";
 import { CaptionText } from "./CaptionText";
 import { CodeBlock } from "./CodeBlock";
@@ -29,10 +28,11 @@ import { LAYOUT_GEOMETRY, TRANSITION_FRAMES } from "./timing";
 // clip's own silence-trimmed sourceStartFrame (real footage that exists,
 // just trimmed as dead air) so the incoming clip has something to fade in
 // from other than black — the same technique an editor uses when trimming
-// leaves no natural pre-roll. Kept short specifically so it stays
-// unnoticeable: CLAUDE.md's "animations should feel intentional rather
-// than distracting" applies here as much as to moments.
-export const CROSSFADE_TRANSITION_FRAMES = 9; // 0.3s at 30fps
+// leaves no natural pre-roll. Widened from 9 (0.3s): at 9 frames a cut
+// between two separately-recorded takes (different lighting/framing/
+// energy) still read as an abrupt stop-start, not a real dissolve — too
+// quick to actually register as a transition rather than a fast cut.
+export const CROSSFADE_TRANSITION_FRAMES = 18; // 0.6s at 30fps
 
 // A window (in frames local to a presenter scene) during which the
 // presenter should be off-center, derived from a single moment's own
@@ -206,6 +206,26 @@ export const crossfadeInFramesForScene = (scene: PresenterScene, previousScene: 
         0,
         Math.min(CROSSFADE_TRANSITION_FRAMES, scene.sourceStartFrame, previousScene.durationInFrames)
     );
+};
+
+// BackgroundScene's own equivalent of the above — always crossfades (no
+// per-scene effects.transition opt-out the way presenter cuts have,
+// since a background changing IS itself always a "this replaced that"
+// moment worth dissolving, never a moment-to-moment cut a human would
+// want hard). Simpler clamp than the presenter version: a background has
+// no "trimmed dead air" to borrow lead-in from — both the outgoing and
+// incoming background are already continuously looping/playing, so the
+// only real constraint is not borrowing more than the previous span
+// actually had.
+const crossfadeInFramesForBackgroundScene = (
+    scene: BackgroundScene,
+    previousScene: BackgroundScene | undefined
+): number => {
+    if (!previousScene) {
+        return 0;
+    }
+
+    return Math.max(0, Math.min(CROSSFADE_TRANSITION_FRAMES, previousScene.durationInFrames));
 };
 
 const PresenterSequence = ({
@@ -441,26 +461,6 @@ const AnimatedPresenterFrame = ({
     );
 };
 
-const LoopingBackground = ({ path, duration }: { path: string; duration: number }) => {
-    const { fps } = useVideoConfig();
-
-    const durationInFrames = Math.round(duration * fps);
-
-    return (
-        <Loop durationInFrames={durationInFrames}>
-            <OffthreadVideo
-                src={staticFile(path)}
-                muted
-                style={{
-                    width: "100%",
-                    height: "100%",
-                    objectFit: "cover",
-                }}
-            />
-        </Loop>
-    );
-};
-
 const MomentSequence = ({
                              scene,
                              asset,
@@ -600,7 +600,7 @@ export const Episode = ({
                             videos,
                             assets,
                             codeAssets,
-                            backgroundVideo,
+                            backgrounds,
                             scenePlan: typedScenePlan,
                             onlyTypes,
                         }: EpisodeProps) => {
@@ -609,6 +609,13 @@ export const Episode = ({
         videos.map((video) => [
             video.id,
             video,
+        ])
+    );
+
+    const backgroundMap = new Map(
+        (backgrounds ?? []).map((background) => [
+            background.id,
+            background,
         ])
     );
 
@@ -664,6 +671,32 @@ export const Episode = ({
         previousPresenterSceneById.set(scene.id, isDirectlyAdjacentPresenter ? previous : undefined);
     });
 
+    // Mirrors previousPresenterSceneById above, for BackgroundScenes — a
+    // background change should dissolve into the next one exactly the
+    // same way a presenter cut does ("smooth transition... both for the
+    // talking head and the background"), but only when the two spans are
+    // directly adjacent (background_scenes.json's own auto-closed model
+    // guarantees this for every real gap-free run) AND actually reference
+    // a DIFFERENT background — two adjacent spans that happen to reuse
+    // the same backgroundId need no dissolve, there's nothing visually
+    // changing at that boundary.
+    const orderedBackgroundScenes = typedScenePlan.scenes
+        .filter((scene): scene is BackgroundScene => scene.type === "background")
+        .sort((a, b) => a.timelineStartFrame - b.timelineStartFrame);
+
+    const previousBackgroundSceneById = new Map<string, BackgroundScene | undefined>();
+
+    orderedBackgroundScenes.forEach((scene, index) => {
+        const previous = orderedBackgroundScenes[index - 1];
+
+        const isDirectlyAdjacentDifferentBackground =
+            previous !== undefined &&
+            previous.timelineStartFrame + previous.durationInFrames === scene.timelineStartFrame &&
+            previous.backgroundId !== scene.backgroundId;
+
+        previousBackgroundSceneById.set(scene.id, isDirectlyAdjacentDifferentBackground ? previous : undefined);
+    });
+
     const renderScene = (scene: Scene) => {
         if (onlyTypes && !onlyTypes.includes(scene.type)) {
             return null;
@@ -696,6 +729,45 @@ export const Episode = ({
                         durationInFrames={scene.durationInFrames}
                     >
                         <AnimatedTitle text={scene.text} durationInFrames={scene.durationInFrames} />
+                    </Sequence>
+                );
+            }
+
+            case "background": {
+                const background = backgroundMap.get(scene.backgroundId);
+
+                if (!background) {
+                    return null;
+                }
+
+                const sourceDurationInFrames =
+                    background.mediaType === "video" && background.duration
+                        ? Math.round(background.duration * typedScenePlan.fps)
+                        : undefined;
+
+                // Same "borrow a few extra frames of lead-in, dissolve
+                // over them" technique PresenterSequence uses — the
+                // Sequence starts crossfadeInFrames early so
+                // BackgroundLayer has something to fade in FROM (the
+                // outgoing background, still rendering underneath) rather
+                // than fading in from black.
+                const crossfadeInFrames = crossfadeInFramesForBackgroundScene(scene, previousBackgroundSceneById.get(scene.id));
+
+                return (
+                    <Sequence
+                        key={scene.id}
+                        from={scene.timelineStartFrame - crossfadeInFrames}
+                        durationInFrames={scene.durationInFrames + crossfadeInFrames}
+                        layout="none"
+                    >
+                        <BackgroundLayer
+                            path={background.path}
+                            mediaType={background.mediaType}
+                            sourceDurationInFrames={sourceDurationInFrames}
+                            crossfadeInFrames={crossfadeInFrames}
+                            durationInFrames={scene.durationInFrames}
+                            imageMotion={scene.imageMotion}
+                        />
                     </Sequence>
                 );
             }
@@ -807,19 +879,27 @@ export const Episode = ({
         }
     };
 
+    // Background scenes must render BELOW everything else regardless of
+    // their position in scenePlan.scenes' own array order — rendered
+    // separately, first, rather than relying on array order to imply
+    // z-order the way every other scene type safely can (they're all
+    // full-frame overlays/cutaways that don't care what's behind them).
+    // Sorted explicitly (not just trusting scene-plan.json's own array
+    // order) since render order here IS z-order for background layers —
+    // during a crossfade's overlap window, the OUTGOING (earlier) span
+    // must paint first so the INCOMING (later) span's dissolve-in
+    // actually shows on top of it, not underneath.
+    const backgroundScenes = orderedBackgroundScenes;
+    const nonBackgroundScenes = typedScenePlan.scenes.filter((scene) => scene.type !== "background");
+
     return (
         <AbsoluteFill>
             {/* Mounted once for the whole episode — every green-keyed video
                 asset references this by id (see ChromaKey.tsx), an SVG
                 filter def doesn't need to be duplicated per use. */}
             <GreenKeyFilterDefs />
-            {backgroundVideo && (
-                <LoopingBackground
-                    path={backgroundVideo.path}
-                    duration={backgroundVideo.duration}
-                />
-            )}
-            {typedScenePlan.scenes.map(renderScene)}
+            {backgroundScenes.map(renderScene)}
+            {nonBackgroundScenes.map(renderScene)}
         </AbsoluteFill>
     );
 };

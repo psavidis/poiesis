@@ -64,6 +64,8 @@ export function sceneLabel(scene: Scene): string {
             return scene.text ? truncate(scene.text) : (scene.assetId ?? scene.treatment);
         case "image":
             return scene.assetId;
+        case "background":
+            return scene.backgroundId;
     }
 }
 

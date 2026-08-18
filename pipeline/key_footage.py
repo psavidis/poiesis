@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from prepare_footage import generate_episode_props_ts
+from prepare_footage import generate_episode_props_ts, load_backgrounds_for_codegen
 
 
 CHROMA_COLOR = "0x17FF1F"
@@ -227,7 +227,13 @@ def key_footage(episode: Path, force: bool, renderer_folder: Path | None = None)
         with code_assets_path.open("r", encoding="utf-8") as f:
             code_assets = json.load(f)["codeAssets"]
 
-    generate_episode_props_ts(manifest, renderer_folder, assets=assets, code_assets=code_assets)
+    generate_episode_props_ts(
+        manifest,
+        renderer_folder,
+        assets=assets,
+        code_assets=code_assets,
+        backgrounds=load_backgrounds_for_codegen(episode)
+    )
 
     print("==============================")
     print("Keying summary")

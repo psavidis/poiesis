@@ -2,10 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Player, type PlayerRef } from "@remotion/player";
 import { Episode } from "video-renderer-src/episode/Episode";
 import type { EpisodeProps, MomentScene, Scene, ScenePlan } from "video-renderer-src/episode/types";
-import { getAssets, getCaptionsInfo, getCodeAssets, getManifest, getScenePlan, undoLastEdit, type EpisodeStatus } from "./api";
+import { getAssets, getBackgrounds, getCaptionsInfo, getCodeAssets, getManifest, getScenePlan, undoLastEdit, type EpisodeStatus } from "./api";
 import { ActiveSceneBar } from "./ActiveSceneBar";
 import { AdvancedPanel } from "./AdvancedPanel";
 import { AssetLibraryPanel } from "./AssetLibraryPanel";
+import { BackgroundBar } from "./BackgroundBar";
 import { BeatBar } from "./BeatBar";
 import { ChapterStrip } from "./ChapterStrip";
 import { EditPlanChat } from "./EditPlanChat";
@@ -306,9 +307,10 @@ export function EpisodeWorkspace() {
             getAssets(episodePath),
             getCodeAssets(episodePath),
             getCaptionsInfo(episodePath),
+            getBackgrounds(episodePath),
         ])
-            .then(([scenePlan, manifest, assets, codeAssets, captions]) => {
-                const baseProps = manifestToEpisodeBaseProps(manifest, assets, codeAssets);
+            .then(([scenePlan, manifest, assets, codeAssets, captions, backgrounds]) => {
+                const baseProps = manifestToEpisodeBaseProps(manifest, assets, codeAssets, backgrounds);
                 setEpisodeProps({ ...baseProps, scenePlan: scenePlan as ScenePlan });
                 // Corrects "Include captions" from the episode's real
                 // last-run state (#72) — only when captions.json actually
@@ -748,7 +750,7 @@ export function EpisodeWorkspace() {
             </div>
 
             <div style={styles.playerWrap}>
-                {/* One shared zoom/pan window for Scenes/Moments/Images/Beats
+                {/* One shared zoom/pan window for Background/Scenes/Moments/Images/Beats
                     below (#86) — previously each bar had its own independent
                     zoom level and its own row of Zoom in/out/Reset buttons;
                     since they're all views onto the exact same underlying
@@ -779,6 +781,19 @@ export function EpisodeWorkspace() {
                         Reset
                     </button>
                 </div>
+            </div>
+
+            <div style={styles.playerWrap}>
+                <BackgroundBar
+                    scenePlan={episodeProps.scenePlan}
+                    totalFrames={totalFrames}
+                    currentFrame={currentFrame}
+                    onSeek={seekToAbsoluteFrame}
+                    episodePath={episodePath}
+                    onSaved={reloadScenePlan}
+                    backgrounds={episodeProps.backgrounds ?? []}
+                    timelineZoom={timelineZoom}
+                />
             </div>
 
             <div style={styles.playerWrap}>
