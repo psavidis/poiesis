@@ -345,6 +345,15 @@ def merge_title_scenes(scene_plan, titles, transcript, manifest, style=None):
             {
                 "text": title["text"],
                 "sourceFrame": round(segment["start"] * fps),
+                # Human-set override for THIS title's own on-screen display
+                # duration (#83) — falls back to the shared config default
+                # when absent, same as every episode before this field
+                # existed. Growing/shrinking one title shifts every LATER
+                # scene's timelineStartFrame by the same amount (the running
+                # `timeline_frame` cursor below already does this for the
+                # existing global-duration case; a per-title override just
+                # changes which number that cursor advances by).
+                "durationFrames": title.get("durationFrames") or title_duration_frames,
             }
         )
 
@@ -377,6 +386,7 @@ def merge_title_scenes(scene_plan, titles, transcript, manifest, style=None):
                     segment_end,
                     min_piece_frames,
                 ),
+                "durationFrames": split["durationFrames"],
             }
             for split in splits
         ]
@@ -407,10 +417,10 @@ def merge_title_scenes(scene_plan, titles, transcript, manifest, style=None):
                     "type": "title",
                     "text": split["text"],
                     "timelineStartFrame": timeline_frame,
-                    "durationInFrames": title_duration_frames,
+                    "durationInFrames": split["durationFrames"],
                 }
             )
-            timeline_frame += title_duration_frames
+            timeline_frame += split["durationFrames"]
 
             cursor = piece_end
 
@@ -434,11 +444,13 @@ def merge_title_scenes(scene_plan, titles, transcript, manifest, style=None):
     return scene_plan
 
 
-# text is the only field a human can actually change through either
-# title-editing UI (TitleEditorPanel.tsx, InlineTextEditor.tsx's "title"
-# branch) — see #59, third slice of #44 after moments (#57) and beats
-# (#58).
-OVERRIDABLE_TITLE_FIELDS = {"text"}
+# text (#59, third slice of #44 after moments #57 and beats #58) and
+# durationFrames (#83 — a title's own on-screen display duration,
+# previously a single shared config value with no per-title override) are
+# the fields a human can actually change through the title-editing UIs
+# (TitleEditorPanel.tsx, InlineTextEditor.tsx's "title" branch,
+# SceneBar.tsx's drag-to-resize).
+OVERRIDABLE_TITLE_FIELDS = {"text", "durationFrames"}
 
 
 def compute_overridden_fields(old_title, new_title):

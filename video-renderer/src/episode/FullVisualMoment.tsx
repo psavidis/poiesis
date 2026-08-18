@@ -5,7 +5,7 @@ import { CodeBlock } from "./CodeBlock";
 import { DiagramBlock } from "./DiagramBlock";
 import { EpisodeImage } from "./EpisodeImage";
 import { TRANSITION_FRAMES } from "./timing";
-import type { DiagramData } from "./types";
+import type { DiagramData, MomentBox } from "./types";
 
 // A full-frame sibling of DiagramBlock's side-panel layout: same node/edge
 // data and reveal choreography (via DiagramBlock itself, in "full" mode),
@@ -85,21 +85,51 @@ export const FullVisualMoment = ({
                                       kind,
                                       text,
                                       assetPath,
+                                      assetMediaType,
+                                      assetKeyColor,
                                       caption,
                                       diagram,
                                       codePath,
                                       codeLanguage,
+                                      codeAssetKind,
+                                      codeAssetKeyColor,
+                                      box,
+                                      captionPlacement,
                                   }: {
-    kind: "image" | "diagram" | "text" | "code";
+    kind: "image" | "video" | "diagram" | "text" | "code";
     text?: string;
     assetPath?: string;
+    assetMediaType?: "image" | "video";
+    assetKeyColor?: "black" | "green";
     caption?: string;
     diagram?: DiagramData;
     codePath?: string;
     codeLanguage?: string;
+    // Only meaningful when kind is "code" — a code/ file might actually be
+    // a screenshot/recording rather than real source text (see
+    // CodeAssetKind in types.ts), which needs EpisodeImage's treatment
+    // instead of CodeBlock's.
+    codeAssetKind?: "source" | "screenshot" | "recording";
+    codeAssetKeyColor?: "black" | "green";
+    // Human-set size/position override (#77) — only wired through for
+    // image/video/code kinds here; "diagram"/"text" keep their fixed
+    // full-frame centered layout for this first version.
+    box?: MomentBox;
+    // See MomentScene.captionPlacement's own doc comment (#82).
+    captionPlacement?: "overlay" | "below" | "off";
 }) => {
-    if (kind === "image" && assetPath) {
-        return <EpisodeImage path={assetPath} caption={caption} display="full" />;
+    if ((kind === "image" || kind === "video") && assetPath) {
+        return (
+            <EpisodeImage
+                path={assetPath}
+                mediaType={assetMediaType}
+                keyColor={assetKeyColor}
+                caption={caption}
+                captionPlacement={captionPlacement}
+                display="full"
+                box={box}
+            />
+        );
     }
 
     if (kind === "diagram" && diagram) {
@@ -110,8 +140,22 @@ export const FullVisualMoment = ({
         return <FullText text={text} />;
     }
 
+    if (kind === "code" && codePath && (codeAssetKind === "screenshot" || codeAssetKind === "recording")) {
+        return (
+            <EpisodeImage
+                path={codePath}
+                mediaType={codeAssetKind === "recording" ? "video" : "image"}
+                keyColor={codeAssetKeyColor}
+                caption={caption}
+                captionPlacement={captionPlacement}
+                display="full"
+                box={box}
+            />
+        );
+    }
+
     if (kind === "code" && codePath && codeLanguage) {
-        return <CodeBlock path={codePath} language={codeLanguage} presenterOnLeft={false} size="full" />;
+        return <CodeBlock path={codePath} language={codeLanguage} presenterOnLeft={false} size="full" box={box} />;
     }
 
     return null;

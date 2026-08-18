@@ -10,8 +10,9 @@ import {
 } from "remotion";
 
 import { brand } from "./brand";
-import { SIDE_CONTENT_WIDTH_PCT, TRANSITION_FRAMES } from "./timing";
-import type { MomentEntrance } from "./types";
+import { KeyedVideo, type KeyColor } from "./ChromaKey";
+import { SIDE_CONTENT_WIDTH_PCT, TRANSITION_FRAMES, resolveBoxStyle } from "./timing";
+import type { MomentBox, MomentEntrance } from "./types";
 
 // SideText/SideImage's own fade timing is derived from the same
 // TRANSITION_FRAMES constant Episode.tsx uses for the presenter's
@@ -60,7 +61,15 @@ export const computeTransform = (entrance: MomentEntrance, frame: number, fps: n
     return `scale(${progress})`;
 };
 
-export const BottomCallout = ({ text, entrance = "scale" }: { text: string; entrance?: MomentEntrance }) => {
+export const BottomCallout = ({
+                                   text,
+                                   entrance = "scale",
+                                   box,
+                               }: {
+    text: string;
+    entrance?: MomentEntrance;
+    box?: MomentBox;
+}) => {
     const frame = useCurrentFrame();
     const { fps, durationInFrames } = useVideoConfig();
 
@@ -76,6 +85,52 @@ export const BottomCallout = ({ text, entrance = "scale" }: { text: string; entr
         }
     );
 
+    const chip = (
+        <div
+            style={{
+                opacity,
+                transform,
+                display: "flex",
+                alignItems: "center",
+                maxWidth: box ? "100%" : "78%",
+                width: box ? "100%" : undefined,
+                height: box ? "100%" : undefined,
+                backgroundColor: brand.colors.overlayBackground,
+                borderLeft: `6px solid ${brand.colors.accent}`,
+                borderRadius: brand.radii.chip,
+                padding: "18px 32px",
+                boxSizing: "border-box",
+            }}
+        >
+            <div
+                style={{
+                    fontFamily: brand.fonts.family,
+                    fontSize: 44,
+                    fontWeight: 600,
+                    color: brand.colors.text,
+                    textAlign: "left",
+                    lineHeight: 1.25,
+                }}
+            >
+                {text}
+            </div>
+        </div>
+    );
+
+    // No natural fixed box by default — this treatment centers an
+    // intrinsically-sized chip via flexbox rather than an absolute
+    // top/left/width/height, so there's no single "default geometry" to
+    // feed resolveBoxStyle the way the side-panel treatments have. Only
+    // switches to absolute positioning when a human has actually set a box
+    // (#77); every episode without one renders exactly as before.
+    if (box) {
+        return (
+            <AbsoluteFill style={{ pointerEvents: "none" }}>
+                <div style={resolveBoxStyle({ topPct: 0, leftPct: 0, widthPct: 100, heightPct: 100 }, box)}>{chip}</div>
+            </AbsoluteFill>
+        );
+    }
+
     return (
         <AbsoluteFill
             style={{
@@ -85,32 +140,7 @@ export const BottomCallout = ({ text, entrance = "scale" }: { text: string; entr
                 pointerEvents: "none",
             }}
         >
-            <div
-                style={{
-                    opacity,
-                    transform,
-                    display: "flex",
-                    alignItems: "center",
-                    maxWidth: "78%",
-                    backgroundColor: brand.colors.overlayBackground,
-                    borderLeft: `6px solid ${brand.colors.accent}`,
-                    borderRadius: brand.radii.chip,
-                    padding: "18px 32px",
-                }}
-            >
-                <div
-                    style={{
-                        fontFamily: brand.fonts.family,
-                        fontSize: 44,
-                        fontWeight: 600,
-                        color: brand.colors.text,
-                        textAlign: "left",
-                        lineHeight: 1.25,
-                    }}
-                >
-                    {text}
-                </div>
-            </div>
+            {chip}
         </AbsoluteFill>
     );
 };
@@ -121,12 +151,21 @@ export const BottomCallout = ({ text, entrance = "scale" }: { text: string; entr
 // the presenter's own widthPct) rather than a second hardcoded
 // percentage, so this can never silently drift out of sync with how much
 // room the presenter's own slide animation actually frees up.
-export const sideContentStyle = (presenterOnLeft: boolean): React.CSSProperties => ({
-    position: "absolute",
-    top: 0,
-    bottom: 0,
-    [presenterOnLeft ? "right" : "left"]: 0,
-    width: `${SIDE_CONTENT_WIDTH_PCT}%`,
+//
+// box (see #77) overrides this default via resolveBoxStyle when a human
+// has dragged/resized this specific moment on the preview-app's player —
+// absent (every episode before this field existed) renders byte-identical
+// to before.
+export const sideContentStyle = (presenterOnLeft: boolean, box?: MomentBox): React.CSSProperties => ({
+    ...resolveBoxStyle(
+        {
+            topPct: 0,
+            leftPct: presenterOnLeft ? 100 - SIDE_CONTENT_WIDTH_PCT : 0,
+            widthPct: SIDE_CONTENT_WIDTH_PCT,
+            heightPct: 100,
+        },
+        box
+    ),
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
@@ -146,10 +185,12 @@ export const SideText = ({
                               text,
                               presenterOnLeft,
                               style = "quote",
+                              box,
                           }: {
     text: string;
     presenterOnLeft: boolean;
     style?: "quote" | "title";
+    box?: MomentBox;
 }) => {
     const frame = useCurrentFrame();
     const { durationInFrames } = useVideoConfig();
@@ -179,7 +220,7 @@ export const SideText = ({
 
     return (
         <AbsoluteFill style={{ pointerEvents: "none" }}>
-            <div style={sideContentStyle(presenterOnLeft)}>
+            <div style={sideContentStyle(presenterOnLeft, box)}>
                 <div
                     style={{
                         opacity,
@@ -203,12 +244,26 @@ export const SideText = ({
 
 export const SideImage = ({
                                path,
+                               mediaType = "image",
+                               keyColor,
                                caption,
+                               captionPlacement = "overlay",
                                presenterOnLeft,
+                               box,
                            }: {
     path: string;
+    mediaType?: "image" | "video";
+    keyColor?: KeyColor;
     caption?: string;
+    // This treatment's own layout already stacks image-then-caption as
+    // flow children (no overlay mode exists here to begin with — see the
+    // caption's own render below), so "overlay" vs. "below" makes no
+    // visual difference for SideImage specifically; only "off" actually
+    // changes anything. Accepted anyway so every treatment shares one
+    // prop shape (#82).
+    captionPlacement?: "overlay" | "below" | "off";
     presenterOnLeft: boolean;
+    box?: MomentBox;
 }) => {
     const frame = useCurrentFrame();
     const { durationInFrames } = useVideoConfig();
@@ -233,7 +288,7 @@ export const SideImage = ({
 
     return (
         <AbsoluteFill style={{ pointerEvents: "none" }}>
-            <div style={sideContentStyle(presenterOnLeft)}>
+            <div style={sideContentStyle(presenterOnLeft, box)}>
                 <div
                     style={{
                         opacity,
@@ -245,32 +300,49 @@ export const SideImage = ({
                         gap: 16,
                     }}
                 >
-                    <div
-                        style={{
-                            width: "100%",
-                            aspectRatio: "1 / 1",
-                            backgroundColor: brand.colors.overlayBackground,
-                            border: `2px solid ${brand.colors.accent}`,
-                            borderRadius: brand.radii.frame,
-                            padding: 20,
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            boxShadow: "0 12px 32px rgba(0, 0, 0, 0.45)",
-                        }}
-                    >
-                        <Img
-                            src={staticFile(path)}
+                    {mediaType === "video" ? (
+                        // No frame/background box: unlike a still image, this is
+                        // assumed to be a graphic authored on a solid black
+                        // background with no real alpha channel (see #77) — a
+                        // "screen" blend mode makes black pixels transparent
+                        // against whatever's behind (presenter/background video),
+                        // so boxing it in its own colored card would defeat the
+                        // point by putting a visible frame around the keyed area.
+                        <div style={{ width: "100%", aspectRatio: "1 / 1", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            <KeyedVideo
+                                path={path}
+                                keyColor={keyColor}
+                                style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+                            />
+                        </div>
+                    ) : (
+                        <div
                             style={{
-                                maxWidth: "100%",
-                                maxHeight: "100%",
-                                objectFit: "contain",
-                                borderRadius: 6,
+                                width: "100%",
+                                aspectRatio: "1 / 1",
+                                backgroundColor: brand.colors.overlayBackground,
+                                border: `2px solid ${brand.colors.accent}`,
+                                borderRadius: brand.radii.frame,
+                                padding: 20,
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                boxShadow: "0 12px 32px rgba(0, 0, 0, 0.45)",
                             }}
-                        />
-                    </div>
+                        >
+                            <Img
+                                src={staticFile(path)}
+                                style={{
+                                    maxWidth: "100%",
+                                    maxHeight: "100%",
+                                    objectFit: "contain",
+                                    borderRadius: 6,
+                                }}
+                            />
+                        </div>
+                    )}
 
-                    {caption && (
+                    {caption && captionPlacement !== "off" && (
                         <div
                             style={{
                                 fontFamily: brand.fonts.family,
@@ -284,6 +356,132 @@ export const SideImage = ({
                         </div>
                     )}
                 </div>
+            </div>
+        </AbsoluteFill>
+    );
+};
+
+// A screenshot/recording sibling of CodeBlock's "dominant" size — same
+// top-left anchor and 62% width (leaving LAYOUT_GEOMETRY.corner's
+// bottom-right free for the presenter's PiP box) so a code-folder image/
+// video demonstrating code slots into the same on-screen position a real
+// source CodeBlock would, regardless of which of the two the AI/human
+// actually picked for a given moment.
+export const DominantMedia = ({
+                                   path,
+                                   mediaType,
+                                   keyColor,
+                                   caption,
+                                   captionPlacement = "overlay",
+                                   box,
+                               }: {
+    path: string;
+    mediaType: "image" | "video";
+    keyColor?: KeyColor;
+    caption?: string;
+    // See MomentScene.captionPlacement's own doc comment (#82). "below"
+    // renders the caption as a flow sibling AFTER the media instead of
+    // overlaid — unlike EpisodeImage's fixed-box "full" mode, this
+    // treatment's box has no fixed height by default (content-sized to
+    // the media's own aspect ratio), so there's no reserved bottom strip
+    // to compute; a flow sibling naturally sits below regardless.
+    captionPlacement?: "overlay" | "below" | "off";
+    box?: MomentBox;
+}) => {
+    const frame = useCurrentFrame();
+    const { durationInFrames } = useVideoConfig();
+
+    const opacity = interpolate(
+        frame,
+        [0, TRANSITION_FRAMES, durationInFrames - TRANSITION_FRAMES, durationInFrames],
+        [0, 1, 1, 0],
+        { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+    );
+
+    const media =
+        mediaType === "video" ? (
+            <KeyedVideo path={path} keyColor={keyColor} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
+        ) : (
+            <Img src={staticFile(path)} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 6 }} />
+        );
+
+    // No default height (the box is content-sized, only top/left/width are
+    // fixed) — box overrides (#77) DO fix a height once set, via
+    // resolveBoxStyle, same conditional-wrapper pattern as BottomCallout
+    // above for the same reason (no single default geometry shape to feed
+    // it otherwise).
+    const positionStyle: React.CSSProperties = box
+        ? resolveBoxStyle({ topPct: 8, leftPct: 6, widthPct: 62, heightPct: 100 }, box)
+        : { position: "absolute", top: "8%", left: "6%", width: "62%" };
+
+    const showCaption = !!caption && captionPlacement !== "off";
+    const captionBelow = showCaption && captionPlacement === "below";
+
+    const mediaNode =
+        mediaType === "video" ? (
+            media
+        ) : (
+            <div
+                style={{
+                    backgroundColor: brand.colors.overlayBackground,
+                    border: `2px solid ${brand.colors.accent}`,
+                    borderRadius: brand.radii.frame,
+                    padding: 20,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    boxShadow: "0 12px 32px rgba(0, 0, 0, 0.45)",
+                    height: box && !captionBelow ? "100%" : undefined,
+                    boxSizing: "border-box",
+                }}
+            >
+                {media}
+            </div>
+        );
+
+    return (
+        <AbsoluteFill style={{ pointerEvents: "none" }}>
+            <div
+                style={{
+                    ...positionStyle,
+                    opacity,
+                    ...(captionBelow ? { display: "flex", flexDirection: "column", gap: 12 } : {}),
+                }}
+            >
+                {mediaNode}
+                {showCaption && (
+                    <div
+                        style={{
+                            fontFamily: brand.fonts.family,
+                            fontSize: 22,
+                            fontWeight: 600,
+                            color: brand.colors.text,
+                            textAlign: "center",
+                            ...(captionBelow
+                                ? {}
+                                : {
+                                      // Genuinely overlaid on the media's own
+                                      // bottom edge (inside the box), not the
+                                      // whole frame — a background chip keeps
+                                      // it legible against whatever the image
+                                      // shows underneath, matching the visual
+                                      // language BottomCallout/SideImage's own
+                                      // caption chips already use elsewhere.
+                                      position: "absolute",
+                                      bottom: 12,
+                                      left: 12,
+                                      right: 12,
+                                      padding: "8px 16px",
+                                      borderRadius: brand.radii.chip,
+                                      backgroundColor: brand.colors.overlayBackground,
+                                      borderLeft: `3px solid ${brand.colors.accent}`,
+                                      boxSizing: "border-box",
+                                  }),
+                        }}
+                    >
+                        {caption}
+                    </div>
+                )}
             </div>
         </AbsoluteFill>
     );

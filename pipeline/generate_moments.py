@@ -243,7 +243,8 @@ def format_assets_for_prompt(assets):
         # judge relevance/centrality per its existing full-visual criteria
         # rather than treating a hinted asset as a guaranteed full-visual.
         suggestion = " (suggested: full screen)" if asset.get("defaultDisplay") == "full" else ""
-        lines.append(f"[{asset['id']}] {asset['caption']}{suggestion}")
+        media_note = " (animated video, not a still image)" if asset.get("mediaType") == "video" else ""
+        lines.append(f"[{asset['id']}] {asset['caption']}{suggestion}{media_note}")
 
     return "\n".join(lines)
 
@@ -261,7 +262,17 @@ def format_code_assets_for_prompt(code_assets):
         # should still weigh against its existing full-visual criteria,
         # not a guarantee.
         suggestion = " (suggested: full screen)" if code_asset.get("defaultDisplay") == "full" else ""
-        lines.append(f"[{code_asset['id']}] {code_asset['language']} — {code_asset['description']}{suggestion}")
+
+        kind = code_asset.get("kind", "source")
+
+        if kind == "source":
+            label = code_asset["language"]
+        elif kind == "recording":
+            label = "screen recording of code (video, not real text)"
+        else:
+            label = "code screenshot (static image, not real text)"
+
+        lines.append(f"[{code_asset['id']}] {label} — {code_asset['description']}{suggestion}")
 
     return "\n".join(lines)
 
@@ -696,7 +707,12 @@ def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, pr
                     "maxDurationInParentFrames": candidate["maxDurationInParentFrames"],
                     "treatment": "side-image",
                     "assetId": asset_id,
-                    "caption": asset["caption"],
+                    # Never auto-filled from the asset's own stored caption
+                    # (#82) — a moment's on-screen caption is opt-in text a
+                    # human writes for THIS moment, not the asset's own
+                    # organizational description (which stays visible in the
+                    # Asset Library picker, just never copied onto a moment).
+                    "caption": None,
                     "presenterSide": presenter_side,
                     "reason": moment.get("reason", ""),
                 }
@@ -722,7 +738,9 @@ def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, pr
                     "maxDurationInParentFrames": candidate["maxDurationInParentFrames"],
                     "treatment": "side-code",
                     "codeAssetId": code_asset_id,
-                    "caption": code_asset["description"],
+                    # See side-image's own comment above (#82) — never
+                    # auto-filled from the code asset's own description.
+                    "caption": None,
                     "presenterSide": presenter_side,
                     "reason": moment.get("reason", ""),
                 }
@@ -751,7 +769,9 @@ def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, pr
                     "maxDurationInParentFrames": candidate["maxDurationInParentFrames"],
                     "treatment": "content-dominant-code",
                     "codeAssetId": code_asset_id,
-                    "caption": code_asset["description"],
+                    # See side-image's own comment above (#82) — never
+                    # auto-filled from the code asset's own description.
+                    "caption": None,
                     "presenterSide": None,
                     "reason": moment.get("reason", ""),
                 }
@@ -811,7 +831,9 @@ def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, pr
                         "treatment": "full-visual",
                         "fullVisualKind": "image",
                         "assetId": asset_id,
-                        "caption": asset["caption"],
+                        # See side-image's own comment above (#82) — never
+                        # auto-filled from the asset's own description.
+                        "caption": None,
                         "presenterSide": None,
                         "reason": moment.get("reason", ""),
                     }
@@ -837,7 +859,9 @@ def propose_moments(scene_plan, transcript, manifest, assets, llm: LLMClient, pr
                         "treatment": "full-visual",
                         "fullVisualKind": "code",
                         "codeAssetId": code_asset_id,
-                        "caption": code_asset["description"],
+                        # See side-image's own comment above (#82) — never
+                        # auto-filled from the code asset's own description.
+                        "caption": None,
                         "presenterSide": None,
                         "reason": moment.get("reason", ""),
                     }
@@ -985,7 +1009,7 @@ OVERRIDABLE_MOMENT_FIELDS = {
     "offsetInParentFrames", "maxDurationInParentFrames", "presenterSide",
     "fullVisualKind", "text", "assetId", "codeAssetId", "diagram",
     "comparison", "terms", "sideTextStyle", "caption", "treatment",
-    "entrance",
+    "entrance", "box", "captionPlacement",
 }
 
 # Which MomentTreatment values all present the SAME underlying content at
@@ -1051,6 +1075,12 @@ TREATMENT_GROUPS = {
 # it belongs to — switch_moment_treatment derives group membership itself,
 # from the MOMENT's own current content, not from the caller.
 SWITCHABLE_TREATMENTS = set().union(*TREATMENT_GROUPS.values())
+
+# Fields whose meaning is coupled to "treatment" — copying one without its
+# companions produces an inconsistent moment (e.g. treatment "full-visual"
+# with no fullVisualKind, which Episode.tsx correctly refuses to render at
+# all — see #78's real-world case, and preserve_overridden_fields below).
+TREATMENT_COUPLED_FIELDS = {"fullVisualKind", "sideTextStyle", "presenterSide", "entrance"}
 
 
 def _moment_treatment_group(moment):
@@ -1256,13 +1286,44 @@ def preserve_overridden_fields(old_moments, new_proposals):
                 key=lambda p: abs(p["offsetInParentFrames"] - old_moment["offsetInParentFrames"]),
             )
 
-            for field in old_moment["overriddenFields"]:
+            preserved_fields = set(old_moment["overriddenFields"])
+
+            # Only preserve a treatment override onto a new proposal whose
+            # own content is actually compatible with it (same content-type
+            # group as freshly proposed — see _moment_treatment_group) —
+            # otherwise the old treatment's own dependent fields
+            # (fullVisualKind especially) have nothing valid to pair with
+            # on this new proposal's different content, and forcing the old
+            # treatment string alone produces exactly the inconsistent-
+            # moment bug this function exists to avoid, not cause (#78's
+            # real-world case: an old full-visual/image override landed on
+            # a fresh side-text proposal, leaving fullVisualKind unset and
+            # the moment silently invisible). Falls back to the fresh
+            # proposal's own treatment instead when incompatible — a
+            # dropped presentation override is a far smaller loss than a
+            # moment that doesn't render at all.
+            if "treatment" in preserved_fields:
+                new_content_group = _moment_treatment_group(best)
+                treatment_is_compatible = (
+                    new_content_group is not None
+                    and old_moment["treatment"] in TREATMENT_GROUPS.get(new_content_group, set())
+                )
+
+                if not treatment_is_compatible:
+                    preserved_fields -= {"treatment"} | TREATMENT_COUPLED_FIELDS
+
+            for field in preserved_fields:
                 if field in old_moment:
                     best[field] = old_moment[field]
 
-            best["overriddenFields"] = sorted(
-                set(best.get("overriddenFields", [])) | set(old_moment["overriddenFields"])
-            )
+            if "treatment" in preserved_fields:
+                for field in TREATMENT_COUPLED_FIELDS:
+                    if field in old_moment:
+                        best[field] = old_moment[field]
+                    else:
+                        best.pop(field, None)
+
+            best["overriddenFields"] = sorted(set(best.get("overriddenFields", [])) | preserved_fields)
 
             claimed_new_ids.add(id(best))
             new_candidates.remove(best)
@@ -1403,6 +1464,21 @@ def merge_moment_scenes(scene_plan, proposals):
 
         if proposal.get("comparison"):
             moment_scene["comparison"] = proposal["comparison"]
+
+        # Human-set size/position override (#77) — set by dragging/resizing
+        # this moment on the preview-app's player, never proposed by the AI.
+        # Same truthiness-check pass-through as every other optional field
+        # here; absent means "use the treatment's own default geometry"
+        # (see timing.ts's resolveBoxStyle).
+        if proposal.get("box"):
+            moment_scene["box"] = proposal["box"]
+
+        # Caption placement (#82) — never AI-proposed, always a human
+        # choice. Copied independently of assetId/codeAssetId above (not
+        # coupled to them) since it should persist across a re-merge
+        # regardless of whether the underlying asset changes.
+        if proposal.get("captionPlacement"):
+            moment_scene["captionPlacement"] = proposal["captionPlacement"]
 
         insert_overlay_scene(
             merged_scenes,

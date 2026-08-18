@@ -12,7 +12,7 @@ import { colors, radius, shadow, typography } from "./tokens";
 const TEXT_ELIGIBLE_TREATMENTS = new Set(["bottom-callout", "side-text", "full-visual"]);
 
 export function isTextEligible(target: EditTarget): boolean {
-    if (target.kind === "title" || target.kind === "beat") return true;
+    if (target.kind === "title" || target.kind === "new-title" || target.kind === "beat") return true;
     return TEXT_ELIGIBLE_TREATMENTS.has(target.treatment);
 }
 
@@ -26,6 +26,11 @@ function beatIndexFromSceneId(sceneId: string): number | null {
 
 export type EditTarget =
     | { kind: "title"; titleText: string }
+    // The lead-in chapter (before the first title card) has no underlying
+    // title_scenes.json entry by design (#83) — editing it for the first
+    // time creates one at newTitleSegmentId rather than matching an
+    // existing entry by text, unlike every other title edit.
+    | { kind: "new-title"; newTitleSegmentId: string }
     | { kind: "moment"; sceneId: string; treatment: string }
     | { kind: "beat"; sceneId: string };
 
@@ -89,6 +94,14 @@ export function InlineTextEditor({ episodePath, target, anchor, onSaved, onClose
                     setLoaded(true);
                 })
                 .catch((e) => setError(String(e)));
+        } else if (target.kind === "new-title") {
+            // Nothing to fetch — this chapter has no existing entry yet, so
+            // the box just opens empty, same first-run feel as any other
+            // "add text" field.
+            setText("");
+            originalTextRef.current = "";
+            setTextOverriddenFields([]);
+            setLoaded(true);
         } else if (target.kind === "beat") {
             const index = beatIndexFromSceneId(target.sceneId);
             getBeats(episodePath)
@@ -156,6 +169,13 @@ export function InlineTextEditor({ episodePath, target, anchor, onSaved, onClose
                     i === index ? { ...t, text, overriddenFields: textOverriddenFields ?? t.overriddenFields } : t
                 );
                 await saveTitleScenes(episodePath, next);
+            } else if (target.kind === "new-title") {
+                if (!text.trim()) throw new Error("Enter a title before saving.");
+                const titles = await getTitleScenes(episodePath);
+                await saveTitleScenes(episodePath, [
+                    ...titles,
+                    { segmentId: target.newTitleSegmentId, text, overriddenFields: ["text"] },
+                ]);
             } else if (target.kind === "beat") {
                 const index = beatIndexFromSceneId(target.sceneId);
                 const data = await getBeats(episodePath);

@@ -8,6 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from index_assets import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, detect_key_color
 from prepare_footage import generate_episode_props_ts
 
 
@@ -33,6 +34,19 @@ LANGUAGE_BY_EXTENSION = {
     ".yml": "yaml",
     ".json": "json",
 }
+
+# code/ isn't only real source text — a screenshot of an IDE or a screen
+# recording of code being written both "demonstrate code" just as much as a
+# .java file, and are common enough that a creator organizes them together
+# by subject rather than by file format (see #79's design discussion). Each
+# gets a "kind" tag (see CodeAssetKind in types.ts) so the renderer knows
+# which treatment applies: "source" -> real Shiki-highlighted CodeBlock,
+# "screenshot"/"recording" -> the same framed-image/keyed-video treatment
+# graphics/ assets already get. Reuses index_assets.py's own extension
+# sets/detection rather than duplicating them, so both folders recognize
+# exactly the same file types.
+IMAGE_CODE_EXTENSIONS = IMAGE_EXTENSIONS
+VIDEO_CODE_EXTENSIONS = VIDEO_EXTENSIONS
 
 IGNORED_FILES = {
     ".DS_Store",
@@ -99,6 +113,21 @@ def description_from_filename(filename):
     return words
 
 
+CODE_FOLDER_EXTENSIONS = set(LANGUAGE_BY_EXTENSION) | IMAGE_CODE_EXTENSIONS | VIDEO_CODE_EXTENSIONS
+
+
+def code_asset_kind(file: Path) -> str:
+    suffix = file.suffix.lower()
+
+    if suffix in VIDEO_CODE_EXTENSIONS:
+        return "recording"
+
+    if suffix in IMAGE_CODE_EXTENSIONS:
+        return "screenshot"
+
+    return "source"
+
+
 def list_code_files(code_dir: Path):
     """Recursive, unlike list_asset_files's flat graphics/ scan — real
     source files are often organized in subfolders mirroring a real
@@ -113,7 +142,7 @@ def list_code_files(code_dir: Path):
         for f in code_dir.rglob("*")
         if f.is_file()
            and f.name not in IGNORED_FILES
-           and f.suffix.lower() in LANGUAGE_BY_EXTENSION
+           and f.suffix.lower() in CODE_FOLDER_EXTENSIONS
     )
 
     return files
@@ -131,8 +160,13 @@ def index_code(episode: Path):
 
         existing = load_json(output_path)
 
+        # Keyed by filename, not id — see index_assets.py's own
+        # existing_captions comment (#80) for why: an asset's id is purely
+        # positional, so adding/removing any other file in the folder
+        # shifts every later id and would silently reattach a stale
+        # manually-edited description to the wrong file otherwise.
         existing_descriptions = {
-            asset["id"]: asset["description"]
+            asset["filename"]: asset["description"]
             for asset in existing.get("codeAssets", [])
         }
 
@@ -145,21 +179,28 @@ def index_code(episode: Path):
         asset_id = f"code-{index:03d}"
 
         description = existing_descriptions.get(
-            asset_id,
+            file.name,
             description_from_filename(file.name)
         )
 
-        line_count = len(file.read_text(encoding="utf-8").splitlines())
+        kind = code_asset_kind(file)
 
         code_asset = {
             "id": asset_id,
             "filename": file.name,
             "path": str(file.relative_to(episode)),
             "renderPath": str(Path("episodes") / episode.name / "code" / file.relative_to(code_dir)),
-            "language": LANGUAGE_BY_EXTENSION[file.suffix.lower()],
             "description": description,
-            "lineCount": line_count,
+            "kind": kind,
         }
+
+        if kind == "source":
+            code_asset["language"] = LANGUAGE_BY_EXTENSION[file.suffix.lower()]
+            code_asset["lineCount"] = len(file.read_text(encoding="utf-8").splitlines())
+        elif kind == "recording":
+            key_color = detect_key_color(file)
+            if key_color:
+                code_asset["keyColor"] = key_color
 
         hint = default_display_hint(file, code_dir)
 
@@ -190,7 +231,11 @@ def main():
     print(f"Indexed {len(code_assets)} code asset(s).")
 
     for asset in code_assets:
-        print(f"  [{asset['id']}] {asset['filename']} ({asset['language']}, {asset['lineCount']} lines): {asset['description']}")
+        if asset["kind"] == "source":
+            detail = f"{asset['language']}, {asset['lineCount']} lines"
+        else:
+            detail = asset["kind"]
+        print(f"  [{asset['id']}] {asset['filename']} ({detail}): {asset['description']}")
 
     manifest_path = episode / "processing" / "manifest.json"
     assets_path = episode / "processing" / "assets.json"

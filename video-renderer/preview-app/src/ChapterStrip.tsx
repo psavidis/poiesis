@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { ScenePlan, TitleScene } from "video-renderer-src/episode/types";
+import type { EpisodeVideo, PresenterScene, ScenePlan, TitleScene } from "video-renderer-src/episode/types";
 import { colors, radius, typography } from "./tokens";
 import { getChapterBoundaryPositions, getTitleScenes, saveTitleScenes, type ChapterBoundaryPosition } from "./api";
 
@@ -9,9 +9,31 @@ import { getChapterBoundaryPositions, getTitleScenes, saveTitleScenes, type Chap
 const MOD_KEY_LABEL = navigator.platform.toLowerCase().includes("mac") ? "Cmd" : "Ctrl";
 
 interface Chapter {
-    title: string | null; // null = the lead-in before the first title card
+    title: string | null; // null = the lead-in before the first title card — NOT a real
+                           // TitleScene, so it must stay unselectable/uneditable (see `selectable` below)
+    label: string; // always a display string — `title`, or a lead-in-only fallback, never editable itself
     startFrame: number;
     endFrame: number;
+}
+
+// Chapter 0 (the lead-in before any title card) never gets a title card by
+// design (generate_title_scenes.py: "the opening segment is always the
+// presenter's performed intro, never a topic that needs its own title
+// card"), so its display label has to come from somewhere other than
+// TitleScene text. Source filenames follow a "chapterNumber[.part][
+// description]" convention (e.g. "0. Welcome.mov", "9 outro.mov") — the
+// free-text part after the numeric prefix is exactly the human-readable
+// label the creator already wrote, so this strips the same leading
+// "digits[.digits]" prefix prepare_footage.py's footage_sort_key parses on
+// the Python side, leaving whatever description survives. Falls back to
+// null (renders as the generic "Intro" placeholder) when there's no
+// description to recover, e.g. a bare "0.mov" with no free text at all.
+const FILENAME_PREFIX_RE = /^\d+(?:\.\d+)?\.?\s*/;
+
+function leadInLabelFromFilename(filename: string): string | null {
+    const withoutExtension = filename.replace(/\.[^./]+$/, "");
+    const description = withoutExtension.replace(FILENAME_PREFIX_RE, "").trim();
+    return description.length > 0 ? description : null;
 }
 
 // Title scenes mark where a new topic starts (see CLAUDE.md: "titles get
@@ -19,7 +41,7 @@ interface Chapter {
 // their own on-screen duration, not a "chapter length" — a chapter runs
 // from one title's start to the next title's start (or to the end of the
 // episode for the last one), which is what this derives.
-function chaptersFromTitles(titles: TitleScene[], totalFrames: number): Chapter[] {
+function chaptersFromTitles(titles: TitleScene[], totalFrames: number, leadInLabel: string | null): Chapter[] {
     const sorted = [...titles].sort((a, b) => a.timelineStartFrame - b.timelineStartFrame);
 
     const chapters: Chapter[] = [];
@@ -27,6 +49,7 @@ function chaptersFromTitles(titles: TitleScene[], totalFrames: number): Chapter[
     if (sorted.length === 0 || sorted[0].timelineStartFrame > 0) {
         chapters.push({
             title: null,
+            label: leadInLabel ?? "Intro",
             startFrame: 0,
             endFrame: sorted[0]?.timelineStartFrame ?? totalFrames,
         });
@@ -36,6 +59,7 @@ function chaptersFromTitles(titles: TitleScene[], totalFrames: number): Chapter[
         const next = sorted[i + 1];
         chapters.push({
             title: title.text,
+            label: title.text,
             startFrame: title.timelineStartFrame,
             endFrame: next ? next.timelineStartFrame : totalFrames,
         });
@@ -51,6 +75,7 @@ const CHAPTER_COLORS = colors.chapterPalette;
 
 interface Props {
     scenePlan: ScenePlan;
+    videos: EpisodeVideo[];
     totalFrames: number;
     currentFrame: number;
     fps: number;
@@ -61,6 +86,11 @@ interface Props {
     // as SceneBar/MomentBar's onSelect* callbacks. Optional so ChapterStrip
     // still works standalone without every caller needing to pass a no-op.
     onSelectTitle?: (titleText: string, anchor: { x: number; y: number }) => void;
+    // Opens the inline text editor for the lead-in chapter (#83) — it has
+    // no existing TitleScene to key onSelectTitle's text-match off of, so
+    // this is a distinct callback taking the segmentId a brand-new title
+    // should be created at instead.
+    onCreateLeadInTitle?: (segmentId: string, anchor: { x: number; y: number }) => void;
     // Set by EpisodeWorkspace right after a chat edit touches a title
     // scene (#54) — keyed by title text (a chapter's own identity here,
     // since chapters aren't derived with their own scene id), not sceneId.
@@ -90,11 +120,13 @@ type DragState = {
 // its own OverlayStrip.
 export function ChapterStrip({
     scenePlan,
+    videos,
     totalFrames,
     currentFrame,
     fps,
     onSeek,
     onSelectTitle,
+    onCreateLeadInTitle,
     highlightedTitleText,
     episodePath,
     onSaved,
@@ -103,10 +135,25 @@ export function ChapterStrip({
         .filter((s): s is TitleScene => s.type === "title")
         .sort((a, b) => a.timelineStartFrame - b.timelineStartFrame);
 
+    // The lead-in chapter's label comes from its own source clip's
+    // filename, not a TitleScene (see leadInLabelFromFilename above) — the
+    // earliest-starting presenter scene on the timeline is always that
+    // clip, regardless of scene id/array order.
+    const leadInVideoId = scenePlan.scenes
+        .filter((s): s is PresenterScene => s.type === "presenter")
+        .sort((a, b) => a.timelineStartFrame - b.timelineStartFrame)[0]?.videoId;
+    const leadInVideo = videos.find((v) => v.id === leadInVideoId);
+    const leadInLabel = leadInVideo ? leadInLabelFromFilename(leadInVideo.filename) : null;
+
     // The clicked-but-not-editing chapter's title text — highlighted, and
     // the target of Cmd+E/Ctrl+E. Click selects only; it never opens the
     // editor by itself (mirrors BeatBar's selectedBeatId).
     const [selectedTitle, setSelectedTitle] = useState<string | null>(null);
+    // Separate from selectedTitle since the lead-in chapter (#83) has no
+    // title text to key off of — true when it's the selected segment
+    // instead of any real title. Mutually exclusive with selectedTitle
+    // (selecting one clears the other).
+    const [leadInSelected, setLeadInSelected] = useState(false);
     const selectedAnchorRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
     const trackRef = useRef<HTMLDivElement>(null);
 
@@ -153,6 +200,7 @@ export function ChapterStrip({
         const chapter = titles.find((t) => t.text === highlightedTitleText);
         if (!chapter) return;
         setSelectedTitle(highlightedTitleText);
+        setLeadInSelected(false);
         onSeek(chapter.timelineStartFrame);
         trackRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -175,6 +223,28 @@ export function ChapterStrip({
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
     }, [selectedTitle, onSelectTitle]);
+
+    // Same Cmd+E convention as above, for the lead-in chapter (#83) —
+    // needs the earliest resolvable segment position (never the very
+    // first segment itself, which merge_title_scenes's split logic would
+    // place the title at frame 0 of, correctly turning "no title" into a
+    // real one at the start) to seed a brand-new title_scenes.json entry.
+    useEffect(() => {
+        if (!leadInSelected || !onCreateLeadInTitle) return;
+
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key.toLowerCase() !== "e" || !(e.metaKey || e.ctrlKey)) return;
+            const target = e.target as HTMLElement | null;
+            if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+            if (boundaryPositions.length === 0) return;
+
+            e.preventDefault();
+            onCreateLeadInTitle(boundaryPositions[0].segmentId, selectedAnchorRef.current);
+        };
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [leadInSelected, onCreateLeadInTitle, boundaryPositions]);
 
     // Delete/Backspace on a selected title shows the inline confirm —
     // mirrors MomentBar's own delete effect. Unlike Cmd+E (which only
@@ -317,13 +387,14 @@ export function ChapterStrip({
 
     if (totalFrames <= 0) return null;
 
-    const chapters = chaptersFromTitles(titles, totalFrames);
+    const chapters = chaptersFromTitles(titles, totalFrames, leadInLabel);
 
     const onTrackClick = (e: React.MouseEvent<HTMLDivElement>) => {
         // A click that reaches here (not a chapter segment — those
         // stopPropagation) is on empty track space, so it deselects rather
         // than leaving a stale selection highlighted.
         setSelectedTitle(null);
+        setLeadInSelected(false);
         setPendingDeleteText(null);
         const rect = e.currentTarget.getBoundingClientRect();
         const pct = clamp((e.clientX - rect.left) / rect.width, 0, 1);
@@ -365,8 +436,9 @@ export function ChapterStrip({
                     const leftPct = (startFrame / totalFrames) * 100;
                     const color = chapter.title === null ? colors.borderStrong : CHAPTER_COLORS[i % CHAPTER_COLORS.length];
 
-                    const selectable = chapter.title !== null && !!onSelectTitle;
-                    const isSelected = selectable && selectedTitle === chapter.title;
+                    const isLeadIn = chapter.title === null;
+                    const selectable = isLeadIn ? !!onCreateLeadInTitle : !!onSelectTitle;
+                    const isSelected = isLeadIn ? leadInSelected : selectedTitle === chapter.title;
                     const draggable = titleIndex !== -1;
 
                     return (
@@ -383,17 +455,23 @@ export function ChapterStrip({
                             }}
                             title={
                                 isSelected
-                                    ? `${chapter.title} — press ${MOD_KEY_LABEL}+E to edit`
+                                    ? `${chapter.label} — press ${MOD_KEY_LABEL}+E to ${isLeadIn ? "add a title card" : "edit"}`
                                     : selectable
-                                    ? `Click to select, then ${MOD_KEY_LABEL}+E to edit: ${chapter.title}`
-                                    : chapter.title ?? "Intro (before first title card)"
+                                    ? `Click to select, then ${MOD_KEY_LABEL}+E to ${isLeadIn ? "add a title card" : `edit: ${chapter.title}`}`
+                                    : chapter.label
                             }
                             onClick={
                                 selectable
                                     ? (e) => {
                                           e.stopPropagation();
                                           selectedAnchorRef.current = { x: e.clientX, y: e.clientY };
-                                          setSelectedTitle(chapter.title!);
+                                          if (isLeadIn) {
+                                              setLeadInSelected(true);
+                                              setSelectedTitle(null);
+                                          } else {
+                                              setSelectedTitle(chapter.title!);
+                                              setLeadInSelected(false);
+                                          }
                                           setPendingDeleteText(null);
                                           onSeek(chapter.startFrame);
                                       }
@@ -409,7 +487,7 @@ export function ChapterStrip({
                             )}
                             {widthPct > 4 && (
                                 <span style={styles.chapterLabel}>
-                                    {chapter.title ?? "Intro"}
+                                    {chapter.label}
                                 </span>
                             )}
                             {isDraggingThis && (
@@ -440,6 +518,8 @@ export function ChapterStrip({
             <div style={styles.hint}>
                 {selectedTitle
                     ? `Selected — press ${MOD_KEY_LABEL}+E to edit its title, Delete to remove it.`
+                    : leadInSelected
+                    ? `Selected — press ${MOD_KEY_LABEL}+E to give this lead-in a title card.`
                     : `Click anywhere to jump the player there${
                           onSelectTitle ? `, or click a chapter to select it, then ${MOD_KEY_LABEL}+E to edit` : ""
                       }. Drag a chapter's left edge to move its boundary.`}

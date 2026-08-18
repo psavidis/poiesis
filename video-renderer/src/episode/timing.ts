@@ -1,4 +1,4 @@
-import type { PresenterLayout } from "./types";
+import type { MomentBox, PresenterLayout } from "./types";
 
 // Shared transition-timing constant for moment content — imported by both
 // Episode.tsx (the presenter's own slide-aside/slide-back animation) and
@@ -55,3 +55,29 @@ export const LAYOUT_GEOMETRY: Record<
 };
 
 export const SIDE_CONTENT_WIDTH_PCT = 100 - LAYOUT_GEOMETRY.right.widthPct;
+
+// Every moment treatment's outer wrapper positions itself with an
+// absolute top/left/width/height style — previously each computed that
+// literal from its own hardcoded default (LAYOUT_GEOMETRY-derived or a
+// one-off constant like EpisodeImage's 82%). This is the one place that
+// decision now goes through: pass a MomentScene's own `box` (see #77 — set
+// by the preview-app's drag/resize overlay) when present, and it wins;
+// otherwise the treatment's default (whatever it would have hardcoded
+// before this existed) is used unchanged, so no existing episode's render
+// is affected until a human actually drags something.
+export function resolveBoxStyle(
+    defaultGeometry: { topPct: number; leftPct: number; widthPct: number; heightPct: number },
+    box: MomentBox | undefined
+): { position: "absolute"; top: string; left: string; width: string; height: string } {
+    const geometry = box
+        ? { topPct: box.yPct, leftPct: box.xPct, widthPct: box.widthPct, heightPct: box.heightPct }
+        : defaultGeometry;
+
+    return {
+        position: "absolute",
+        top: `${geometry.topPct}%`,
+        left: `${geometry.leftPct}%`,
+        width: `${geometry.widthPct}%`,
+        height: `${geometry.heightPct}%`,
+    };
+}

@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { MomentScene, PresenterScene, ScenePlan, TitleScene } from "video-renderer-src/episode/types";
 import { getMoments, insertMoment, saveMoments, type MomentInsertKind } from "./api";
-import { isTextEligible } from "./InlineTextEditor";
 import { contentTypeAndPresentationFor } from "./MomentEditorPanel";
 import { momentIndexFromSceneId } from "./momentDuration";
 import { colors, radius, shadow, typography } from "./tokens";
+import type { TimelineZoom } from "./useTimelineZoom";
 
 // Per-content-type color scheme — previously a single purple bucket for
 // every non-text moment (#35's original "where does text appear" answer),
@@ -50,14 +50,6 @@ function momentLabel(moment: MomentScene): string {
     return moment.treatment;
 }
 
-// Same geometric zoom stepping as BeatBar (#38) — kept as a literal copy
-// rather than a shared constant module, matching this codebase's existing
-// preference for small, self-contained bar components over a shared
-// timeline-bar abstraction (see BeatBar's own comments).
-const ZOOM_STEP = 1.6;
-const MAX_ZOOM = 20;
-const MIN_ZOOM = 1;
-
 // Display-only label for the edit shortcut's hint text — mirrors BeatBar's
 // own MOD_KEY_LABEL constant.
 const MOD_KEY_LABEL = navigator.platform.toLowerCase().includes("mac") ? "Cmd" : "Ctrl";
@@ -70,34 +62,26 @@ interface Props {
     episodePath: string;
     onSaved: () => void;
     // Fired only when the user presses the edit shortcut (Cmd+E / Ctrl+E)
-    // while a text-eligible moment is selected — NOT on click. Selecting
-    // (clicking) a moment highlights it and seeks the player there;
-    // editing is a deliberate second step, matching BeatBar's #39 pattern
-    // rather than MomentBar's old click-opens-immediately behavior (#41).
-    // The third (treatment) arg is passed only by Cmd+I's insert flow,
-    // which already knows the treatment it just created and can't rely on
-    // EpisodeWorkspace's scenePlan closure being fresh yet at that exact
-    // moment (see openInlineMomentEditor's own comment) — the click path
-    // omits it and keeps looking the treatment up as before.
-    onEditRequested: (sceneId: string, anchor: { x: number; y: number }, treatment?: string) => void;
-    // Non-text-eligible treatments (side-image/side-terms/side-diagram/
-    // side-code/comparison) have no single text field to inline-edit —
-    // clicking one still opens the full structured MomentEditorPanel
-    // directly, same as before #41, so this fires instead of selecting.
+    // while a moment is selected — NOT on click. Selecting (clicking) a
+    // moment highlights it and seeks the player there; editing is a
+    // deliberate second step, matching BeatBar's #39 pattern, for every
+    // treatment uniformly (previously text-eligible treatments opened a
+    // separate lightweight inline editor on click while everything else
+    // opened this same panel immediately on click — that split was itself
+    // the source of user confusion this now removes).
     onOpenStructuredEditor: (sceneId: string) => void;
     // Set by EpisodeWorkspace right after a chat edit touches a moment on
     // this bar (#54) — seeds selection and re-centers the view on it, the
     // same way clicking the segment yourself would, so the AI's change is
     // immediately visible instead of requiring the user to hunt for it.
     highlightedId?: string | null;
-    // Fired on every moment click, text-eligible or not — separate from
-    // onEditRequested (Cmd+E only) and onOpenStructuredEditor (non-text-
-    // eligible treatments only). AssetLibraryPanel needs to know which
-    // moment is focused regardless of treatment (a full-visual/side-text/
-    // bottom-callout moment never opens a structured editor, so relying on
-    // EpisodeWorkspace's selectedEditor alone left those permanently
-    // unselectable there — see #69).
+    // Fired on every moment click. AssetLibraryPanel needs to know which
+    // moment is focused regardless of treatment, separate from
+    // onOpenStructuredEditor's own Cmd+E-only firing (see #69).
     onSelect?: (sceneId: string) => void;
+    // Single zoom/pan window shared with Scenes/Images/Beats (#86) — owned
+    // by EpisodeWorkspace, not this component.
+    timelineZoom: TimelineZoom;
 }
 
 type DragMode = "move" | "resize";
@@ -130,19 +114,19 @@ export function MomentBar({
     onSeek,
     episodePath,
     onSaved,
-    onEditRequested,
     onOpenStructuredEditor,
     highlightedId,
     onSelect,
+    timelineZoom,
 }: Props) {
-    const [zoom, setZoom] = useState(1);
-    const [panStartPct, setPanStartPct] = useState(0);
+    const { zoom, windowFrames, windowStartFrame, frameToPct, playheadPct, playheadVisible, zoomToAtLeast4x } =
+        timelineZoom;
     const [dragState, setDragState] = useState<{ momentId: string; mode: DragMode } | null>(null);
     const [liveOffset, setLiveOffset] = useState(0);
     const [liveDuration, setLiveDuration] = useState(0);
     const [saveError, setSaveError] = useState<string | null>(null);
     // The clicked-but-not-editing moment — highlighted, and the target of
-    // Cmd+E/Ctrl+E for text-eligible treatments.
+    // Cmd+E/Ctrl+E.
     const [selectedMomentId, setSelectedMomentId] = useState<string | null>(null);
     // Cmd+I's type picker — open only while the user is choosing what kind
     // of moment to insert at the playhead. anchor positions the popup near
@@ -199,27 +183,6 @@ export function MomentBar({
         })
         .filter((m): m is { moment: MomentScene; parent: PresenterScene | TitleScene; startFrame: number } => m !== null)
         .sort((a, b) => a.startFrame - b.startFrame);
-
-    const windowFrames = totalFrames / zoom;
-    const maxPanStartPct = 1 - windowFrames / totalFrames;
-    const clampedPanStartPct = clamp(panStartPct, 0, Math.max(0, maxPanStartPct));
-    const windowStartFrame = clampedPanStartPct * totalFrames;
-
-    const frameToPct = (frame: number) => ((frame - windowStartFrame) / windowFrames) * 100;
-
-    const applyZoom = (nextZoom: number) => {
-        const clampedZoom = clamp(nextZoom, MIN_ZOOM, MAX_ZOOM);
-        const nextWindowFrames = totalFrames / clampedZoom;
-        setZoom(clampedZoom);
-        setPanStartPct(currentFrame / totalFrames - nextWindowFrames / totalFrames / 2);
-    };
-
-    const zoomIn = () => applyZoom(zoom * ZOOM_STEP);
-    const zoomOut = () => applyZoom(zoom / ZOOM_STEP);
-    const resetZoom = () => {
-        setZoom(1);
-        setPanStartPct(0);
-    };
 
     const onTrackClick = (e: React.MouseEvent<HTMLDivElement>) => {
         if (dragState) return;
@@ -316,23 +279,30 @@ export function MomentBar({
         if (!entry) return;
         setSelectedMomentId(highlightedId);
         onSeek(entry.startFrame);
-        // Center on entry.startFrame directly, not applyZoom's usual
-        // currentFrame — onSeek's effect on currentFrame hasn't landed yet
-        // this tick, so reading it here would center on the stale position.
-        const nextZoom = clamp(zoom > 1 ? zoom : 4, MIN_ZOOM, MAX_ZOOM);
-        const nextWindowFrames = totalFrames / nextZoom;
-        setZoom(nextZoom);
-        setPanStartPct(entry.startFrame / totalFrames - nextWindowFrames / totalFrames / 2);
+        // Center on entry.startFrame directly, not the player's current
+        // frame — onSeek's effect on currentFrame hasn't landed yet this
+        // tick, so reading it here would center on the stale position.
+        zoomToAtLeast4x(entry.startFrame);
         // The bar itself may be off-screen (long page, many bars) even once
         // the segment inside it is in view — bring the whole bar on screen.
         trackRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [highlightedId]);
 
-    // Cmd+E (Mac) / Ctrl+E (elsewhere) opens the inline text editor for
-    // whichever text-eligible moment is currently selected — never on the
-    // click that selects it (see BeatBar's #39 for the same rule). Global,
-    // not scoped to the track element, matching BeatBar.
+    // Cmd+E (Mac) / Ctrl+E (elsewhere) opens the structured editor panel
+    // for whichever moment is currently selected — never on the click that
+    // selects it (see BeatBar's #39 for the same rule), and now uniform
+    // across every treatment: previously text-eligible moments (bottom-
+    // callout/side-text/full-visual) opened a separate small inline-text
+    // popover here while every other treatment already opened the full
+    // panel directly ON CLICK — two different click behaviors depending on
+    // treatment, which is exactly the inconsistency a user with no reason
+    // to know what "text-eligible" means would trip over. One rule now:
+    // click always just selects, Cmd+E always opens the one panel, for
+    // every moment — matching every other bar (beats/images/chapters/
+    // scenes) exactly. The panel already renders a text field for these
+    // treatments (MomentEditorPanel's own text <input>), so no capability
+    // is lost, only the redundant lighter-weight editor.
     useEffect(() => {
         if (!selectedMomentId) return;
 
@@ -341,19 +311,14 @@ export function MomentBar({
             const target = e.target as HTMLElement | null;
             if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
 
-            const entry = resolved.find((r) => r.moment.id === selectedMomentId);
-            if (!entry || !isTextEligible({ kind: "moment", sceneId: entry.moment.id, treatment: entry.moment.treatment })) {
-                return;
-            }
-
             e.preventDefault();
-            onEditRequested(selectedMomentId, selectedAnchorRef.current);
+            onOpenStructuredEditor(selectedMomentId);
         };
 
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [selectedMomentId, onEditRequested]);
+    }, [selectedMomentId, onOpenStructuredEditor]);
 
     // Cmd+I (Mac) / Ctrl+I (elsewhere) opens the insert type picker at the
     // playhead — global like Cmd+E, but doesn't require a moment to be
@@ -382,7 +347,7 @@ export function MomentBar({
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [presenterAtPlayhead?.id, currentFrame, zoom, panStartPct]);
+    }, [presenterAtPlayhead?.id, currentFrame, zoom, windowStartFrame]);
 
     // Delete/Backspace on a selected moment shows the inline confirm
     // (pendingDeleteId) rather than deleting immediately — a destructive,
@@ -422,17 +387,10 @@ export function MomentBar({
 
     // Appends a new content-empty moment at the playhead (see
     // resolve_manual_moment_creation for what "empty" means per kind), then
-    // immediately opens its editor — a text moment gets the inline text
-    // editor (matches clicking a text-eligible moment), everything else
-    // opens the structured panel (matches clicking a non-text-eligible one)
-    // since there's no single field to inline-edit for those.
+    // immediately opens the structured panel to fill it in — same editor
+    // for every kind, matching the click/Cmd+E rule everywhere else.
     const doInsert = async (kind: MomentInsertKind) => {
         if (!presenterAtPlayhead) return;
-
-        // The picker's own anchor is exactly where the inline text editor
-        // should open too (both are "a floating box near where the user
-        // was just looking") — captured before it's cleared below.
-        const anchor = insertPickerAnchor ?? selectedAnchorRef.current;
 
         setInserting(true);
         setSaveError(null);
@@ -446,17 +404,8 @@ export function MomentBar({
 
             if (kind === "text") {
                 setSelectedMomentId(result.sceneId);
-                // "bottom-callout" is exactly what MANUAL_CREATION_TREATMENTS
-                // maps "text" to server-side (see resolve_manual_moment_
-                // creation) — passed explicitly so onEditRequested doesn't
-                // need to look the treatment up from a scenePlan that may
-                // not have this brand-new moment in it yet (see
-                // openInlineMomentEditor's own comment on why that lookup
-                // can't be trusted right after onSaved()).
-                onEditRequested(result.sceneId, anchor, "bottom-callout");
-            } else {
-                onOpenStructuredEditor(result.sceneId);
             }
+            onOpenStructuredEditor(result.sceneId);
         } catch (e) {
             setSaveError(String(e));
         } finally {
@@ -521,19 +470,6 @@ export function MomentBar({
         }
     };
 
-    const playheadPct = clamp(frameToPct(currentFrame), 0, 100);
-    const playheadVisible = currentFrame >= windowStartFrame && currentFrame <= windowStartFrame + windowFrames;
-
-    // Whether the CURRENTLY SELECTED moment specifically is text-eligible —
-    // selectedMomentId is now set on every click regardless (so Delete
-    // works for every treatment), but Cmd+E only actually does anything
-    // for text-eligible ones, so the hint below must reflect the selected
-    // moment's own treatment, not just "something is selected."
-    const selectedEntry = selectedMomentId ? resolved.find((r) => r.moment.id === selectedMomentId) : undefined;
-    const selectedIsTextEligible =
-        !!selectedEntry &&
-        isTextEligible({ kind: "moment", sceneId: selectedEntry.moment.id, treatment: selectedEntry.moment.treatment });
-
     // Every hook above has now run unconditionally on every render — safe
     // to bail on rendering anything from here on.
     if (totalFrames <= 0 || resolved.length === 0) return null;
@@ -556,17 +492,6 @@ export function MomentBar({
                         <span style={{ ...styles.legendDot, background: CONTENT_TYPE_COLOR.diagram }} /> diagram
                     </span>
                 </span>
-                <div style={styles.zoomControls}>
-                    <button className="secondary small" onClick={zoomIn} disabled={zoom >= MAX_ZOOM}>
-                        Zoom in
-                    </button>
-                    <button className="secondary small" onClick={zoomOut} disabled={zoom <= MIN_ZOOM}>
-                        Zoom out
-                    </button>
-                    <button className="secondary small" onClick={resetZoom} disabled={zoom === 1}>
-                        Reset
-                    </button>
-                </div>
             </div>
 
             <div ref={trackRef} style={styles.track} onMouseDown={onTrackClick}>
@@ -584,7 +509,6 @@ export function MomentBar({
                     const widthPct = Math.max(rawWidthPct, 0.6);
                     const label = momentLabel(moment);
                     const color = momentColor(moment);
-                    const textEligible = isTextEligible({ kind: "moment", sceneId: moment.id, treatment: moment.treatment });
                     const isSelected = selectedMomentId === moment.id;
 
                     return (
@@ -595,10 +519,10 @@ export function MomentBar({
                                 left: `${leftPct}%`,
                                 width: `${widthPct}%`,
                                 background: color,
-                                ...(isSelected ? styles.segmentSelected : {}),
+                                ...(isSelected ? { ...styles.segmentSelected, ...styles.segmentSelectedCursor } : {}),
                             }}
                             title={
-                                isSelected && textEligible
+                                isSelected
                                     ? `${moment.id} — ${moment.treatment}: ${label} — press ${MOD_KEY_LABEL}+E to edit`
                                     : `${moment.id} — ${moment.treatment}: ${label}`
                             }
@@ -611,40 +535,40 @@ export function MomentBar({
                                 // (stopPropagation above), so the insert
                                 // picker needs its own dismissal here too.
                                 setInsertPickerAnchor(null);
-                                // selectedMomentId is set on EVERY click,
-                                // text-eligible or not — it's what makes
-                                // Delete/Backspace work (see the delete
-                                // effect above), and a non-text-eligible
-                                // moment is just as deletable as a text
-                                // one. The Cmd+E effect already re-checks
-                                // isTextEligible itself before opening the
-                                // inline editor, so this doesn't change
-                                // when Cmd+E fires — only when Delete does.
+                                // Click always just selects — never opens an
+                                // editor by itself, for every treatment, same
+                                // rule BeatBar/ImageBar/ChapterStrip/SceneBar
+                                // already use. Cmd+E opens the structured
+                                // panel afterward. This used to fork (a
+                                // text-eligible moment stayed select-only, a
+                                // non-text one opened the panel immediately
+                                // on click) — that inconsistency was exactly
+                                // what confused a user with no reason to know
+                                // "text-eligible" is even a concept.
                                 selectedAnchorRef.current = { x: e.clientX, y: e.clientY };
                                 setSelectedMomentId(moment.id);
                                 onSeek(startFrame);
-                                if (!textEligible) {
-                                    // No single text field to inline-edit — keep
-                                    // opening the full structured panel directly,
-                                    // same as before #41.
-                                    onOpenStructuredEditor(moment.id);
-                                }
                             }}
                             onMouseDown={(e) => {
-                                // Body-drag = move. Only text-ineligible clicks
-                                // fire onClick's structured-editor path above;
-                                // a mousedown-then-release-without-moving on a
-                                // text-eligible segment still selects via onClick.
-                                if (e.button !== 0) return;
+                                // Body-drag = move — only once this moment is
+                                // already selected (see the segment cursor's
+                                // own comment above for why: a moment that's
+                                // merely being hovered/hasn't been clicked yet
+                                // should only ever offer "select", never
+                                // "drag", so the two gestures can't be
+                                // confused for each other).
+                                if (e.button !== 0 || !isSelected) return;
                                 startDrag(e, moment, "move");
                             }}
                         >
                             {widthPct > 4 && <span style={styles.segmentLabel}>{label}</span>}
-                            <div
-                                style={styles.resizeHandle}
-                                onMouseDown={(e) => startDrag(e, moment, "resize")}
-                                title="Drag to resize"
-                            />
+                            {isSelected && (
+                                <div
+                                    style={styles.resizeHandle}
+                                    onMouseDown={(e) => startDrag(e, moment, "resize")}
+                                    title="Drag to resize"
+                                />
+                            )}
                             {isDragging && (
                                 <div style={styles.readout}>
                                     {dragState.mode === "move"
@@ -684,17 +608,13 @@ export function MomentBar({
 
             <div style={styles.hint}>
                 {selectedMomentId
-                    ? selectedIsTextEligible
-                        ? `Selected — press ${MOD_KEY_LABEL}+E to edit its text, Delete to remove it.`
-                        : "Selected — press Delete to remove it, or click it again to open its editor."
+                    ? `Selected — press ${MOD_KEY_LABEL}+E to edit it, Delete to remove it${
+                          zoom > 1 ? ", or drag its body to move it or its right edge to resize" : ""
+                      }.`
                     : presenterAtPlayhead
-                    ? `Press ${MOD_KEY_LABEL}+I to insert a moment here.${
-                          zoom > 1
-                              ? " Click a moment to select it, drag its body to move it or its right edge to resize."
-                              : ""
-                      }`
+                    ? `Press ${MOD_KEY_LABEL}+I to insert a moment here.${zoom > 1 ? " Click a moment to select it." : ""}`
                     : zoom > 1
-                    ? "Click a moment to select it, drag its body to move it or its right edge to resize, or click empty track to seek."
+                    ? "Click a moment to select it, or click empty track to seek."
                     : "Zoom in for precise dragging — at full-episode width a short moment is too thin to grab reliably."}
             </div>
         </div>
@@ -810,10 +730,6 @@ const styles: Record<string, React.CSSProperties> = {
         borderRadius: "50%",
         flexShrink: 0,
     },
-    zoomControls: {
-        display: "flex",
-        gap: 6,
-    },
     track: {
         position: "relative",
         height: 28,
@@ -832,8 +748,16 @@ const styles: Record<string, React.CSSProperties> = {
         display: "flex",
         alignItems: "center",
         overflow: "visible",
-        cursor: "grab",
+        // "pointer", not "grab" — while free-navigating (this moment not
+        // yet selected), the only available action is click-to-select, so
+        // the cursor shouldn't imply a drag is available yet. Selecting
+        // first, then dragging, avoids the confusing "am I about to select
+        // or resize?" ambiguity a permanently-grabbable segment invites.
+        cursor: "pointer",
         boxShadow: "0 0 0 0px transparent",
+    },
+    segmentSelectedCursor: {
+        cursor: "grab",
     },
     segmentSelected: {
         boxShadow: "0 0 0 2px #ffffff, 0 0 8px rgba(255,255,255,0.5)",

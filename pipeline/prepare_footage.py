@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -35,6 +36,33 @@ def load_config(project_root: Path):
             encoding="utf-8"
     ) as f:
         return json.load(f)
+
+
+# Matches a leading "chapter[.part]" numeric prefix, e.g. "6", "6.1",
+# "3.The Symptom...". Free-text description after the prefix (if any) is
+# ignored for ordering purposes.
+CHAPTER_PREFIX_RE = re.compile(r"^(\d+)(?:\.(\d+))?")
+
+
+def footage_sort_key(filename: str):
+    """Chapter-numeric-aware sort key. A bare "N" (no ".part") is chapter
+    N's unnumbered part and must sort before "N.1", "N.2", etc. — plain
+    alphabetical sort puts it after them instead, because "." sorts before
+    letters/digits, which silently reorders footage recorded across
+    multiple part files (see #75). Filenames without a leading numeric
+    prefix (e.g. reserved-keyword names) fall back to alphabetical order,
+    unchanged from today's behavior, and always sort after numbered ones.
+    """
+
+    match = CHAPTER_PREFIX_RE.match(filename)
+
+    if not match:
+        return (1, 0, 0, filename)
+
+    chapter = int(match.group(1))
+    part = int(match.group(2)) if match.group(2) else 0
+
+    return (0, chapter, part, filename)
 
 
 def validate_original_footage(folder: Path):
@@ -74,7 +102,7 @@ def validate_original_footage(folder: Path):
             if f.name not in IGNORED_FILES
                and f.suffix.lower() in VIDEO_EXTENSIONS
         ],
-        key=lambda x: x.name
+        key=lambda x: footage_sort_key(x.name)
     )
 
 
@@ -394,6 +422,8 @@ def generate_episode_props_ts(
                 f'      filename: {json.dumps(asset["filename"])},',
                 f'      path: {json.dumps(asset["renderPath"])},',
                 f'      caption: {json.dumps(asset["caption"])},',
+                f'      mediaType: {json.dumps(asset.get("mediaType", "image"))},',
+                *([f'      keyColor: {json.dumps(asset["keyColor"])},'] if asset.get("keyColor") else []),
                 "    },",
             ]
         )
@@ -412,9 +442,11 @@ def generate_episode_props_ts(
                     f'      id: {json.dumps(code_asset["id"])},',
                     f'      filename: {json.dumps(code_asset["filename"])},',
                     f'      path: {json.dumps(code_asset["renderPath"])},',
-                    f'      language: {json.dumps(code_asset["language"])},',
                     f'      description: {json.dumps(code_asset["description"])},',
-                    f'      lineCount: {code_asset["lineCount"]},',
+                    f'      kind: {json.dumps(code_asset.get("kind", "source"))},',
+                    *([f'      language: {json.dumps(code_asset["language"])},'] if "language" in code_asset else []),
+                    *([f'      lineCount: {code_asset["lineCount"]},'] if "lineCount" in code_asset else []),
+                    *([f'      keyColor: {json.dumps(code_asset["keyColor"])},'] if code_asset.get("keyColor") else []),
                     "    },",
                 ]
             )

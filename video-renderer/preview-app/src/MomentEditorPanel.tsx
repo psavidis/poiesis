@@ -202,6 +202,16 @@ export function MomentEditorPanel({ episodePath, sceneId, scenePlan, currentFram
     // [null, null] for it and no selector is shown.
     const [contentType] = contentTypeAndPresentationFor(moment);
 
+    // Which treatments can have a caption at all (#82) — any moment that
+    // shows an asset/video (image or code, side or full/dominant
+    // presentation). Excludes "diagram" despite contentType resolving
+    // non-null for it: a diagram's content is inline node/edge data, not
+    // an asset, with no existing caption concept on that side of the
+    // render. Excludes bottom-callout/side-text/side-terms/comparison
+    // entirely — those show TEXT as their primary content, a caption
+    // underneath text doesn't make sense the way it does for an image.
+    const canHaveCaption = contentType === "image" || contentType === "code";
+
     const switchTreatment = async (newTreatment: string) => {
         if (newTreatment === moment.treatment) return;
         setSwitchingTreatment(true);
@@ -303,13 +313,50 @@ export function MomentEditorPanel({ episodePath, sceneId, scenePlan, currentFram
                 </div>
             )}
 
+            {canHaveCaption && (
+                // Caption is opt-in on-screen text the user writes for
+                // THIS moment (#82) — never auto-filled from the asset's
+                // own description. Empty means no caption shown at all,
+                // regardless of placement. Placement only matters once
+                // there's actual text to place.
+                <div style={styles.fieldRow}>
+                    <label style={styles.presentationLabel}>Caption</label>
+                    <input
+                        type="text"
+                        value={moment.caption || ""}
+                        placeholder="No caption"
+                        onChange={(e) => update({ caption: e.target.value || null })}
+                        style={{ ...styles.input, flex: 1 }}
+                    />
+                    {resetButton("caption")}
+                </div>
+            )}
+
+            {canHaveCaption && moment.caption && (
+                <div style={styles.fieldRow}>
+                    <label style={styles.presentationLabel}>Caption placement</label>
+                    <select
+                        value={moment.captionPlacement || "overlay"}
+                        onChange={(e) => update({ captionPlacement: e.target.value })}
+                        style={{ ...styles.input, flex: 1 }}
+                    >
+                        <option value="overlay">Overlay (on top of the image)</option>
+                        <option value="below">Below (image shrinks to make room)</option>
+                        <option value="off">Off (hidden, text kept)</option>
+                    </select>
+                    {resetButton("captionPlacement")}
+                </div>
+            )}
+
             {moment.treatment === "side-image" && (
+                // Never auto-fills caption from the asset's own stored
+                // description on swap (#82) — the dropdown's own option
+                // labels below still show each asset's description so you
+                // can tell them apart, but that text stays asset metadata,
+                // never copied onto the moment's own caption field.
                 <select
                     value={moment.assetId ?? ""}
-                    onChange={(e) => {
-                        const asset = assetOptions.find((a) => a.id === e.target.value);
-                        update({ assetId: e.target.value, caption: asset ? asset.caption : moment.caption });
-                    }}
+                    onChange={(e) => update({ assetId: e.target.value })}
                     style={styles.input}
                 >
                     {assetOptions.map((a) => (

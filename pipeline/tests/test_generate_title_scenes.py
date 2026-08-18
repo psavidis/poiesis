@@ -304,6 +304,49 @@ def test_merge_title_scenes_inserts_before_clip_start():
     assert scenes[2]["timelineStartFrame"] == 300 + TITLE_DURATION_FRAMES
 
 
+def test_merge_title_scenes_uses_per_title_duration_override_when_present():
+    # #83 — a human-set duration override on ONE title shifts every LATER
+    # scene's timelineStartFrame by the difference, same reflow the global
+    # default already produces (see the previous test's assertion at the
+    # global TITLE_DURATION_FRAMES value).
+    transcript = {
+        "segments": [
+            {"source": "a.mp4", "start": 0.0, "end": 2.0, "text": "first clip"},
+            {"source": "b.mp4", "start": 0.0, "end": 2.0, "text": "second clip"},
+        ]
+    }
+
+    custom_duration = TITLE_DURATION_FRAMES + 45
+
+    titles = [{"segmentId": "s1", "text": "Second Topic", "durationFrames": custom_duration}]
+
+    result = merge_title_scenes(_scene_plan_two_clips(), titles, transcript, _manifest_two_videos())
+    scenes = result["scenes"]
+
+    title_scene = scenes[1]
+    assert title_scene["durationInFrames"] == custom_duration
+    assert scenes[2]["timelineStartFrame"] == 300 + custom_duration
+
+
+def test_merge_title_scenes_falls_back_to_global_duration_when_override_absent():
+    # Every title before this field existed (or one that never had a
+    # per-title override set) must keep using the shared config default —
+    # no behavior change for existing episodes.
+    transcript = {
+        "segments": [
+            {"source": "a.mp4", "start": 0.0, "end": 2.0, "text": "first clip"},
+            {"source": "b.mp4", "start": 0.0, "end": 2.0, "text": "second clip"},
+        ]
+    }
+
+    titles = [{"segmentId": "s1", "text": "Second Topic"}]
+
+    result = merge_title_scenes(_scene_plan_two_clips(), titles, transcript, _manifest_two_videos())
+    scenes = result["scenes"]
+
+    assert scenes[1]["durationInFrames"] == TITLE_DURATION_FRAMES
+
+
 def test_merge_title_scenes_splits_presenter_scene_mid_clip():
     # the real bug this fixes: a title whose segment starts partway
     # through a clip (not at the clip's own start) must split the

@@ -13,7 +13,8 @@ import { createHighlighter } from "shiki";
 
 import { brand } from "./brand";
 import { sideContentStyle } from "./MomentTreatments";
-import { TRANSITION_FRAMES } from "./timing";
+import { TRANSITION_FRAMES, resolveBoxStyle } from "./timing";
+import type { MomentBox } from "./types";
 
 const THEME = "github-dark";
 
@@ -68,6 +69,7 @@ export const CodeBlock = ({
                                language,
                                presenterOnLeft,
                                size = "side",
+                               box,
                            }: {
     path: string;
     language: string;
@@ -75,6 +77,7 @@ export const CodeBlock = ({
     // See CodeBlockSize above. "side" (default) keeps today's side-panel
     // behavior unchanged.
     size?: CodeBlockSize;
+    box?: MomentBox;
 }) => {
     const frame = useCurrentFrame();
     const { durationInFrames } = useVideoConfig();
@@ -221,7 +224,9 @@ export const CodeBlock = ({
     if (size === "full") {
         return (
             <AbsoluteFill style={{ pointerEvents: "none", alignItems: "center", justifyContent: "center" }}>
-                <div style={{ width: "76%" }}>{content}</div>
+                <div style={box ? resolveBoxStyle({ topPct: 12, leftPct: 12, widthPct: 76, heightPct: 76 }, box) : { width: "76%" }}>
+                    {content}
+                </div>
             </AbsoluteFill>
         );
     }
@@ -231,17 +236,21 @@ export const CodeBlock = ({
         // corner clear for the presenter's PiP box (LAYOUT_GEOMETRY.corner
         // in timing.ts: leftPct 70/topPct 62), so the two never overlap.
         // Sized to comfortably fill the remaining space without touching
-        // that corner.
+        // that corner. Same default geometry as MomentTreatments.tsx's
+        // DominantMedia, which shows a code-folder screenshot/recording at
+        // this exact position when the code asset isn't real source text.
         return (
             <AbsoluteFill style={{ pointerEvents: "none" }}>
-                <div style={{ position: "absolute", top: "8%", left: "6%", width: "62%" }}>{content}</div>
+                <div style={box ? resolveBoxStyle({ topPct: 8, leftPct: 6, widthPct: 62, heightPct: 100 }, box) : { position: "absolute", top: "8%", left: "6%", width: "62%" }}>
+                    {content}
+                </div>
             </AbsoluteFill>
         );
     }
 
     return (
         <AbsoluteFill style={{ pointerEvents: "none" }}>
-            <div style={sideContentStyle(presenterOnLeft)}>{content}</div>
+            <div style={sideContentStyle(presenterOnLeft, box)}>{content}</div>
         </AbsoluteFill>
     );
 };

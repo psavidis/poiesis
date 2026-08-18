@@ -856,7 +856,10 @@ def test_propose_moments_accepts_valid_side_image():
     assert len(proposals) == 1
     assert proposals[0]["treatment"] == "side-image"
     assert proposals[0]["assetId"] == "img-001"
-    assert proposals[0]["caption"] == "a relevant diagram"
+    # Never auto-filled from the asset's own stored caption (#82) — a
+    # moment's on-screen caption is opt-in text a human writes, not the
+    # asset's organizational description.
+    assert proposals[0]["caption"] is None
     assert proposals[0]["presenterSide"] == "right"
 
 
@@ -941,7 +944,8 @@ def test_propose_moments_accepts_valid_side_code():
     assert len(proposals) == 1
     assert proposals[0]["treatment"] == "side-code"
     assert proposals[0]["codeAssetId"] == "code-001"
-    assert proposals[0]["caption"] == "a constructor injection example"
+    # Never auto-filled from the code asset's own description (#82).
+    assert proposals[0]["caption"] is None
     assert proposals[0]["presenterSide"] == "left"
 
 
@@ -1027,7 +1031,8 @@ def test_propose_moments_accepts_valid_content_dominant_code():
     assert len(proposals) == 1
     assert proposals[0]["treatment"] == "content-dominant-code"
     assert proposals[0]["codeAssetId"] == "code-001"
-    assert proposals[0]["caption"] == "a constructor injection example"
+    # Never auto-filled from the code asset's own description (#82).
+    assert proposals[0]["caption"] is None
     assert proposals[0]["presenterSide"] is None
 
 
@@ -1542,7 +1547,8 @@ def test_propose_moments_accepts_valid_full_visual_image():
     assert proposals[0]["treatment"] == "full-visual"
     assert proposals[0]["fullVisualKind"] == "image"
     assert proposals[0]["assetId"] == "img-001"
-    assert proposals[0]["caption"] == "a relevant diagram"
+    # Never auto-filled from the asset's own stored caption (#82).
+    assert proposals[0]["caption"] is None
     assert proposals[0]["presenterSide"] is None
 
 
@@ -1602,7 +1608,8 @@ def test_propose_moments_accepts_valid_full_visual_code():
     assert proposals[0]["treatment"] == "full-visual"
     assert proposals[0]["fullVisualKind"] == "code"
     assert proposals[0]["codeAssetId"] == "code-001"
-    assert proposals[0]["caption"] == "a constructor injection example"
+    # Never auto-filled from the code asset's own description (#82).
+    assert proposals[0]["caption"] is None
     assert proposals[0]["presenterSide"] is None
 
 
@@ -1880,6 +1887,18 @@ def test_compute_overridden_fields_ignores_non_editable_fields():
     assert compute_overridden_fields(old, new) == []
 
 
+def test_compute_overridden_fields_detects_a_box_change():
+    # box (#77) — dragging/resizing a moment on the preview-app's player
+    # must be detected as a human override, same as any other field edit.
+    old = {"sceneId": "scene-001", "treatment": "side-image", "box": None}
+    new = {
+        "sceneId": "scene-001", "treatment": "side-image",
+        "box": {"xPct": 10, "yPct": 20, "widthPct": 50, "heightPct": 40},
+    }
+
+    assert compute_overridden_fields(old, new) == ["box"]
+
+
 def test_compute_overridden_fields_accumulates_across_saves():
     # A field overridden in a PRIOR save stays overridden even when THIS
     # save doesn't touch it again — as long as the new payload round-trips
@@ -1999,6 +2018,75 @@ def test_preserve_overridden_fields_with_no_prior_overrides_returns_proposals_un
     result = preserve_overridden_fields([], fresh_proposals)
 
     assert result is fresh_proposals
+
+
+def test_preserve_overridden_fields_drops_incompatible_treatment_override_instead_of_producing_invalid_moment():
+    # Regression test for #78: a prior human override moved this moment to
+    # full-visual/image, but the fresh AI proposal at this position is a
+    # DIFFERENT content type (side-text) — forcing "full-visual" onto it
+    # without a matching fullVisualKind produced a moment Episode.tsx
+    # silently refuses to render at all (treatment "full-visual" with
+    # fullVisualKind unset). The override must be dropped, not forced.
+    old_moments = [
+        {
+            "sceneId": "scene-004", "treatment": "full-visual", "fullVisualKind": "image",
+            "assetId": "img-002", "caption": "old caption", "sideTextStyle": None,
+            "offsetInParentFrames": 486, "maxDurationInParentFrames": 300,
+            "overriddenFields": ["assetId", "caption", "maxDurationInParentFrames", "offsetInParentFrames", "treatment"],
+        }
+    ]
+    fresh_proposals = [
+        {
+            "sceneId": "scene-004", "treatment": "side-text", "sideTextStyle": "quote",
+            "presenterSide": "left", "text": "a god object in the end that nobody knows how it works",
+            "offsetInParentFrames": 480, "maxDurationInParentFrames": 150,
+        }
+    ]
+
+    result = preserve_overridden_fields(old_moments, fresh_proposals)
+
+    assert len(result) == 1
+    moment = result[0]
+    # The incompatible treatment override is dropped — the fresh proposal's
+    # own treatment/content wins, fully self-consistent.
+    assert moment["treatment"] == "side-text"
+    assert moment["sideTextStyle"] == "quote"
+    assert "fullVisualKind" not in moment
+    assert "treatment" not in moment["overriddenFields"]
+    # Fields unrelated to the treatment mismatch still preserve normally.
+    assert moment["caption"] == "old caption"
+    assert moment["offsetInParentFrames"] == 486
+
+
+def test_preserve_overridden_fields_copies_compatible_treatment_switch_with_its_coupled_fields():
+    # A treatment override IS preserved when the fresh proposal's content
+    # is actually compatible (same content-type group) — e.g. an old
+    # human choice of full-visual/image over a side-image proposal for the
+    # same image content. fullVisualKind must travel WITH treatment here.
+    old_moments = [
+        {
+            "sceneId": "scene-004", "treatment": "full-visual", "fullVisualKind": "image",
+            "presenterSide": None, "assetId": "img-002", "caption": "old caption",
+            "offsetInParentFrames": 486, "maxDurationInParentFrames": 300,
+            "overriddenFields": ["treatment"],
+        }
+    ]
+    fresh_proposals = [
+        {
+            "sceneId": "scene-004", "treatment": "side-image", "presenterSide": "right",
+            "assetId": "img-002", "caption": "fresh caption",
+            "offsetInParentFrames": 480, "maxDurationInParentFrames": 150,
+        }
+    ]
+
+    result = preserve_overridden_fields(old_moments, fresh_proposals)
+
+    moment = result[0]
+    assert moment["treatment"] == "full-visual"
+    assert moment["fullVisualKind"] == "image"
+    assert "treatment" in moment["overriddenFields"]
+    # Not itself overridden, so the fresh proposal's own value wins.
+    assert moment["caption"] == "fresh caption"
 
 
 def test_dedupe_overlapping_windows_drops_moment_overlapping_earlier_one():
@@ -2504,6 +2592,154 @@ def test_merge_moment_scenes_omits_entrance_when_absent():
     moment_scene = next(s for s in result["scenes"] if s["type"] == "moment")
 
     assert "entrance" not in moment_scene
+
+
+def test_merge_moment_scenes_stores_box_when_present():
+    # box (#77) — a human-set size/position override from the preview-app's
+    # drag/resize overlay, same truthiness-copy pattern every other
+    # optional field here uses.
+    scene_plan = {
+        "fps": 30,
+        "scenes": [
+            {
+                "id": "scene-001",
+                "type": "presenter",
+                "videoId": "001",
+                "timelineStartFrame": 0,
+                "durationInFrames": 900,
+            },
+        ],
+    }
+
+    proposals = [
+        {
+            "windowId": "w0",
+            "sceneId": "scene-001",
+            "videoId": "001",
+            "offsetInParentFrames": 100,
+            "maxDurationInParentFrames": 90,
+            "treatment": "side-image",
+            "assetId": "img-001",
+            "box": {"xPct": 10, "yPct": 20, "widthPct": 50, "heightPct": 40},
+            "reason": "human resized this moment",
+        }
+    ]
+
+    result = merge_moment_scenes(scene_plan, proposals)
+    moment_scene = next(s for s in result["scenes"] if s["type"] == "moment")
+
+    assert moment_scene["box"] == {"xPct": 10, "yPct": 20, "widthPct": 50, "heightPct": 40}
+
+
+def test_merge_moment_scenes_omits_box_when_absent():
+    # Every moment before this field existed, or one never dragged/resized
+    # by a human, must not get a stray box key — the renderer's own
+    # treatment-default geometry applies (resolveBoxStyle), not a value
+    # written here.
+    scene_plan = {
+        "fps": 30,
+        "scenes": [
+            {
+                "id": "scene-001",
+                "type": "presenter",
+                "videoId": "001",
+                "timelineStartFrame": 0,
+                "durationInFrames": 900,
+            },
+        ],
+    }
+
+    proposals = [
+        {
+            "windowId": "w0",
+            "sceneId": "scene-001",
+            "videoId": "001",
+            "offsetInParentFrames": 100,
+            "maxDurationInParentFrames": 90,
+            "treatment": "side-image",
+            "assetId": "img-001",
+            "reason": "no override set",
+        }
+    ]
+
+    result = merge_moment_scenes(scene_plan, proposals)
+    moment_scene = next(s for s in result["scenes"] if s["type"] == "moment")
+
+    assert "box" not in moment_scene
+
+
+def test_merge_moment_scenes_stores_caption_placement_when_present():
+    # captionPlacement (#82) — a human choice of overlay/below/off for
+    # where the caption renders relative to the asset, never AI-proposed.
+    scene_plan = {
+        "fps": 30,
+        "scenes": [
+            {
+                "id": "scene-001",
+                "type": "presenter",
+                "videoId": "001",
+                "timelineStartFrame": 0,
+                "durationInFrames": 900,
+            },
+        ],
+    }
+
+    proposals = [
+        {
+            "windowId": "w0",
+            "sceneId": "scene-001",
+            "videoId": "001",
+            "offsetInParentFrames": 100,
+            "maxDurationInParentFrames": 90,
+            "treatment": "side-image",
+            "assetId": "img-001",
+            "caption": "the actual on-screen text",
+            "captionPlacement": "below",
+            "reason": "human chose below placement",
+        }
+    ]
+
+    result = merge_moment_scenes(scene_plan, proposals)
+    moment_scene = next(s for s in result["scenes"] if s["type"] == "moment")
+
+    assert moment_scene["captionPlacement"] == "below"
+    assert moment_scene["caption"] == "the actual on-screen text"
+
+
+def test_merge_moment_scenes_omits_caption_placement_when_absent():
+    # Every moment before this field existed, or one that never had a
+    # placement explicitly chosen, must not get a stray captionPlacement
+    # key — the renderer's own "overlay" default applies.
+    scene_plan = {
+        "fps": 30,
+        "scenes": [
+            {
+                "id": "scene-001",
+                "type": "presenter",
+                "videoId": "001",
+                "timelineStartFrame": 0,
+                "durationInFrames": 900,
+            },
+        ],
+    }
+
+    proposals = [
+        {
+            "windowId": "w0",
+            "sceneId": "scene-001",
+            "videoId": "001",
+            "offsetInParentFrames": 100,
+            "maxDurationInParentFrames": 90,
+            "treatment": "side-image",
+            "assetId": "img-001",
+            "reason": "no placement set",
+        }
+    ]
+
+    result = merge_moment_scenes(scene_plan, proposals)
+    moment_scene = next(s for s in result["scenes"] if s["type"] == "moment")
+
+    assert "captionPlacement" not in moment_scene
 
 
 def test_merge_moment_scenes_is_idempotent_on_rerun():

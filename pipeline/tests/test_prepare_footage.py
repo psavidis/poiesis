@@ -1,6 +1,12 @@
 from unittest.mock import patch
 
-from prepare_footage import create_manifest, find_background_video, generate_episode_props_ts
+from prepare_footage import (
+    create_manifest,
+    find_background_video,
+    footage_sort_key,
+    generate_episode_props_ts,
+    validate_original_footage,
+)
 
 
 def _manifest(videos):
@@ -169,3 +175,39 @@ def test_create_manifest_no_previous_manifest_omits_keyed_path(tmp_path):
         manifest = create_manifest(episode, [video_path], config)
 
     assert "keyedPath" not in manifest["videos"][0]
+
+
+def test_footage_sort_key_bare_chapter_sorts_before_its_numbered_parts():
+    names = ["6.1.mov", "6.2.mov", "6.3.mov", "6.mov"]
+
+    assert sorted(names, key=footage_sort_key) == ["6.mov", "6.1.mov", "6.2.mov", "6.3.mov"]
+
+
+def test_footage_sort_key_orders_chapters_and_parts_numerically():
+    names = ["10.mov", "2.mov", "1.10.mov", "1.2.mov", "1.mov"]
+
+    assert sorted(names, key=footage_sort_key) == [
+        "1.mov",
+        "1.2.mov",
+        "1.10.mov",
+        "2.mov",
+        "10.mov",
+    ]
+
+
+def test_footage_sort_key_keeps_non_numeric_names_after_numbered_and_alphabetical():
+    names = ["9 outro.mov", "0. Welcome.mov", "1.mov"]
+
+    assert sorted(names, key=footage_sort_key) == ["0. Welcome.mov", "1.mov", "9 outro.mov"]
+
+
+def test_validate_original_footage_orders_bare_chapter_before_parts(tmp_path):
+    footage = tmp_path / "original_footage"
+    footage.mkdir()
+
+    for name in ["6.1.mov", "6.2.mov", "6.3.mov", "6.mov", "8.1.mov", "8.mov"]:
+        (footage / name).write_bytes(b"fake")
+
+    result = [f.name for f in validate_original_footage(footage)]
+
+    assert result == ["6.mov", "6.1.mov", "6.2.mov", "6.3.mov", "8.mov", "8.1.mov"]

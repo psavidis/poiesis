@@ -10,6 +10,7 @@ interface ImageAsset {
     filename: string;
     caption?: string;
     renderPath: string;
+    mediaType?: "image" | "video";
 }
 
 interface CodeAsset {
@@ -19,6 +20,7 @@ interface CodeAsset {
     description?: string;
     lineCount?: number;
     renderPath: string;
+    kind?: "source" | "screenshot" | "recording";
 }
 
 interface Props {
@@ -134,20 +136,15 @@ export function AssetLibraryPanel({ episodePath, scenePlan, selectedMomentSceneI
             const moments = (data.moments ?? []).map(normalizeMoment);
             if (!moments[index]) return;
 
-            // A moment's caption is a static field copied from the asset
-            // at proposal time (generate_moments.py), not resolved live at
-            // render time the way codeAsset.description is — so swapping
-            // assetId alone leaves the OLD asset's caption showing under
-            // the NEW image, which reads as "the image wasn't applied"
-            // even though it was. Only image swaps carry this risk (code
-            // assets render their description live from codeAssetMap, no
-            // stored field to go stale).
-            const nextCaption = field === "assetId" ? images.find((a) => a.id === assetId)?.caption : undefined;
-
+            // Caption is never auto-filled from the asset's own stored
+            // description (#82) — it's opt-in on-screen text the user
+            // writes for THIS moment, unrelated to which asset is shown.
+            // Swapping the asset leaves an existing caption exactly as-is;
+            // the asset's own caption (shown as this card's label above)
+            // stays asset metadata, never copied onto the moment.
             moments[index] = {
                 ...moments[index],
                 [field]: assetId,
-                ...(field === "assetId" ? { caption: nextCaption ?? null } : {}),
             };
 
             await saveMoments(episodePath, moments);
@@ -253,7 +250,16 @@ export function AssetLibraryPanel({ episodePath, scenePlan, selectedMomentSceneI
                                         title={disabled ? "Selected moment doesn't use an image asset" : asset.filename}
                                     >
                                         {isCurrent && <span style={styles.currentBadge}>Currently used</span>}
-                                        <img src={`/${asset.renderPath}`} alt="" style={styles.thumb} />
+                                        {asset.mediaType === "video" ? (
+                                            <video
+                                                src={`/${asset.renderPath}`}
+                                                muted
+                                                playsInline
+                                                style={styles.thumb}
+                                            />
+                                        ) : (
+                                            <img src={`/${asset.renderPath}`} alt="" style={styles.thumb} />
+                                        )}
                                         <span style={styles.cardCaption}>{asset.caption || asset.filename}</span>
                                     </button>
                                 );
@@ -285,10 +291,19 @@ export function AssetLibraryPanel({ episodePath, scenePlan, selectedMomentSceneI
                                         title={disabled ? "Selected moment doesn't use a code asset" : asset.filename}
                                     >
                                         {isCurrent && <span style={styles.currentBadge}>Currently used</span>}
+                                        {asset.kind === "recording" ? (
+                                            <video src={`/${asset.renderPath}`} muted playsInline style={styles.thumb} />
+                                        ) : asset.kind === "screenshot" ? (
+                                            <img src={`/${asset.renderPath}`} alt="" style={styles.thumb} />
+                                        ) : null}
                                         <span style={styles.codeFilename}>{asset.filename}</span>
                                         {asset.description && <span style={styles.cardCaption}>{asset.description}</span>}
                                         <span style={styles.codeMeta}>
-                                            {asset.language}
+                                            {asset.kind === "recording"
+                                                ? "screen recording"
+                                                : asset.kind === "screenshot"
+                                                ? "screenshot"
+                                                : asset.language}
                                             {asset.lineCount ? ` · ${asset.lineCount} lines` : ""}
                                         </span>
                                     </button>

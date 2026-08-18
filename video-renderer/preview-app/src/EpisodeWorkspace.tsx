@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Player, type PlayerRef } from "@remotion/player";
 import { Episode } from "video-renderer-src/episode/Episode";
-import type { EpisodeProps, Scene, ScenePlan } from "video-renderer-src/episode/types";
+import type { EpisodeProps, MomentScene, Scene, ScenePlan } from "video-renderer-src/episode/types";
 import { getAssets, getCaptionsInfo, getCodeAssets, getManifest, getScenePlan, undoLastEdit, type EpisodeStatus } from "./api";
 import { ActiveSceneBar } from "./ActiveSceneBar";
 import { AdvancedPanel } from "./AdvancedPanel";
@@ -13,8 +13,9 @@ import { EpisodeAnalysisPanel } from "./EpisodeAnalysisPanel";
 import { manifestToEpisodeBaseProps } from "./episodeProps";
 import { ImageBar } from "./ImageBar";
 import { ImageEditorPanel } from "./ImageEditorPanel";
-import { InlineTextEditor, isTextEligible, type EditTarget } from "./InlineTextEditor";
+import { InlineTextEditor, type EditTarget } from "./InlineTextEditor";
 import { MomentBar } from "./MomentBar";
+import { MomentBoxOverlay } from "./MomentBoxOverlay";
 import { MomentEditorPanel } from "./MomentEditorPanel";
 import { ProgressFlow } from "./ProgressFlow";
 import { RenderStatusBanner } from "./RenderStatusBanner";
@@ -22,6 +23,7 @@ import { SceneBar } from "./SceneBar";
 import { StoryboardPanel } from "./StoryboardPanel";
 import { TitleEditorPanel } from "./TitleEditorPanel";
 import { colors, radius, typography } from "./tokens";
+import { MAX_ZOOM, MIN_ZOOM, useTimelineZoom } from "./useTimelineZoom";
 
 // Display-only label for the undo shortcut's hint — mirrors BeatBar's own
 // MOD_KEY_LABEL constant.
@@ -159,23 +161,14 @@ export function EpisodeWorkspace() {
         setInlineEditTarget({ kind: "title", titleText });
     };
 
-    // knownTreatment lets a caller that already knows the treatment (e.g.
-    // MomentBar's Cmd+I insert, immediately after creating a moment whose
-    // treatment it chose itself) skip the scenePlan lookup below entirely —
-    // that lookup reads episodeProps via closure, which is NOT guaranteed
-    // fresh right after an onSaved()/reloadScenePlan() await: the reload's
-    // fetch promise resolving doesn't mean React has re-rendered yet, so
-    // the newly-inserted moment can still be absent from this closure's
-    // scenePlan for one more tick. Every other caller (MomentBar's click
-    // handler) omits it and keeps the existing scenePlan-lookup behavior.
-    const openInlineMomentEditor = (sceneId: string, anchor: { x: number; y: number }, knownTreatment?: string) => {
-        const scene = episodeProps?.scenePlan.scenes.find((s) => s.id === sceneId);
-        const treatment = knownTreatment ?? (scene?.type === "moment" ? scene.treatment : undefined);
-        if (!treatment) return;
-        if (!isTextEligible({ kind: "moment", sceneId, treatment })) return;
+    // Lead-in chapter's own entry point (#83) — distinct from
+    // openInlineTitleEditor since there's no existing title to match by
+    // text yet; InlineTextEditor's "new-title" branch creates the entry
+    // on save instead.
+    const openInlineLeadInTitleEditor = (segmentId: string, anchor: { x: number; y: number }) => {
         setSelectedEditor(null);
         setInlineEditAnchor(anchor);
-        setInlineEditTarget({ kind: "moment", sceneId, treatment });
+        setInlineEditTarget({ kind: "new-title", newTitleSegmentId: segmentId });
     };
 
     const openInlineBeatEditor = (sceneId: string, anchor: { x: number; y: number }) => {
@@ -205,8 +198,54 @@ export function EpisodeWorkspace() {
         });
     };
 
+    // Same live-patch-before-real-save pattern as applyLiveBeatText above,
+    // for MomentBoxOverlay's drag/resize (#77) — called on every
+    // pointermove, not just once at drag-end, so the Player's actual
+    // composited output grows/shrinks/moves in step with the drag instead
+    // of only jumping to the new box after the save round-trip completes.
+    const applyLiveMomentBox = (sceneId: string, box: { xPct: number; yPct: number; widthPct: number; heightPct: number }) => {
+        setEpisodeProps((prev) => {
+            if (!prev) return prev;
+            return {
+                ...prev,
+                scenePlan: {
+                    ...prev.scenePlan,
+                    scenes: prev.scenePlan.scenes.map((s) =>
+                        s.type === "moment" && s.id === sceneId ? { ...s, box } : s
+                    ),
+                },
+            };
+        });
+    };
+
     const playerRef = useRef<PlayerRef>(null);
+    // Measured for MomentBoxOverlay's screen-px <-> canvas-% conversion
+    // (#77) — the Player fills this frame's width and derives its own
+    // height from the composition's aspect ratio, so this div's own
+    // rendered rect IS the composition's on-screen box.
+    const playerFrameRef = useRef<HTMLDivElement>(null);
     const [currentFrame, setCurrentFrame] = useState(0);
+
+    // Computed unconditionally (episodeProps may still be null on first
+    // render, before either of the early returns below) so the shared
+    // zoom hook — which must itself be called unconditionally, like any
+    // hook — always has a real totalFrames to work with. Mirrors the
+    // later, "real" totalFrames computed after episodeProps is confirmed
+    // loaded; that duplication is intentional rather than hoisting the
+    // whole render past the early returns.
+    const totalFramesForZoom = Math.max(
+        1,
+        episodeProps?.scenePlan.scenes.reduce(
+            (total, s) =>
+                "timelineStartFrame" in s ? Math.max(total, s.timelineStartFrame + s.durationInFrames) : total,
+            0
+        ) ?? 1
+    );
+    // Single zoom/pan window shared by every timeline bar (#86) — replaces
+    // each bar's own independent zoom state, so scrolling/zooming one bar
+    // keeps them all in sync and there's one Zoom in/out/Reset row instead
+    // of one per bar.
+    const timelineZoom = useTimelineZoom(totalFramesForZoom, currentFrame);
 
     // Tracks the player's current frame so the UI can show which scene(s)
     // are actually on screen right now — otherwise there's no way to know
@@ -391,6 +430,30 @@ export function EpisodeWorkspace() {
         return () => window.removeEventListener("keydown", onKeyDown);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [episodePath]);
+
+    // Escape exits whichever structured editor (title/moment/image) is
+    // currently open — deliberately global, not scoped to the panel's own
+    // DOM (unlike the Cmd+Z/Cmd+E-style shortcuts above, this one should
+    // still fire even while focus is inside one of the panel's own text
+    // inputs, matching the everywhere-else convention that Escape closes
+    // whatever's open). For a moment specifically, this is also what gets
+    // the user OUT of "edit mode" — MomentBoxOverlay is only mounted while
+    // selectedEditor.kind === "moment" (see selectedMomentScene below), so
+    // closing the editor here also removes the drag/resize box from the
+    // player, exactly mirroring how it appeared (Cmd+E only) in the first
+    // place.
+    useEffect(() => {
+        if (!selectedEditor) return;
+
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key !== "Escape") return;
+            e.preventDefault();
+            setSelectedEditor(null);
+        };
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [selectedEditor]);
 
     // Client-side only — never written back to scene-plan.json. Lets you
     // quickly check "how does this look without captions" without touching
@@ -615,14 +678,27 @@ export function EpisodeWorkspace() {
         );
     }
 
-    const totalFrames = Math.max(
-        1,
-        episodeProps.scenePlan.scenes.reduce(
-            (total, s) =>
-                "timelineStartFrame" in s ? Math.max(total, s.timelineStartFrame + s.durationInFrames) : total,
-            0
-        )
-    );
+    // Same value as totalFramesForZoom above (episodeProps is confirmed
+    // non-null past this point) — kept as its own binding since every JSX
+    // reference below already reads `totalFrames`.
+    const totalFrames = totalFramesForZoom;
+
+    // MomentBoxOverlay (#77) only appears once the user has actually
+    // entered edit mode for a moment (Cmd+E -> selectedEditor.kind ===
+    // "moment", which opens MomentEditorPanel below), NOT on a plain
+    // click/select — a merely-selected moment's box would otherwise sit on
+    // top of the player at all times, including over Remotion's own
+    // play/scrub controls whenever a moment's box happens to cover that
+    // area, silently swallowing clicks meant for them. Gating on edit mode
+    // means the overlay is only present while the user has deliberately
+    // asked to edit this specific moment, mirroring the same "select,
+    // then a further deliberate step to act" rule the resize handle
+    // itself already follows on MomentBar. Also requires the moment to
+    // actually be on screen right now — a moment being edited whose
+    // window has scrolled past the playhead has nothing to drag on top of.
+    const selectedMomentScene =
+        selectedEditor?.kind === "moment" &&
+        activeScenes.overlays.find((s): s is MomentScene => s.type === "moment" && s.id === selectedEditor.sceneId);
 
     return (
         <div style={styles.shell}>
@@ -631,7 +707,7 @@ export function EpisodeWorkspace() {
             {header}
 
             <div style={styles.playerWrap}>
-                <div style={styles.playerFrame}>
+                <div style={styles.playerFrame} ref={playerFrameRef}>
                     <Player
                         ref={playerRef}
                         component={Episode as any}
@@ -643,21 +719,66 @@ export function EpisodeWorkspace() {
                         style={{ width: "100%", display: "block" }}
                         controls
                     />
+                    {selectedMomentScene && (
+                        <MomentBoxOverlay
+                            playerContainerRef={playerFrameRef}
+                            scene={selectedMomentScene}
+                            episodePath={episodePath}
+                            onLiveChange={(box) => applyLiveMomentBox(selectedMomentScene.id, box)}
+                            onSaved={reloadScenePlan}
+                        />
+                    )}
                 </div>
             </div>
 
             <div style={styles.playerWrap}>
                 <ChapterStrip
                     scenePlan={episodeProps.scenePlan}
+                    videos={episodeProps.videos}
                     totalFrames={totalFrames}
                     currentFrame={currentFrame}
                     fps={episodeProps.fps}
                     onSeek={seekToAbsoluteFrame}
                     onSelectTitle={openInlineTitleEditor}
+                    onCreateLeadInTitle={openInlineLeadInTitleEditor}
                     highlightedTitleText={highlightedByType.titleText}
                     episodePath={episodePath}
                     onSaved={reloadScenePlan}
                 />
+            </div>
+
+            <div style={styles.playerWrap}>
+                {/* One shared zoom/pan window for Scenes/Moments/Images/Beats
+                    below (#86) — previously each bar had its own independent
+                    zoom level and its own row of Zoom in/out/Reset buttons;
+                    since they're all views onto the exact same underlying
+                    timeline, one control row driving all four at once is
+                    both less UI and less confusing (zooming one no longer
+                    leaves the others at a different, unrelated scale). */}
+                <div style={styles.zoomControls}>
+                    <span style={styles.zoomLabel}>Timeline zoom</span>
+                    <button
+                        className="secondary small"
+                        onClick={timelineZoom.zoomIn}
+                        disabled={timelineZoom.zoom >= MAX_ZOOM}
+                    >
+                        Zoom in
+                    </button>
+                    <button
+                        className="secondary small"
+                        onClick={timelineZoom.zoomOut}
+                        disabled={timelineZoom.zoom <= MIN_ZOOM}
+                    >
+                        Zoom out
+                    </button>
+                    <button
+                        className="secondary small"
+                        onClick={timelineZoom.resetZoom}
+                        disabled={timelineZoom.zoom === 1}
+                    >
+                        Reset
+                    </button>
+                </div>
             </div>
 
             <div style={styles.playerWrap}>
@@ -668,6 +789,9 @@ export function EpisodeWorkspace() {
                     onSeek={seekToAbsoluteFrame}
                     onSelectTitle={openInlineTitleEditor}
                     highlightedId={highlightedByType.presenterOrTitleId}
+                    episodePath={episodePath}
+                    onSaved={reloadScenePlan}
+                    timelineZoom={timelineZoom}
                 />
             </div>
 
@@ -679,13 +803,13 @@ export function EpisodeWorkspace() {
                     onSeek={seekToAbsoluteFrame}
                     episodePath={episodePath}
                     onSaved={reloadScenePlan}
-                    onEditRequested={openInlineMomentEditor}
                     onOpenStructuredEditor={(sceneId) => {
                         setInlineEditTarget(null);
                         setSelectedEditor({ kind: "moment", sceneId });
                     }}
                     onSelect={setAssetLibraryMomentId}
                     highlightedId={highlightedByType.momentId}
+                    timelineZoom={timelineZoom}
                 />
             </div>
 
@@ -702,6 +826,7 @@ export function EpisodeWorkspace() {
                         setSelectedEditor({ kind: "image", sceneId });
                     }}
                     highlightedId={highlightedByType.imageId}
+                    timelineZoom={timelineZoom}
                 />
             </div>
 
@@ -715,6 +840,7 @@ export function EpisodeWorkspace() {
                     onSaved={reloadScenePlan}
                     onEditRequested={openInlineBeatEditor}
                     highlightedId={highlightedByType.beatId}
+                    timelineZoom={timelineZoom}
                 />
             </div>
 
@@ -962,12 +1088,26 @@ const styles: Record<string, React.CSSProperties> = {
         width: "100%",
         maxWidth: WORKSPACE_MAX_WIDTH,
     },
+    // Shared zoom control row (#86) — mirrors each bar's own former
+    // zoomControls/label styling, just promoted to apply once for all of
+    // Scenes/Moments/Images/Beats instead of once per bar.
+    zoomControls: {
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+    },
+    zoomLabel: {
+        fontSize: typography.size.sm,
+        color: colors.textSecondary,
+        marginRight: 4,
+    },
     // The video is the "primary visual focus" (spec section 12/15) — a
     // deliberate frame (border, radius, shadow) distinguishes it from
     // every other section below, which share plain playerWrap with no
     // framing of their own. overflow: hidden clips the Player's own
     // corners to match the frame's borderRadius.
     playerFrame: {
+        position: "relative",
         borderRadius: 10,
         overflow: "hidden",
         border: `1px solid ${colors.border}`,

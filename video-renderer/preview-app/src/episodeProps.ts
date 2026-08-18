@@ -24,6 +24,8 @@ export function manifestToEpisodeBaseProps(manifest: any, assets: any[], codeAss
             filename: asset.filename,
             path: asset.renderPath,
             caption: asset.caption,
+            mediaType: asset.mediaType,
+            keyColor: asset.keyColor,
         })),
         codeAssets: codeAssets.map((codeAsset: any) => ({
             id: codeAsset.id,
@@ -32,6 +34,8 @@ export function manifestToEpisodeBaseProps(manifest: any, assets: any[], codeAss
             language: codeAsset.language,
             description: codeAsset.description,
             lineCount: codeAsset.lineCount,
+            kind: codeAsset.kind,
+            keyColor: codeAsset.keyColor,
         })),
         backgroundVideo: manifest.backgroundVideo
             ? {

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ImageScene, PresenterScene, ScenePlan, TitleScene } from "video-renderer-src/episode/types";
 import { deleteScene, updateSceneFields } from "./api";
 import { colors, radius, typography } from "./tokens";
+import type { TimelineZoom } from "./useTimelineZoom";
 
 // A fourth, distinct color from SceneBar/MomentBar/BeatBar — image scenes
 // are their own scene type (not a moment treatment), and the spec (docs/
@@ -9,10 +10,6 @@ import { colors, radius, typography } from "./tokens";
 // first-class presentation deserving its own visible timeline surface, so
 // this gets its own bar rather than folding into MomentBar (#46).
 const IMAGE_COLOR = colors.timelineImage;
-
-const ZOOM_STEP = 1.6;
-const MAX_ZOOM = 20;
-const MIN_ZOOM = 1;
 
 const MOD_KEY_LABEL = navigator.platform.toLowerCase().includes("mac") ? "Cmd" : "Ctrl";
 
@@ -33,6 +30,9 @@ interface Props {
     // Set by EpisodeWorkspace right after a chat edit touches an image on
     // this bar (#54) — seeds selection and re-centers the view on it.
     highlightedId?: string | null;
+    // Single zoom/pan window shared with Scenes/Moments/Beats (#86) —
+    // owned by EpisodeWorkspace, not this component.
+    timelineZoom: TimelineZoom;
 }
 
 type DragMode = "move" | "resize";
@@ -63,9 +63,10 @@ export function ImageBar({
     onSaved,
     onEditRequested,
     highlightedId,
+    timelineZoom,
 }: Props) {
-    const [zoom, setZoom] = useState(1);
-    const [panStartPct, setPanStartPct] = useState(0);
+    const { zoom, windowFrames, windowStartFrame, frameToPct, playheadPct, playheadVisible, zoomToAtLeast4x } =
+        timelineZoom;
     const [dragState, setDragState] = useState<{ imageId: string; mode: DragMode } | null>(null);
     const [liveOffset, setLiveOffset] = useState(0);
     const [liveDuration, setLiveDuration] = useState(0);
@@ -107,30 +108,6 @@ export function ImageBar({
         })
         .filter((m): m is { image: ImageScene; parent: PresenterScene | TitleScene; startFrame: number } => m !== null)
         .sort((a, b) => a.startFrame - b.startFrame);
-
-    // windowFrames can be 0/NaN when totalFrames <= 0 — every derived value
-    // below tolerates that (never rendered, since the JSX return is gated
-    // on totalFrames > 0 further down), so no extra guarding needed here.
-    const windowFrames = totalFrames / zoom;
-    const maxPanStartPct = 1 - windowFrames / totalFrames;
-    const clampedPanStartPct = clamp(panStartPct, 0, Math.max(0, maxPanStartPct));
-    const windowStartFrame = clampedPanStartPct * totalFrames;
-
-    const frameToPct = (frame: number) => ((frame - windowStartFrame) / windowFrames) * 100;
-
-    const applyZoom = (nextZoom: number) => {
-        const clampedZoom = clamp(nextZoom, MIN_ZOOM, MAX_ZOOM);
-        const nextWindowFrames = totalFrames / clampedZoom;
-        setZoom(clampedZoom);
-        setPanStartPct(currentFrame / totalFrames - nextWindowFrames / totalFrames / 2);
-    };
-
-    const zoomIn = () => applyZoom(zoom * ZOOM_STEP);
-    const zoomOut = () => applyZoom(zoom / ZOOM_STEP);
-    const resetZoom = () => {
-        setZoom(1);
-        setPanStartPct(0);
-    };
 
     const onTrackClick = (e: React.MouseEvent<HTMLDivElement>) => {
         if (dragState) return;
@@ -270,10 +247,7 @@ export function ImageBar({
         if (!entry) return;
         setSelectedImageId(highlightedId);
         onSeek(entry.startFrame);
-        const nextZoom = clamp(zoom > 1 ? zoom : 4, MIN_ZOOM, MAX_ZOOM);
-        const nextWindowFrames = totalFrames / nextZoom;
-        setZoom(nextZoom);
-        setPanStartPct(entry.startFrame / totalFrames - nextWindowFrames / totalFrames / 2);
+        zoomToAtLeast4x(entry.startFrame);
         trackRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [highlightedId]);
@@ -293,29 +267,13 @@ export function ImageBar({
         }
     };
 
-    const playheadPct = clamp(frameToPct(currentFrame), 0, 100);
-    const playheadVisible = currentFrame >= windowStartFrame && currentFrame <= windowStartFrame + windowFrames;
-
     // Every hook above has now run unconditionally on every render — safe
     // to bail on rendering anything from here on.
     if (totalFrames <= 0 || resolved.length === 0) return null;
 
     return (
         <div style={styles.wrap}>
-            <div style={styles.labelRow}>
-                <span style={styles.label}>Images ({resolved.length})</span>
-                <div style={styles.zoomControls}>
-                    <button className="secondary small" onClick={zoomIn} disabled={zoom >= MAX_ZOOM}>
-                        Zoom in
-                    </button>
-                    <button className="secondary small" onClick={zoomOut} disabled={zoom <= MIN_ZOOM}>
-                        Zoom out
-                    </button>
-                    <button className="secondary small" onClick={resetZoom} disabled={zoom === 1}>
-                        Reset
-                    </button>
-                </div>
-            </div>
+            <div style={styles.label}>Images ({resolved.length})</div>
 
             <div ref={trackRef} style={styles.track} onMouseDown={onTrackClick}>
                 {resolved.map(({ image, startFrame }) => {
@@ -414,20 +372,9 @@ const styles: Record<string, React.CSSProperties> = {
         flexDirection: "column",
         gap: 6,
     },
-    labelRow: {
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        flexWrap: "wrap",
-        gap: 8,
-    },
     label: {
         fontSize: typography.size.sm,
         color: colors.textSecondary,
-    },
-    zoomControls: {
-        display: "flex",
-        gap: 6,
     },
     track: {
         position: "relative",

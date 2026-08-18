@@ -4,7 +4,7 @@ import { brand } from "./brand";
 import { computeDiagramLayout } from "./diagramLayout";
 import { sideContentStyle } from "./MomentTreatments";
 import { SIDE_CONTENT_WIDTH_PCT, TRANSITION_FRAMES } from "./timing";
-import type { DiagramData } from "./types";
+import type { DiagramData, MomentBox } from "./types";
 
 // Each node fades in slightly after the previous one (by its original
 // array order, not dagre's layout order — see LayoutNode.index), guiding
@@ -16,6 +16,7 @@ export const DiagramBlock = ({
                                   diagram,
                                   presenterOnLeft,
                                   full = false,
+                                  box,
                               }: {
     diagram: DiagramData;
     presenterOnLeft: boolean;
@@ -24,6 +25,10 @@ export const DiagramBlock = ({
     // choreography, just centered at a larger scale instead of confined
     // to the side panel a presenter is sharing the frame with.
     full?: boolean;
+    // Only meaningful when full is false — FullDiagram (FullVisualMoment.tsx)
+    // already has its own centered full-frame wrapper, no side-panel box to
+    // override (see #77).
+    box?: MomentBox;
 }) => {
     const frame = useCurrentFrame();
     const { durationInFrames, width: frameWidth, height: frameHeight } = useVideoConfig();
@@ -185,7 +190,7 @@ export const DiagramBlock = ({
 
     return (
         <AbsoluteFill style={{ pointerEvents: "none" }}>
-            <div style={sideContentStyle(presenterOnLeft)}>{content}</div>
+            <div style={sideContentStyle(presenterOnLeft, box)}>{content}</div>
         </AbsoluteFill>
     );
 };

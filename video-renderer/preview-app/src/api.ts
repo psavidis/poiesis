@@ -264,6 +264,10 @@ export async function deleteScene(episodePath: string, sceneId: string) {
 export interface TitleSceneProposal {
     segmentId: string;
     text: string;
+    // Human-set override for this title's own on-screen display duration
+    // (#83) — set by dragging the title's segment edge in SceneBar. Absent
+    // means "use the shared config default".
+    durationFrames?: number;
     // Field names a human has explicitly changed since the AI last
     // proposed this title (#59) — server-recomputed on every save from a
     // segmentId-matched diff, same pattern as moments/beats (#57/#58).

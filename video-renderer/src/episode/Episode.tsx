@@ -17,10 +17,11 @@ import { BeatOverlay } from "./BeatOverlay";
 import { CaptionText } from "./CaptionText";
 import { CodeBlock } from "./CodeBlock";
 import { Comparison } from "./Comparison";
+import { GreenKeyFilterDefs } from "./ChromaKey";
 import { DiagramBlock } from "./DiagramBlock";
 import { EpisodeImage } from "./EpisodeImage";
 import { FullVisualMoment } from "./FullVisualMoment";
-import { BottomCallout, SideImage, SideText } from "./MomentTreatments";
+import { BottomCallout, DominantMedia, SideImage, SideText } from "./MomentTreatments";
 import { SideTerms } from "./SideTerms";
 import { LAYOUT_GEOMETRY, TRANSITION_FRAMES } from "./timing";
 
@@ -471,11 +472,11 @@ const MomentSequence = ({
 }) => {
     switch (scene.treatment) {
         case "bottom-callout":
-            return <BottomCallout text={scene.text ?? ""} entrance={scene.entrance} />;
+            return <BottomCallout text={scene.text ?? ""} entrance={scene.entrance} box={scene.box} />;
 
         case "side-text": {
             const presenterOnLeft = scene.presenterSide === "left";
-            return <SideText text={scene.text ?? ""} presenterOnLeft={presenterOnLeft} style={scene.sideTextStyle} />;
+            return <SideText text={scene.text ?? ""} presenterOnLeft={presenterOnLeft} style={scene.sideTextStyle} box={scene.box} />;
         }
 
         case "side-image": {
@@ -484,8 +485,12 @@ const MomentSequence = ({
             return (
                 <SideImage
                     path={asset.path}
+                    mediaType={asset.mediaType}
+                    keyColor={asset.keyColor}
                     caption={scene.caption}
+                    captionPlacement={scene.captionPlacement}
                     presenterOnLeft={presenterOnLeft}
+                    box={scene.box}
                 />
             );
         }
@@ -493,11 +498,29 @@ const MomentSequence = ({
         case "side-code": {
             if (!codeAsset) return null;
             const presenterOnLeft = scene.presenterSide === "left";
+
+            // A screenshot/recording has no text to highlight — reuse the
+            // same framed image/video treatment graphics/ assets already
+            // get (SideImage already branches on mediaType), rather than
+            // hand CodeBlock a path it can't read as source text.
+            if (codeAsset.kind === "screenshot" || codeAsset.kind === "recording") {
+                return (
+                    <SideImage
+                        path={codeAsset.path}
+                        mediaType={codeAsset.kind === "recording" ? "video" : "image"}
+                        keyColor={codeAsset.keyColor}
+                        presenterOnLeft={presenterOnLeft}
+                        box={scene.box}
+                    />
+                );
+            }
+
             return (
                 <CodeBlock
                     path={codeAsset.path}
-                    language={codeAsset.language}
+                    language={codeAsset.language ?? "text"}
                     presenterOnLeft={presenterOnLeft}
+                    box={scene.box}
                 />
             );
         }
@@ -508,12 +531,27 @@ const MomentSequence = ({
             // moving to a chosen side, so there's no left/right slide
             // direction to pass through.
             if (!codeAsset) return null;
+
+            if (codeAsset.kind === "screenshot" || codeAsset.kind === "recording") {
+                return (
+                    <DominantMedia
+                        path={codeAsset.path}
+                        mediaType={codeAsset.kind === "recording" ? "video" : "image"}
+                        keyColor={codeAsset.keyColor}
+                        caption={scene.caption}
+                        captionPlacement={scene.captionPlacement}
+                        box={scene.box}
+                    />
+                );
+            }
+
             return (
                 <CodeBlock
                     path={codeAsset.path}
-                    language={codeAsset.language}
+                    language={codeAsset.language ?? "text"}
                     presenterOnLeft={false}
                     size="dominant"
+                    box={scene.box}
                 />
             );
         }
@@ -521,13 +559,13 @@ const MomentSequence = ({
         case "side-diagram": {
             if (!scene.diagram) return null;
             const presenterOnLeft = scene.presenterSide === "left";
-            return <DiagramBlock diagram={scene.diagram} presenterOnLeft={presenterOnLeft} />;
+            return <DiagramBlock diagram={scene.diagram} presenterOnLeft={presenterOnLeft} box={scene.box} />;
         }
 
         case "side-terms": {
             if (!scene.terms || scene.terms.length === 0) return null;
             const presenterOnLeft = scene.presenterSide === "left";
-            return <SideTerms terms={scene.terms} presenterOnLeft={presenterOnLeft} />;
+            return <SideTerms terms={scene.terms} presenterOnLeft={presenterOnLeft} box={scene.box} />;
         }
 
         case "comparison": {
@@ -542,10 +580,16 @@ const MomentSequence = ({
                     kind={scene.fullVisualKind}
                     text={scene.text}
                     assetPath={asset?.path}
+                    assetMediaType={asset?.mediaType}
+                    assetKeyColor={asset?.keyColor}
                     caption={scene.caption}
+                    captionPlacement={scene.captionPlacement}
                     diagram={scene.diagram}
                     codePath={codeAsset?.path}
                     codeLanguage={codeAsset?.language}
+                    codeAssetKind={codeAsset?.kind}
+                    codeAssetKeyColor={codeAsset?.keyColor}
+                    box={scene.box}
                 />
             );
         }
@@ -651,7 +695,7 @@ export const Episode = ({
                         from={scene.timelineStartFrame}
                         durationInFrames={scene.durationInFrames}
                     >
-                        <AnimatedTitle text={scene.text} />
+                        <AnimatedTitle text={scene.text} durationInFrames={scene.durationInFrames} />
                     </Sequence>
                 );
             }
@@ -699,6 +743,8 @@ export const Episode = ({
                     >
                         <EpisodeImage
                             path={asset.path}
+                            mediaType={asset.mediaType}
+                            keyColor={asset.keyColor}
                             caption={scene.caption}
                             display={scene.display}
                         />
@@ -763,6 +809,10 @@ export const Episode = ({
 
     return (
         <AbsoluteFill>
+            {/* Mounted once for the whole episode — every green-keyed video
+                asset references this by id (see ChromaKey.tsx), an SVG
+                filter def doesn't need to be duplicated per use. */}
+            <GreenKeyFilterDefs />
             {backgroundVideo && (
                 <LoopingBackground
                     path={backgroundVideo.path}

@@ -3,7 +3,7 @@ import { AbsoluteFill, interpolate, useCurrentFrame, useVideoConfig } from "remo
 import { brand } from "./brand";
 import { sideContentStyle } from "./MomentTreatments";
 import { TRANSITION_FRAMES } from "./timing";
-import type { TermEmphasis, TermEmphasisLevel } from "./types";
+import type { MomentBox, TermEmphasis, TermEmphasisLevel } from "./types";
 
 // Each term fades/slides in slightly after the previous one — same
 // staggered-reveal choreography DiagramBlock already uses for node reveal,
@@ -75,13 +75,15 @@ const Term = ({
 export const SideTerms = ({
                                terms,
                                presenterOnLeft,
+                               box,
                            }: {
     terms: TermEmphasis[];
     presenterOnLeft: boolean;
+    box?: MomentBox;
 }) => {
     return (
         <AbsoluteFill style={{ pointerEvents: "none" }}>
-            <div style={sideContentStyle(presenterOnLeft)}>
+            <div style={sideContentStyle(presenterOnLeft, box)}>
                 <div
                     style={{
                         width: "100%",

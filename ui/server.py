@@ -248,6 +248,12 @@ def episode_artifact(path: str, name: str):
 class TitleScene(BaseModel):
     segmentId: str
     text: str
+    # Human-set override for this title's own on-screen display duration
+    # (#83) — set by dragging the title's segment edge in SceneBar. Absent
+    # means "use the shared config default" (style.titles.durationFrames),
+    # same as every title before this field existed — see
+    # merge_title_scenes's own doc comment for the reflow this produces.
+    durationFrames: int | None = None
     # Field names a human has explicitly changed since the AI last proposed
     # this title (see #59) — recomputed on every save in
     # update_title_scenes below, matched by segmentId rather than array
@@ -419,6 +425,16 @@ class MomentProposal(BaseModel):
     # (Pydantic silently strips any field not declared on the model), same
     # as every other treatment-specific field in this class.
     entrance: str | None = None
+    # Human-set size/position override (#77) — {xPct, yPct, widthPct,
+    # heightPct}, percentage-of-canvas, set by dragging/resizing this
+    # moment on the preview-app's player. Absent means "use the
+    # treatment's own default geometry" — see timing.ts's resolveBoxStyle.
+    box: dict | None = None
+    # Where `caption` renders relative to the asset/video ("overlay" /
+    # "below" / "off") — never AI-proposed, always a human choice (#82).
+    # Absent means "overlay", same as every episode from before this field
+    # existed.
+    captionPlacement: str | None = None
     reason: str = ""
     # Field names a human has explicitly changed since the AI last proposed
     # this moment (see #57) — a save's own diff against what's currently on

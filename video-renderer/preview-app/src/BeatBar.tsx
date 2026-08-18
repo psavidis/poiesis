@@ -2,21 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import type { BeatScene, PresenterScene, ScenePlan } from "video-renderer-src/episode/types";
 import { getBeats, saveBeats } from "./api";
 import { colors, radius, typography } from "./tokens";
+import type { TimelineZoom } from "./useTimelineZoom";
 
 // A third, distinct color from SceneBar/MomentBar — beats are a
 // genuinely different scene type (word-pop/underline/icon-accent, not a
 // text/image treatment choice), so this doesn't reuse MomentBar's
 // text/visual categories.
 const BEAT_COLOR = colors.timelineBeat;
-
-// How far a single +/- zoom click moves — geometric (not linear) steps
-// feel more natural for zoom than fixed increments (matches how
-// map/image zoom controls typically step). Capped at 20x: beyond that,
-// a 60-frame (2s) beat is already comfortably wide even at the widest
-// realistic episode length, and panning would start feeling tedious.
-const ZOOM_STEP = 1.6;
-const MAX_ZOOM = 20;
-const MIN_ZOOM = 1;
 
 // Display-only label for the edit shortcut's hint text — the actual
 // keydown check accepts either metaKey or ctrlKey regardless of platform,
@@ -39,6 +31,9 @@ interface Props {
     // Set by EpisodeWorkspace right after a chat edit touches a beat on
     // this bar (#54) — seeds selection and re-centers the view on it.
     highlightedId?: string | null;
+    // Single zoom/pan window shared with Scenes/Images/Moments (#86) —
+    // owned by EpisodeWorkspace, not this component.
+    timelineZoom: TimelineZoom;
 }
 
 type DragState = {
@@ -87,12 +82,10 @@ export function BeatBar({
     onSaved,
     onEditRequested,
     highlightedId,
+    timelineZoom,
 }: Props) {
-    const [zoom, setZoom] = useState(1);
-    // Fraction of totalFrames where the visible window starts — 0 at full
-    // zoom-out (whole episode), clamped so the window never extends past
-    // either end once zoomed in.
-    const [panStartPct, setPanStartPct] = useState(0);
+    const { zoom, windowFrames, windowStartFrame, frameToPct, playheadPct, playheadVisible, zoomToAtLeast4x } =
+        timelineZoom;
     // Which beat is being dragged, if any — the only piece of drag state
     // that needs to be reactive (it controls which segment renders its
     // "isDragging" styling/readout). See DragState's own comment above
@@ -145,36 +138,6 @@ export function BeatBar({
             (b): b is { beat: BeatScene; parent: PresenterScene; startFrame: number } => b !== null
         )
         .sort((a, b) => a.startFrame - b.startFrame);
-
-    // Visible window, in absolute frames — windowFrames shrinks as zoom
-    // increases; panStartFrame is clamped so windowStart+windowFrames
-    // never exceeds totalFrames (no dead space past the episode's end).
-    const windowFrames = totalFrames / zoom;
-    const maxPanStartPct = 1 - windowFrames / totalFrames;
-    const clampedPanStartPct = clamp(panStartPct, 0, Math.max(0, maxPanStartPct));
-    const windowStartFrame = clampedPanStartPct * totalFrames;
-
-    const frameToPct = (frame: number) => ((frame - windowStartFrame) / windowFrames) * 100;
-
-    // Re-centers the visible window on the player's current frame on
-    // every zoom step (in or out) — the fastest way to reach "zoomed in
-    // on whatever I'm currently looking at" without a separate manual
-    // pan after each click. Both state writes derive from the SAME
-    // nextZoom value computed once, rather than one handler reading a
-    // zoom state that might already be stale relative to the other.
-    const applyZoom = (nextZoom: number) => {
-        const clampedZoom = clamp(nextZoom, MIN_ZOOM, MAX_ZOOM);
-        const nextWindowFrames = totalFrames / clampedZoom;
-        setZoom(clampedZoom);
-        setPanStartPct(currentFrame / totalFrames - nextWindowFrames / totalFrames / 2);
-    };
-
-    const zoomIn = () => applyZoom(zoom * ZOOM_STEP);
-    const zoomOut = () => applyZoom(zoom / ZOOM_STEP);
-    const resetZoom = () => {
-        setZoom(1);
-        setPanStartPct(0);
-    };
 
     const onTrackClick = (e: React.MouseEvent<HTMLDivElement>) => {
         if (dragBeatId) return;
@@ -296,10 +259,7 @@ export function BeatBar({
         if (!entry) return;
         setSelectedBeatId(highlightedId);
         onSeek(entry.startFrame);
-        const nextZoom = clamp(zoom > 1 ? zoom : 4, MIN_ZOOM, MAX_ZOOM);
-        const nextWindowFrames = totalFrames / nextZoom;
-        setZoom(nextZoom);
-        setPanStartPct(entry.startFrame / totalFrames - nextWindowFrames / totalFrames / 2);
+        zoomToAtLeast4x(entry.startFrame);
         trackRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [highlightedId]);
@@ -418,29 +378,13 @@ export function BeatBar({
         }
     };
 
-    const playheadPct = clamp(frameToPct(currentFrame), 0, 100);
-    const playheadVisible = currentFrame >= windowStartFrame && currentFrame <= windowStartFrame + windowFrames;
-
     // Every hook above has now run unconditionally on every render — safe
     // to bail on rendering anything from here on.
     if (totalFrames <= 0 || resolved.length === 0) return null;
 
     return (
         <div style={styles.wrap}>
-            <div style={styles.labelRow}>
-                <span style={styles.label}>Beats ({resolved.length})</span>
-                <div style={styles.zoomControls}>
-                    <button className="secondary small" onClick={zoomIn} disabled={zoom >= MAX_ZOOM}>
-                        Zoom in
-                    </button>
-                    <button className="secondary small" onClick={zoomOut} disabled={zoom <= MIN_ZOOM}>
-                        Zoom out
-                    </button>
-                    <button className="secondary small" onClick={resetZoom} disabled={zoom === 1}>
-                        Reset
-                    </button>
-                </div>
-            </div>
+            <div style={styles.label}>Beats ({resolved.length})</div>
 
             <div ref={trackRef} style={styles.track} onMouseDown={onTrackClick}>
                 {resolved.map(({ beat, parent, startFrame }) => {
@@ -484,11 +428,19 @@ export function BeatBar({
                             }}
                         >
                             {widthPct > 3 && <span style={styles.segmentLabel}>{beat.text}</span>}
-                            <div
-                                style={styles.resizeHandle}
-                                onMouseDown={(e) => startResize(e, beat)}
-                                title={`Drag to resize (max ${maxDuration}f)`}
-                            />
+                            {isSelected && (
+                                // Only offered once selected — matches
+                                // MomentBar's own rule (#82): while free-
+                                // navigating (this beat not yet selected),
+                                // the only available action is
+                                // click-to-select, so the cursor/handle
+                                // shouldn't imply a resize is available yet.
+                                <div
+                                    style={styles.resizeHandle}
+                                    onMouseDown={(e) => startResize(e, beat)}
+                                    title={`Drag to resize (max ${maxDuration}f)`}
+                                />
+                            )}
                             {isDragging && (
                                 <div style={styles.readout}>{(duration / 30).toFixed(1)}s</div>
                             )}
@@ -546,20 +498,9 @@ const styles: Record<string, React.CSSProperties> = {
         flexDirection: "column",
         gap: 6,
     },
-    labelRow: {
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        flexWrap: "wrap",
-        gap: 8,
-    },
     label: {
         fontSize: typography.size.sm,
         color: colors.textSecondary,
-    },
-    zoomControls: {
-        display: "flex",
-        gap: 6,
     },
     track: {
         position: "relative",

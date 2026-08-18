@@ -22,15 +22,52 @@ export interface EpisodeAsset {
     // image/moment's actual presentation is still whatever display/
     // treatment ends up on its scene, same as before this field existed.
     defaultDisplay?: "full";
+    // Which renderer component an asset-driven moment mounts for this
+    // asset — <Img> for "image", <OffthreadVideo> for "video" (e.g. an
+    // animated/alpha-transparent graphic like a channel bumper). Defaults
+    // to "image" when absent so existing episodes generated before this
+    // field existed keep rendering exactly as before. Set by
+    // index_assets.py from the source file's extension — never inferred
+    // client-side, since the renderer has no reliable way to sniff a
+    // static file's actual media type from its path alone.
+    mediaType?: "image" | "video";
+    // Only meaningful when mediaType is "video" — which flat, static
+    // background color (if any) index_assets.py detected by sampling the
+    // video's four corners (see detect_key_color). "black"/"green" are the
+    // only two supported today; absent means either no consistent flat
+    // background detected, or the source already has real alpha. Drives
+    // which SVG chroma-key filter (see KEY_COLOR_FILTERS in
+    // EpisodeImage.tsx/MomentTreatments.tsx) gets applied at render time —
+    // never inferred client-side, for the same reason mediaType isn't.
+    keyColor?: "black" | "green";
 }
+
+// What a code/ file actually IS, not just its extension — "source" (real
+// text, Shiki-highlighted via CodeBlock, the gold-standard treatment: real
+// tokens, line numbers, progressive reveal) vs. "screenshot" (a static
+// image of code, no text to parse — rendered via the same framed-image
+// treatment graphics/ images already get) vs. "recording" (a screen
+// recording of code being written/scrolled — rendered via the same
+// video-asset/keying treatment graphics/ videos already get, see #77/#78).
+// Defaults to "source" when absent so every code asset indexed before this
+// field existed keeps rendering exactly as before. Set by index_code.py
+// from the file's extension — never inferred client-side.
+export type CodeAssetKind = "source" | "screenshot" | "recording";
 
 export interface EpisodeCodeAsset {
     id: string;
     filename: string;
     path: string;
-    language: string;
+    // Only meaningful for kind "source" — Shiki language id. Absent for
+    // screenshot/recording, which have no text to highlight.
+    language?: string;
     description: string;
-    lineCount: number;
+    // Only meaningful for kind "source".
+    lineCount?: number;
+    kind?: CodeAssetKind;
+    // Only meaningful for kind "recording" — see EpisodeAsset.keyColor's
+    // own doc comment for what this drives.
+    keyColor?: "black" | "green";
 }
 
 export interface BackgroundVideo {
@@ -137,7 +174,7 @@ export interface ComparisonData {
 // layout/prominence choice (full-frame vs. a side panel), not a new kind
 // of content. "code" reuses codeAssetId, the same field side-code already
 // carries.
-export type FullVisualKind = "image" | "diagram" | "text" | "code";
+export type FullVisualKind = "image" | "video" | "diagram" | "text" | "code";
 
 export interface DiagramNode {
     id: string;
@@ -213,9 +250,40 @@ export interface MomentScene {
     comparison?: ComparisonData;
     // Only meaningful when treatment is "bottom-callout" — see MomentEntrance.
     entrance?: MomentEntrance;
+    // Human-set override for this moment's on-screen position/size,
+    // percentage-of-1920x1080-canvas units — set by dragging/resizing the
+    // moment directly on the preview-app's player (see #77). Absent means
+    // "use the treatment's own default geometry" (LAYOUT_GEOMETRY / each
+    // treatment component's own hardcoded layout), unchanged from before
+    // this field existed. Layered ON TOP of the treatment system, not a
+    // replacement for it — the treatment still decides WHAT the moment is
+    // (side-image vs full-visual vs bottom-callout), this only overrides
+    // WHERE/HOW BIG it renders. See timing.ts's resolveBoxStyle, which
+    // every treatment component's outer wrapper calls instead of
+    // hardcoding its own position/size style object.
+    box?: MomentBox;
+    // Where `caption` renders relative to the asset/video it's captioning
+    // (side-image, full-visual image/video/code, content-dominant-code —
+    // any treatment with both an asset and a caption). "overlay" (absent
+    // defaults here too, so every episode from before this field existed
+    // renders unchanged) draws it on top of the asset, same as the
+    // original always-on behavior; "below" reserves a fixed strip beneath
+    // the asset within the moment's own box so the two never collide,
+    // shrinking the asset region to make room; "off" suppresses the
+    // caption entirely regardless of whether `caption` text is set (lets a
+    // human keep a caption's text around without showing it, rather than
+    // forcing them to delete and retype it later).
+    captionPlacement?: "overlay" | "below" | "off";
     parentSceneId: string;
     offsetInParentFrames: number;
     durationInFrames: number;
+}
+
+export interface MomentBox {
+    xPct: number;
+    yPct: number;
+    widthPct: number;
+    heightPct: number;
 }
 
 export interface ImageScene {

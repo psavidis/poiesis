@@ -3,12 +3,13 @@
 import argparse
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from prepare_footage import generate_episode_props_ts
+from prepare_footage import generate_episode_props_ts, get_video_metadata
 
 
 IMAGE_EXTENSIONS = {
@@ -18,6 +19,22 @@ IMAGE_EXTENSIONS = {
     ".webp",
     ".gif",
 }
+
+# Animated graphics (e.g. a logo/bumper animation, possibly alpha-
+# transparent) placed in graphics/ alongside images — indexed the same way,
+# just tagged with mediaType "video" so the renderer knows to mount an
+# <OffthreadVideo> instead of an <Img> for that asset (see Episode.tsx /
+# MomentTreatments.tsx / EpisodeImage.tsx). Not the same set as
+# prepare_footage.py's VIDEO_EXTENSIONS: original_footage/ only ever holds
+# camera output, so its list doesn't need webm; graphics/ is far more likely
+# to hold an exported/alpha-encoded web-style asset.
+VIDEO_EXTENSIONS = {
+    ".mp4",
+    ".mov",
+    ".webm",
+}
+
+MEDIA_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS
 
 IGNORED_FILES = {
     ".DS_Store",
@@ -62,6 +79,177 @@ def default_display_hint(file: Path, graphics_dir: Path) -> str | None:
 def load_json(path: Path):
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
+
+
+# Reference key colors for chroma/luma keying a video asset's background —
+# see Episode.tsx's KEY_COLOR_FILTERS (rendering) and detect_key_color below
+# (detection). Only the two most common static-background colors creators
+# actually export animated graphics against (per the user) — not an
+# open-ended palette, since each one needs its own hand-tuned SVG filter on
+# the rendering side, not just a detection rule here.
+KEY_COLOR_BLACK = (0, 0, 0)
+KEY_COLOR_GREEN = (0, 177, 64)  # a common "chroma key green" reference
+
+# How close a sampled corner's average color must be to a reference key
+# color (per-channel, out of 255) to count as a match — loose enough to
+# absorb compression artifacts and slight export variance, tight enough
+# that a genuinely colorful/bright graphic corner won't false-positive.
+KEY_COLOR_TOLERANCE = 40
+
+
+def _color_distance(a, b):
+    return max(abs(a[i] - b[i]) for i in range(3))
+
+
+# How many samples down a thin center-frame strip _sample_column looks at
+# to find letterbox bars — coarse enough to be cheap, fine enough that a
+# thin bar isn't missed entirely.
+LETTERBOX_SCAN_SAMPLES = 64
+
+# A run of at least this many consecutive near-black samples from an edge
+# counts as a letterbox bar, not just a coincidentally dark few pixels of
+# real content (e.g. a dark hairline at the very top of a frame).
+LETTERBOX_MIN_RUN_FRACTION = 0.05  # 5% of the frame's dimension
+
+
+def _sample_column(video_path: Path, width: int, height: int):
+    """A thin (4px) vertical strip down the frame's horizontal center,
+    downsampled to LETTERBOX_SCAN_SAMPLES points top-to-bottom — used to
+    find where real content starts/ends vertically (see
+    _trim_letterbox_bounds). Returns None on any ffmpeg failure."""
+
+    strip_width = min(4, width)
+    x = max(0, width // 2 - strip_width // 2)
+
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-i", str(video_path),
+            "-vframes", "1",
+            "-vf", f"crop={strip_width}:{height}:{x}:0,scale=1:{LETTERBOX_SCAN_SAMPLES}",
+            "-f", "rawvideo",
+            "-pix_fmt", "rgb24",
+            "-",
+        ],
+        capture_output=True,
+    )
+
+    expected_bytes = LETTERBOX_SCAN_SAMPLES * 3
+
+    if result.returncode != 0 or len(result.stdout) != expected_bytes:
+        return None
+
+    return [tuple(result.stdout[i:i + 3]) for i in range(0, expected_bytes, 3)]
+
+
+def _trim_letterbox_bounds(video_path: Path, width: int, height: int):
+    """Finds the real content's vertical bounds by scanning a center strip
+    for a run of near-black samples at the top and/or bottom — a classic
+    letterbox signature (padding added to fit an aspect ratio, unrelated to
+    whatever the actual content's background color is). Returns (top,
+    bottom) as fractions of height, e.g. (0.0, 1.0) when no letterbox is
+    detected — the corner-sampling in detect_key_color then samples INSIDE
+    these bounds instead of the raw frame, so a letterboxed presenter shot
+    (real background: white) doesn't get corner-sampled from the padding
+    bars (black) and misclassified as a black-keyed graphic. Only checks
+    top/bottom (letterboxing), not left/right (pillarboxing) — every camera
+    export this pipeline has seen so far pads vertically, never
+    horizontally; add a symmetric horizontal scan if that ever changes."""
+
+    column = _sample_column(video_path, width, height)
+
+    if column is None:
+        return 0.0, 1.0
+
+    min_run = max(1, int(len(column) * LETTERBOX_MIN_RUN_FRACTION))
+
+    top_run = 0
+    for sample in column:
+        if _color_distance(sample, KEY_COLOR_BLACK) > KEY_COLOR_TOLERANCE:
+            break
+        top_run += 1
+
+    bottom_run = 0
+    for sample in reversed(column):
+        if _color_distance(sample, KEY_COLOR_BLACK) > KEY_COLOR_TOLERANCE:
+            break
+        bottom_run += 1
+
+    top_fraction = (top_run / len(column)) if top_run >= min_run else 0.0
+    bottom_fraction = (bottom_run / len(column)) if bottom_run >= min_run else 0.0
+
+    # A video that's entirely near-black top-to-bottom (top_run == full
+    # column) is a genuine flat-black background, not letterboxing with
+    # nothing in between — leave bounds untrimmed so detect_key_color still
+    # samples (and correctly matches) the real content.
+    if top_run >= len(column):
+        return 0.0, 1.0
+
+    return top_fraction, 1.0 - bottom_fraction
+
+
+def detect_key_color(video_path: Path):
+    """Classifies a video's background as "black", "green", or None (no
+    match — either a genuinely varied/bright corner, or real alpha already,
+    or ffmpeg couldn't sample it) by averaging four corners of the CONTENT
+    area (see _trim_letterbox_bounds — excludes any letterbox padding
+    first) and comparing each against the two known key colors. Requires
+    ALL FOUR corners to agree, not just one — a graphic with a colored logo
+    mark tucked into one corner (top-left, say) but a plain black
+    background everywhere else should still classify as "black", but a
+    genuinely multi-colored/photographic video (no consistent flat
+    background at all) should classify as None rather than keying based on
+    a single lucky corner."""
+
+    try:
+        metadata = get_video_metadata(video_path)
+    except (subprocess.CalledProcessError, KeyError, StopIteration):
+        return None
+
+    width, height = metadata["width"], metadata["height"]
+
+    top_fraction, bottom_fraction = _trim_letterbox_bounds(video_path, width, height)
+    content_top = int(height * top_fraction)
+    content_bottom = int(height * bottom_fraction)
+    content_height = max(1, content_bottom - content_top)
+
+    crop_size = max(4, min(20, width // 8, content_height // 8))
+
+    corners = [
+        (0, content_top),
+        (max(0, width - crop_size), content_top),
+        (0, max(content_top, content_bottom - crop_size)),
+        (max(0, width - crop_size), max(content_top, content_bottom - crop_size)),
+    ]
+
+    samples = []
+
+    for x, y in corners:
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i", str(video_path),
+                "-vframes", "1",
+                "-vf", f"crop={crop_size}:{crop_size}:{x}:{y},scale=1:1",
+                "-f", "rawvideo",
+                "-pix_fmt", "rgb24",
+                "-",
+            ],
+            capture_output=True,
+        )
+
+        if result.returncode != 0 or len(result.stdout) != 3:
+            return None
+
+        samples.append(tuple(result.stdout))
+
+    for name, reference in (("black", KEY_COLOR_BLACK), ("green", KEY_COLOR_GREEN)):
+        if all(_color_distance(sample, reference) <= KEY_COLOR_TOLERANCE for sample in samples):
+            return name
+
+    return None
 
 
 def write_json_atomic(path: Path, data):
@@ -109,7 +297,7 @@ def list_asset_files(graphics_dir: Path):
         for f in graphics_dir.rglob("*")
         if f.is_file()
            and f.name not in IGNORED_FILES
-           and f.suffix.lower() in IMAGE_EXTENSIONS
+           and f.suffix.lower() in MEDIA_EXTENSIONS
     )
 
     return files
@@ -127,8 +315,15 @@ def index_assets(episode: Path):
 
         existing = load_json(output_path)
 
+        # Keyed by filename, not id — an asset's id is purely positional
+        # (see next_index_by_media_type below), so adding or removing any
+        # OTHER file in the folder shifts every later id and would
+        # silently reattach a stale manually-edited caption to the wrong
+        # file if this were keyed by id instead (see #80's real-world
+        # case: removing one video file shifted every later id by one,
+        # and the previous asset's caption followed the id, not the file).
         existing_captions = {
-            asset["id"]: asset["caption"]
+            asset["filename"]: asset["caption"]
             for asset in existing.get("assets", [])
         }
 
@@ -136,12 +331,23 @@ def index_assets(episode: Path):
 
     assets = []
 
-    for index, file in enumerate(files, start=1):
+    # Separate id sequences per media type ("img-001", "vid-001", ...) —
+    # not one running index across both — so adding/removing a video never
+    # renumbers (and thus never re-anchors, since ids are what moments.json
+    # references) an existing image's id, and vice versa.
+    next_index_by_media_type = {"image": 1, "video": 1}
 
-        asset_id = f"img-{index:03d}"
+    for file in files:
+
+        is_video = file.suffix.lower() in VIDEO_EXTENSIONS
+        media_type = "video" if is_video else "image"
+        id_prefix = "vid" if is_video else "img"
+
+        asset_id = f"{id_prefix}-{next_index_by_media_type[media_type]:03d}"
+        next_index_by_media_type[media_type] += 1
 
         caption = existing_captions.get(
-            asset_id,
+            file.name,
             caption_from_filename(file.name)
         )
 
@@ -151,7 +357,13 @@ def index_assets(episode: Path):
             "path": str(file.relative_to(episode)),
             "renderPath": str(Path("episodes") / episode.name / "graphics" / file.relative_to(graphics_dir)),
             "caption": caption,
+            "mediaType": media_type,
         }
+
+        if is_video:
+            key_color = detect_key_color(file)
+            if key_color:
+                asset["keyColor"] = key_color
 
         hint = default_display_hint(file, graphics_dir)
 
