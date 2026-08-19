@@ -82,7 +82,7 @@ def test_index_backgrounds_preserves_manually_edited_caption_by_filename(tmp_pat
     (background / "office.mp4").write_bytes(b"fake")
 
     (processing / "backgrounds.json").write_text(
-        json.dumps({"backgrounds": [{"filename": "office.mp4", "caption": "Hand-edited caption"}]})
+        json.dumps({"backgrounds": [{"id": "bg-001", "filename": "office.mp4", "caption": "Hand-edited caption"}]})
     )
 
     with patch("index_backgrounds.get_video_metadata", side_effect=_fake_video_metadata):
@@ -104,8 +104,8 @@ def test_index_backgrounds_removing_a_file_does_not_reattach_caption_to_wrong_fi
     (processing / "backgrounds.json").write_text(
         json.dumps({
             "backgrounds": [
-                {"filename": "a.mp4", "caption": "Caption A"},
-                {"filename": "b.mp4", "caption": "Caption B"},
+                {"id": "bg-001", "filename": "a.mp4", "caption": "Caption A"},
+                {"id": "bg-002", "filename": "b.mp4", "caption": "Caption B"},
             ]
         })
     )
@@ -119,6 +119,62 @@ def test_index_backgrounds_removing_a_file_does_not_reattach_caption_to_wrong_fi
     assert len(backgrounds) == 1
     assert backgrounds[0]["filename"] == "b.mp4"
     assert backgrounds[0]["caption"] == "Caption B"
+
+
+def test_index_backgrounds_keeps_existing_id_stable_when_a_new_file_sorts_earlier(tmp_path):
+    # Regression: adding a second file that sorts ALPHABETICALLY BEFORE an
+    # already-indexed one must not renumber the existing file's id — a
+    # background_scenes.json entry holding that id as a live foreign key
+    # would otherwise silently start resolving to a DIFFERENT file with
+    # no error (confirmed live: this exact scenario reassigned bg-002 from
+    # one image to a newly-added one that sorted earlier).
+    episode = tmp_path / "episode"
+    background = episode / "background"
+    background.mkdir(parents=True)
+    processing = episode / "processing"
+    processing.mkdir()
+
+    (background / "zebra.png").write_bytes(b"fake")
+
+    with patch("index_backgrounds.get_video_metadata", side_effect=_fake_video_metadata):
+        first_pass = index_backgrounds(episode)
+
+    zebra_id = next(b["id"] for b in first_pass if b["filename"] == "zebra.png")
+
+    # "apple.png" sorts alphabetically BEFORE "zebra.png" — a purely
+    # positional id scheme would reassign zebra's old id to apple here.
+    (background / "apple.png").write_bytes(b"fake")
+
+    with patch("index_backgrounds.get_video_metadata", side_effect=_fake_video_metadata):
+        second_pass = index_backgrounds(episode)
+
+    by_filename = {b["filename"]: b for b in second_pass}
+
+    assert by_filename["zebra.png"]["id"] == zebra_id
+    assert by_filename["apple.png"]["id"] != zebra_id
+
+
+def test_index_backgrounds_assigns_new_ids_without_colliding_with_existing_ones(tmp_path):
+    episode = tmp_path / "episode"
+    background = episode / "background"
+    background.mkdir(parents=True)
+    processing = episode / "processing"
+    processing.mkdir()
+
+    (processing / "backgrounds.json").write_text(
+        json.dumps({"backgrounds": [{"id": "bg-005", "filename": "existing.png", "caption": "Existing"}]})
+    )
+
+    (background / "existing.png").write_bytes(b"fake")
+    (background / "new.png").write_bytes(b"fake")
+
+    with patch("index_backgrounds.get_video_metadata", side_effect=_fake_video_metadata):
+        backgrounds = index_backgrounds(episode)
+
+    by_filename = {b["filename"]: b for b in backgrounds}
+
+    assert by_filename["existing.png"]["id"] == "bg-005"
+    assert by_filename["new.png"]["id"] == "bg-006"  # continues past the highest existing number, not bg-001
 
 
 def test_probe_has_alpha_reads_metadata_flag(tmp_path):

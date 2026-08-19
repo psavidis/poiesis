@@ -83,26 +83,54 @@ def index_backgrounds(episode: Path):
     output_path = processing / "backgrounds.json"
 
     existing_captions = {}
+    # Keyed by filename, not recomputed positionally — a background's id
+    # is referenced by background_scenes.json's own backgroundId (a real
+    # bug hit live: adding a second image alphabetically ahead of the
+    # first silently renumbered bg-002 to point at a DIFFERENT file, so an
+    # already-inserted background's segment started rendering the wrong
+    # image with no error, nothing visibly broken until the render was
+    # actually watched). Same "keyed by filename, never by position" fix
+    # already applied to assets.json/code_assets.json's own captions/
+    # descriptions (#80) — reused here for the id itself, which matters
+    # even more for backgrounds since the id is a live foreign key another
+    # file (background_scenes.json) holds onto, not just a caption that's
+    # cosmetically wrong until re-edited. Keeps the existing flat "bg-NNN"
+    # scheme (not a new per-media-type prefix) specifically so any
+    # bg-NNN id already saved in an episode's background_scenes.json from
+    # before this fix keeps resolving to the SAME file it always did,
+    # rather than orphaning every existing reference by switching schemes.
+    existing_ids_by_filename = {}
 
     if output_path.exists():
         existing = load_json(output_path)
-        existing_captions = {
-            bg["filename"]: bg["caption"]
-            for bg in existing.get("backgrounds", [])
-        }
+        for bg in existing.get("backgrounds", []):
+            existing_captions[bg["filename"]] = bg["caption"]
+            existing_ids_by_filename[bg["filename"]] = bg["id"]
 
     files = list_background_files(background_dir)
 
     backgrounds = []
-    next_index = 1
+
+    used_numbers = set()
+    for existing_id in existing_ids_by_filename.values():
+        match = re.match(r"^bg-(\d+)$", existing_id)
+        if match:
+            used_numbers.add(int(match.group(1)))
+
+    next_number = max(used_numbers, default=0) + 1
 
     for file in files:
 
         is_video = file.suffix.lower() in VIDEO_EXTENSIONS
         media_type = "video" if is_video else "image"
 
-        background_id = f"bg-{next_index:03d}"
-        next_index += 1
+        existing_id = existing_ids_by_filename.get(file.name)
+
+        if existing_id and re.match(r"^bg-\d+$", existing_id):
+            background_id = existing_id
+        else:
+            background_id = f"bg-{next_number:03d}"
+            next_number += 1
 
         caption = existing_captions.get(file.name, caption_from_filename(file.name))
 
