@@ -118,7 +118,7 @@ def test_resolve_phrase_joins_contiguous_words():
 
     assert phrase == {
         "sceneId": "scene-001",
-        "text": "dependency injection",
+        "text": "Dependency injection",
         "offsetInParentFrames": 0,
         "durationInFrames": 30,
     }
@@ -166,7 +166,7 @@ def test_resolve_phrase_strips_trailing_sentence_punctuation():
 
     phrase = resolve_phrase(["scene-001-w0", "scene-001-w1"], candidates)
 
-    assert phrase["text"] == "dependency injection"
+    assert phrase["text"] == "Dependency injection"
 
 
 def test_resolve_phrase_joins_hyphen_prefixed_token_without_space():
@@ -181,7 +181,7 @@ def test_resolve_phrase_joins_hyphen_prefixed_token_without_space():
 
     phrase = resolve_phrase(["scene-001-w0", "scene-001-w1"], candidates)
 
-    assert phrase["text"] == "domain-driven"
+    assert phrase["text"] == "Domain-driven"
 
 
 def test_resolve_phrase_rejects_phrase_that_is_pure_punctuation():
@@ -291,7 +291,7 @@ def test_propose_emphasis_accepts_valid_word_pop():
 
     assert len(proposals) == 1
     assert proposals[0]["kind"] == "word-pop"
-    assert proposals[0]["text"] == "dependency injection"
+    assert proposals[0]["text"] == "Dependency injection"
     assert proposals[0]["icon"] is None
 
 
@@ -482,7 +482,7 @@ def test_propose_emphasis_enforces_minimum_gap_between_beats():
     )
 
     assert len(proposals) == 1
-    assert proposals[0]["text"] == "dependency"
+    assert proposals[0]["text"] == "Dependency"
 
 
 def test_propose_emphasis_rejects_beat_colliding_with_existing_moment():
@@ -543,7 +543,7 @@ def test_merge_beat_scenes_inserts_overlay():
         {
             "sceneId": "scene-001",
             "kind": "word-pop",
-            "text": "dependency injection",
+            "text": "Dependency injection",
             "icon": None,
             "offsetInParentFrames": 0,
             "durationInFrames": 24,
@@ -555,7 +555,7 @@ def test_merge_beat_scenes_inserts_overlay():
     beat_scene = next(s for s in result["scenes"] if s["type"] == "beat")
 
     assert beat_scene["kind"] == "word-pop"
-    assert beat_scene["text"] == "dependency injection"
+    assert beat_scene["text"] == "Dependency injection"
     assert beat_scene["parentSceneId"] == "scene-001"
     assert "icon" not in beat_scene
 
@@ -615,7 +615,7 @@ def test_merge_beat_scenes_clamps_duration_that_overflows_parent_scene():
         {
             "sceneId": "scene-001",
             "kind": "word-pop",
-            "text": "dependency injection",
+            "text": "Dependency injection",
             "icon": None,
             "offsetInParentFrames": 280,
             "durationInFrames": 60,  # would end at 340, past the scene's 300
@@ -636,7 +636,7 @@ def test_merge_beat_scenes_drops_beat_with_no_room_left_in_parent_scene():
         {
             "sceneId": "scene-001",
             "kind": "word-pop",
-            "text": "dependency injection",
+            "text": "Dependency injection",
             "icon": None,
             "offsetInParentFrames": 300,  # already at the scene's own end
             "durationInFrames": 60,
@@ -657,7 +657,7 @@ def test_merge_beat_scenes_does_not_clamp_a_duration_that_already_fits():
         {
             "sceneId": "scene-001",
             "kind": "word-pop",
-            "text": "dependency injection",
+            "text": "Dependency injection",
             "icon": None,
             "offsetInParentFrames": 0,
             "durationInFrames": 60,

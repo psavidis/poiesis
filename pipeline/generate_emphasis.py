@@ -9,6 +9,18 @@ from pathlib import Path
 PIPELINE_DIR = Path(__file__).parent
 PROJECT_ROOT = PIPELINE_DIR.parent
 
+
+def capitalize_first_letter(text: str) -> str:
+    """Ensure beat text always starts with a capital letter.
+
+    Beats are short on-screen accents, not prose — they should always
+    begin with an uppercase letter for consistent UI rendering.
+    """
+    if not text:
+        return text
+    return text[0].upper() + text[1:]
+
+
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from llm.client import LLMClient  # noqa: E402
@@ -215,7 +227,7 @@ def resolve_phrase(word_ids, candidates_by_word_id):
 
     return {
         "sceneId": scene_id,
-        "text": text,
+        "text": capitalize_first_letter(text),
         "offsetInParentFrames": offset,
         "durationInFrames": max(1, end - offset),
     }
@@ -326,7 +338,7 @@ def propose_emphasis(scene_plan, transcript, manifest, llm: LLMClient, prompt_te
             {
                 "sceneId": scene_id,
                 "kind": kind,
-                "text": phrase["text"],
+                "text": capitalize_first_letter(phrase["text"]),
                 "icon": icon,
                 "offsetInParentFrames": offset,
                 "durationInFrames": duration,
@@ -483,7 +495,7 @@ def merge_beat_scenes(scene_plan, proposals):
             "id": f"scene-beat-{index}",
             "type": "beat",
             "kind": proposal["kind"],
-            "text": proposal["text"],
+            "text": capitalize_first_letter(proposal["text"]),
             "parentSceneId": proposal["sceneId"],
             "offsetInParentFrames": offset,
             "durationInFrames": duration,
