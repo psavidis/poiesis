@@ -74,6 +74,11 @@ interface Props {
     // updates on the next event and can lag the true playhead by a
     // couple of frames (see EpisodeWorkspace.tsx).
     getCurrentFrame: () => number;
+    // See BeatBar's identical prop's own doc comment — mutual-exclusion
+    // signal so this bar's selection (and its Cmd+E listener) clears
+    // itself once a different bar becomes the active selection owner.
+    activeSelectionBar: string | null;
+    onActivateSelection: () => void;
 }
 
 // One "gap" (no background) or "span" (an inserted background, running
@@ -139,11 +144,19 @@ export function BackgroundBar({
     backgrounds,
     timelineZoom,
     getCurrentFrame,
+    activeSelectionBar,
+    onActivateSelection,
 }: Props) {
     const { windowFrames, windowStartFrame, frameToPct, playheadPct, playheadVisible, zoomToAtLeast4x } =
         timelineZoom;
 
     const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+
+    // See BeatBar's identical effect's own doc comment — clears this bar's
+    // selection once a different bar takes over the shared selection.
+    useEffect(() => {
+        if (activeSelectionBar !== "background") setSelectedIndex(null);
+    }, [activeSelectionBar]);
     const [pendingDeleteIndex, setPendingDeleteIndex] = useState<number | null>(null);
     const [insertPickerAnchor, setInsertPickerAnchor] = useState<{ x: number; y: number } | null>(null);
     // The frame the insert picker was opened at (Cmd+B keydown), captured
@@ -428,6 +441,7 @@ export function BackgroundBar({
                                     ? (e) => {
                                           e.stopPropagation();
                                           selectedAnchorRef.current = { x: e.clientX, y: e.clientY };
+                                          onActivateSelection();
                                           setSelectedIndex(i);
                                           setPendingDeleteIndex(null);
                                           // Seeks to the CLICKED position, not the

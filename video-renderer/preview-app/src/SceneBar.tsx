@@ -38,6 +38,11 @@ interface Props {
     // by EpisodeWorkspace, not this component, so zooming here keeps every
     // other bar in sync instead of each bar tracking its own scale.
     timelineZoom: TimelineZoom;
+    // See BeatBar's identical prop's own doc comment — mutual-exclusion
+    // signal so this bar's selection (and its Cmd+E listener) clears
+    // itself once a different bar becomes the active selection owner.
+    activeSelectionBar: string | null;
+    onActivateSelection: () => void;
 }
 
 // Minimum on-screen duration a dragged title can be shrunk to, so a fast
@@ -61,6 +66,8 @@ export function SceneBar({
     episodePath,
     onSaved,
     timelineZoom,
+    activeSelectionBar,
+    onActivateSelection,
 }: Props) {
     const { zoom, windowFrames, windowStartFrame, frameToPct, playheadPct, playheadVisible, zoomToAtLeast4x } =
         timelineZoom;
@@ -68,6 +75,12 @@ export function SceneBar({
     const [selectedTitle, setSelectedTitle] = useState<string | null>(null);
     const selectedAnchorRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
     const trackRef = useRef<HTMLDivElement>(null);
+
+    // See BeatBar's identical effect's own doc comment — clears this bar's
+    // selection once a different bar takes over the shared selection.
+    useEffect(() => {
+        if (activeSelectionBar !== "scene") setSelectedTitle(null);
+    }, [activeSelectionBar]);
 
     // Drag-to-resize a selected title's on-screen duration (#83) — same
     // ref-driven "mutate during move, commit once on mouseup" pattern as
@@ -92,6 +105,7 @@ export function SceneBar({
         const scene = scenePlan.scenes.find((s) => s.id === highlightedId);
         if (!scene || (scene.type !== "presenter" && scene.type !== "title")) return;
         if (scene.type === "title") {
+            onActivateSelection();
             setSelectedTitle(scene.text);
             zoomToAtLeast4x(scene.timelineStartFrame + scene.durationInFrames / 2);
         }
@@ -250,6 +264,7 @@ export function SceneBar({
                                           if (isDragging) return;
                                           e.stopPropagation();
                                           selectedAnchorRef.current = { x: e.clientX, y: e.clientY };
+                                          onActivateSelection();
                                           setSelectedTitle(scene.text);
                                           onSeek(scene.timelineStartFrame);
                                           // Auto-zooms in around the just-selected title so

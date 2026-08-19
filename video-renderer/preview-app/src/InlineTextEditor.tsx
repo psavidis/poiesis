@@ -29,8 +29,11 @@ export function isTextEligible(target: EditTarget): boolean {
 
 // scene-beat-{N} is exactly the array index of emphasis.json's beats list
 // (see generate_emphasis.py's merge_beat_scenes) — same exact-index
-// convention momentIndexFromSceneId already relies on for moments.
-function beatIndexFromSceneId(sceneId: string): number | null {
+// convention momentIndexFromSceneId already relies on for moments. Exported
+// for BeatEditorPanel, which needs the same lookup to reach the same
+// emphasis.json entry's non-text fields (kind/icon) this file's own text-
+// only editor doesn't expose.
+export function beatIndexFromSceneId(sceneId: string): number | null {
     const match = /^scene-beat-(\d+)$/.exec(sceneId);
     return match ? Number(match[1]) : null;
 }

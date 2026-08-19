@@ -34,6 +34,15 @@ interface Props {
     // Single zoom/pan window shared with Scenes/Images/Moments (#86) —
     // owned by EpisodeWorkspace, not this component.
     timelineZoom: TimelineZoom;
+    // Which bar currently owns the shared "selected segment" affordance —
+    // set to "beat" via onActivateSelection whenever THIS bar's own click
+    // selects a beat, so a sibling bar's stale selection (e.g. a moment
+    // clicked earlier) gets cleared instead of both bars' Cmd+E listeners
+    // staying live at once (see EpisodeWorkspace's activeSelectionBar).
+    // When this prop stops being "beat" (another bar just took over),
+    // this bar clears its own selectedBeatId in response.
+    activeSelectionBar: string | null;
+    onActivateSelection: () => void;
 }
 
 type DragState = {
@@ -83,6 +92,8 @@ export function BeatBar({
     onEditRequested,
     highlightedId,
     timelineZoom,
+    activeSelectionBar,
+    onActivateSelection,
 }: Props) {
     const { zoom, windowFrames, windowStartFrame, frameToPct, playheadPct, playheadVisible, zoomToAtLeast4x } =
         timelineZoom;
@@ -111,6 +122,15 @@ export function BeatBar({
     // moments/images), but removal is just as safe here as anywhere else.
     const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
     const selectedAnchorRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+    // Another bar (moment/image/scene/chapter/background) just became the
+    // active selection owner — clear this bar's own selection so its Cmd+E
+    // listener below goes dormant instead of firing alongside whichever
+    // bar the user actually clicked into (see activeSelectionBar's own doc
+    // comment in EpisodeWorkspace for the bug this fixes).
+    useEffect(() => {
+        if (activeSelectionBar !== "beat") setSelectedBeatId(null);
+    }, [activeSelectionBar]);
     const trackRef = useRef<HTMLDivElement>(null);
     const dragRef = useRef<DragState | null>(null);
 
@@ -257,6 +277,7 @@ export function BeatBar({
         if (!highlightedId) return;
         const entry = resolved.find((r) => r.beat.id === highlightedId);
         if (!entry) return;
+        onActivateSelection();
         setSelectedBeatId(highlightedId);
         onSeek(entry.startFrame);
         zoomToAtLeast4x(entry.startFrame);
@@ -422,6 +443,7 @@ export function BeatBar({
                                 if (isDragging) return;
                                 e.stopPropagation();
                                 selectedAnchorRef.current = { x: e.clientX, y: e.clientY };
+                                onActivateSelection();
                                 setSelectedBeatId(beat.id);
                                 setPendingDeleteId(null);
                                 onSeek(startFrame);

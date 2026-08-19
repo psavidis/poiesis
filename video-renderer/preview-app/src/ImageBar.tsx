@@ -33,6 +33,11 @@ interface Props {
     // Single zoom/pan window shared with Scenes/Moments/Beats (#86) —
     // owned by EpisodeWorkspace, not this component.
     timelineZoom: TimelineZoom;
+    // See BeatBar's identical prop's own doc comment — mutual-exclusion
+    // signal so this bar's selection (and its Cmd+E listener) clears
+    // itself once a different bar becomes the active selection owner.
+    activeSelectionBar: string | null;
+    onActivateSelection: () => void;
 }
 
 type DragMode = "move" | "resize";
@@ -64,6 +69,8 @@ export function ImageBar({
     onEditRequested,
     highlightedId,
     timelineZoom,
+    activeSelectionBar,
+    onActivateSelection,
 }: Props) {
     const { zoom, windowFrames, windowStartFrame, frameToPct, playheadPct, playheadVisible, zoomToAtLeast4x } =
         timelineZoom;
@@ -77,6 +84,12 @@ export function ImageBar({
     const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
     const trackRef = useRef<HTMLDivElement>(null);
     const dragRef = useRef<DragState | null>(null);
+
+    // See BeatBar's identical effect's own doc comment — clears this bar's
+    // selection once a different bar takes over the shared selection.
+    useEffect(() => {
+        if (activeSelectionBar !== "image") setSelectedImageId(null);
+    }, [activeSelectionBar]);
 
     // resolved/windowFrames etc. are computed unconditionally (not gated
     // behind the totalFrames/empty-state early returns below) — those
@@ -245,6 +258,7 @@ export function ImageBar({
         if (!highlightedId) return;
         const entry = resolved.find((r) => r.image.id === highlightedId);
         if (!entry) return;
+        onActivateSelection();
         setSelectedImageId(highlightedId);
         onSeek(entry.startFrame);
         zoomToAtLeast4x(entry.startFrame);
@@ -308,6 +322,7 @@ export function ImageBar({
                             onClick={(e) => {
                                 if (isDragging) return;
                                 e.stopPropagation();
+                                onActivateSelection();
                                 setSelectedImageId(image.id);
                                 setPendingDeleteId(null);
                                 onSeek(startFrame);

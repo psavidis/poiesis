@@ -8,6 +8,7 @@ import { AdvancedPanel } from "./AdvancedPanel";
 import { AssetLibraryPanel } from "./AssetLibraryPanel";
 import { BackgroundBar } from "./BackgroundBar";
 import { BeatBar } from "./BeatBar";
+import { BeatEditorPanel } from "./BeatEditorPanel";
 import { ChapterStrip } from "./ChapterStrip";
 import { EditPlanChat } from "./EditPlanChat";
 import { EpisodeAnalysisPanel } from "./EpisodeAnalysisPanel";
@@ -96,7 +97,24 @@ export function EpisodeWorkspace() {
         | { kind: "title"; titleText: string }
         | { kind: "moment"; sceneId: string }
         | { kind: "image"; sceneId: string }
+        | { kind: "beat"; sceneId: string }
         | null
+    >(null);
+
+    // Which bar currently owns the "selected segment" affordance — each of
+    // Chapter/Background/Scene/Moment/Image/Beat bars keeps its own local
+    // selectedXId (so a click there highlights just that bar's own
+    // segment), but those were never mutually exclusive: clicking a beat
+    // never cleared a moment selected earlier, so both bars' Cmd+E
+    // listeners stayed live at once and Cmd+E could open whichever bar's
+    // handler happened to run last — reported as "editing a beat opens the
+    // moment panel instead." Each bar now reports here when ITS OWN click
+    // sets a selection, and clears its own local selection whenever this
+    // no longer names it (see each bar's own new activeSelectionBar prop/
+    // effect) — so only the most-recently-clicked bar's segment stays
+    // selected, and only its Cmd+E listener has anything to fire for.
+    const [activeSelectionBar, setActiveSelectionBar] = useState<
+        "chapter" | "background" | "scene" | "moment" | "image" | "beat" | null
     >(null);
 
     // Which moment AssetLibraryPanel is targeting — deliberately separate
@@ -172,10 +190,19 @@ export function EpisodeWorkspace() {
         setInlineEditTarget({ kind: "new-title", newTitleSegmentId: segmentId });
     };
 
-    const openInlineBeatEditor = (sceneId: string, anchor: { x: number; y: number }) => {
-        setSelectedEditor(null);
-        setInlineEditAnchor(anchor);
-        setInlineEditTarget({ kind: "beat", sceneId });
+    // Opens BeatEditorPanel (kind/text/icon — the full emphasis.json entry)
+    // rather than the plain-text InlineTextEditor a beat used to open here.
+    // Beats never had a MomentBar-style "quick inline edit vs. full
+    // structured panel" split the way moments do — the inline text box was
+    // the ONLY way to edit a beat, so this simply upgrades that one Cmd+E
+    // entry point to the structured panel rather than adding a second path
+    // alongside it. anchor is accepted (BeatBar's onEditRequested still
+    // passes it, unchanged) but unused — this panel renders in the fixed
+    // playerWrap column like MomentEditorPanel/ImageEditorPanel, not as a
+    // floating box positioned near the click.
+    const openBeatEditor = (sceneId: string, _anchor: { x: number; y: number }) => {
+        setInlineEditTarget(null);
+        setSelectedEditor({ kind: "beat", sceneId });
     };
 
     const openInlineCaptionEditor = (sceneId: string, anchor: { x: number; y: number }) => {
@@ -184,32 +211,11 @@ export function EpisodeWorkspace() {
         setInlineEditTarget({ kind: "caption", sceneId });
     };
 
-    // Patches the selected beat's text directly in local episodeProps state
-    // on every keystroke — playerProps (below) re-derives from this, so the
-    // Player picks up the edit immediately, before the real save commits
-    // (see #39). The real save (InlineTextEditor's onSaved) still calls
-    // reloadScenePlan afterward, which re-fetches from disk and overwrites
-    // this local patch with the authoritative value.
-    const applyLiveBeatText = (sceneId: string, text: string) => {
-        setEpisodeProps((prev) => {
-            if (!prev) return prev;
-            return {
-                ...prev,
-                scenePlan: {
-                    ...prev.scenePlan,
-                    scenes: prev.scenePlan.scenes.map((s) =>
-                        s.type === "beat" && s.id === sceneId ? { ...s, text } : s
-                    ),
-                },
-            };
-        });
-    };
-
-    // Same live-patch-before-real-save pattern as applyLiveBeatText above,
-    // for MomentBoxOverlay's drag/resize (#77) — called on every
-    // pointermove, not just once at drag-end, so the Player's actual
-    // composited output grows/shrinks/moves in step with the drag instead
-    // of only jumping to the new box after the save round-trip completes.
+    // Live-patch-before-real-save pattern for MomentBoxOverlay's drag/
+    // resize (#77) — called on every pointermove, not just once at
+    // drag-end, so the Player's actual composited output grows/shrinks/
+    // moves in step with the drag instead of only jumping to the new box
+    // after the save round-trip completes.
     const applyLiveMomentBox = (sceneId: string, box: { xPct: number; yPct: number; widthPct: number; heightPct: number }) => {
         setEpisodeProps((prev) => {
             if (!prev) return prev;
@@ -764,6 +770,8 @@ export function EpisodeWorkspace() {
                     highlightedTitleText={highlightedByType.titleText}
                     episodePath={episodePath}
                     onSaved={reloadScenePlan}
+                    activeSelectionBar={activeSelectionBar}
+                    onActivateSelection={() => setActiveSelectionBar("chapter")}
                 />
             </div>
 
@@ -811,6 +819,8 @@ export function EpisodeWorkspace() {
                     backgrounds={episodeProps.backgrounds ?? []}
                     timelineZoom={timelineZoom}
                     getCurrentFrame={getCurrentFrame}
+                    activeSelectionBar={activeSelectionBar}
+                    onActivateSelection={() => setActiveSelectionBar("background")}
                 />
             </div>
 
@@ -825,6 +835,8 @@ export function EpisodeWorkspace() {
                     episodePath={episodePath}
                     onSaved={reloadScenePlan}
                     timelineZoom={timelineZoom}
+                    activeSelectionBar={activeSelectionBar}
+                    onActivateSelection={() => setActiveSelectionBar("scene")}
                 />
             </div>
 
@@ -843,6 +855,8 @@ export function EpisodeWorkspace() {
                     onSelect={setAssetLibraryMomentId}
                     highlightedId={highlightedByType.momentId}
                     timelineZoom={timelineZoom}
+                    activeSelectionBar={activeSelectionBar}
+                    onActivateSelection={() => setActiveSelectionBar("moment")}
                 />
             </div>
 
@@ -860,6 +874,8 @@ export function EpisodeWorkspace() {
                     }}
                     highlightedId={highlightedByType.imageId}
                     timelineZoom={timelineZoom}
+                    activeSelectionBar={activeSelectionBar}
+                    onActivateSelection={() => setActiveSelectionBar("image")}
                 />
             </div>
 
@@ -871,7 +887,9 @@ export function EpisodeWorkspace() {
                     onSeek={seekToAbsoluteFrame}
                     episodePath={episodePath}
                     onSaved={reloadScenePlan}
-                    onEditRequested={openInlineBeatEditor}
+                    activeSelectionBar={activeSelectionBar}
+                    onActivateSelection={() => setActiveSelectionBar("beat")}
+                    onEditRequested={openBeatEditor}
                     highlightedId={highlightedByType.beatId}
                     timelineZoom={timelineZoom}
                 />
@@ -884,11 +902,6 @@ export function EpisodeWorkspace() {
                     anchor={inlineEditAnchor}
                     onSaved={reloadScenePlan}
                     onClose={() => setInlineEditTarget(null)}
-                    onLiveChange={
-                        inlineEditTarget.kind === "beat"
-                            ? (text) => applyLiveBeatText(inlineEditTarget.sceneId, text)
-                            : undefined
-                    }
                 />
             )}
 
@@ -962,6 +975,18 @@ export function EpisodeWorkspace() {
                         episodePath={episodePath}
                         sceneId={selectedEditor.sceneId}
                         scenePlan={episodeProps.scenePlan}
+                        onSaved={reloadScenePlan}
+                        onClose={() => setSelectedEditor(null)}
+                    />
+                </div>
+            )}
+
+            {selectedEditor?.kind === "beat" && (
+                <div style={styles.playerWrap}>
+                    <BeatEditorPanel
+                        episodePath={episodePath}
+                        sceneId={selectedEditor.sceneId}
+                        refreshKey={refreshKey}
                         onSaved={reloadScenePlan}
                         onClose={() => setSelectedEditor(null)}
                     />

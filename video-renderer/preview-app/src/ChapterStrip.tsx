@@ -97,6 +97,14 @@ interface Props {
     highlightedTitleText?: string | null;
     episodePath: string;
     onSaved?: () => void;
+    // See BeatBar's identical prop's own doc comment — mutual-exclusion
+    // signal so this bar's selection (and its Cmd+E listener) clears
+    // itself once a different bar becomes the active selection owner.
+    // Optional, like onSelectTitle/onSaved above: a standalone caller with
+    // no sibling bars to coordinate with can omit both and this bar's
+    // selection just behaves as it always did (never cleared externally).
+    activeSelectionBar?: string | null;
+    onActivateSelection?: () => void;
 }
 
 type DragState = {
@@ -130,6 +138,8 @@ export function ChapterStrip({
     highlightedTitleText,
     episodePath,
     onSaved,
+    activeSelectionBar,
+    onActivateSelection,
 }: Props) {
     const titles = scenePlan.scenes
         .filter((s): s is TitleScene => s.type === "title")
@@ -156,6 +166,18 @@ export function ChapterStrip({
     const [leadInSelected, setLeadInSelected] = useState(false);
     const selectedAnchorRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
     const trackRef = useRef<HTMLDivElement>(null);
+
+    // See BeatBar's identical effect's own doc comment — clears this bar's
+    // selection once a different bar takes over the shared selection.
+    // undefined activeSelectionBar (standalone use, see the prop's own
+    // comment) means this never fires, matching the pre-existing behavior.
+    useEffect(() => {
+        if (activeSelectionBar === undefined) return;
+        if (activeSelectionBar !== "chapter") {
+            setSelectedTitle(null);
+            setLeadInSelected(false);
+        }
+    }, [activeSelectionBar]);
 
     // Every transcript segment's resolved timeline frame — fetched once
     // per episode so a boundary drag can snap client-side with no
@@ -199,6 +221,7 @@ export function ChapterStrip({
         if (!highlightedTitleText) return;
         const chapter = titles.find((t) => t.text === highlightedTitleText);
         if (!chapter) return;
+        onActivateSelection?.();
         setSelectedTitle(highlightedTitleText);
         setLeadInSelected(false);
         onSeek(chapter.timelineStartFrame);
@@ -465,6 +488,7 @@ export function ChapterStrip({
                                     ? (e) => {
                                           e.stopPropagation();
                                           selectedAnchorRef.current = { x: e.clientX, y: e.clientY };
+                                          onActivateSelection?.();
                                           if (isLeadIn) {
                                               setLeadInSelected(true);
                                               setSelectedTitle(null);

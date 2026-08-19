@@ -82,6 +82,11 @@ interface Props {
     // Single zoom/pan window shared with Scenes/Images/Beats (#86) — owned
     // by EpisodeWorkspace, not this component.
     timelineZoom: TimelineZoom;
+    // See BeatBar's identical prop's own doc comment — mutual-exclusion
+    // signal so this bar's selection (and its Cmd+E listener) clears
+    // itself once a different bar becomes the active selection owner.
+    activeSelectionBar: string | null;
+    onActivateSelection: () => void;
 }
 
 type DragMode = "move" | "resize";
@@ -118,6 +123,8 @@ export function MomentBar({
     highlightedId,
     onSelect,
     timelineZoom,
+    activeSelectionBar,
+    onActivateSelection,
 }: Props) {
     const { zoom, windowFrames, windowStartFrame, frameToPct, playheadPct, playheadVisible, zoomToAtLeast4x } =
         timelineZoom;
@@ -141,6 +148,12 @@ export function MomentBar({
     const selectedAnchorRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
     const trackRef = useRef<HTMLDivElement>(null);
     const dragRef = useRef<DragState | null>(null);
+
+    // See BeatBar's identical effect's own doc comment — clears this bar's
+    // selection once a different bar takes over the shared selection.
+    useEffect(() => {
+        if (activeSelectionBar !== "moment") setSelectedMomentId(null);
+    }, [activeSelectionBar]);
 
     // resolved/presenterAtPlayhead/etc. are computed unconditionally, NOT
     // gated behind an early return here — every hook in this component
@@ -277,6 +290,7 @@ export function MomentBar({
         if (!highlightedId) return;
         const entry = resolved.find((r) => r.moment.id === highlightedId);
         if (!entry) return;
+        onActivateSelection();
         setSelectedMomentId(highlightedId);
         onSeek(entry.startFrame);
         // Center on entry.startFrame directly, not the player's current
@@ -403,6 +417,7 @@ export function MomentBar({
             onSelect?.(result.sceneId);
 
             if (kind === "text") {
+                onActivateSelection();
                 setSelectedMomentId(result.sceneId);
             }
             onOpenStructuredEditor(result.sceneId);
@@ -546,6 +561,7 @@ export function MomentBar({
                                 // what confused a user with no reason to know
                                 // "text-eligible" is even a concept.
                                 selectedAnchorRef.current = { x: e.clientX, y: e.clientY };
+                                onActivateSelection();
                                 setSelectedMomentId(moment.id);
                                 onSeek(startFrame);
                             }}
