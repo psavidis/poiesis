@@ -354,6 +354,27 @@ export const getChapterBoundaryPositions = (episodePath: string) =>
         .then((data) => (data.positions ?? []) as ChapterBoundaryPosition[])
         .catch(() => [] as ChapterBoundaryPosition[]);
 
+// For background insertion (BackgroundBar's Cmd+B, AssetLibraryPanel's
+// Backgrounds tab) — every position getChapterBoundaryPositions offers
+// PLUS each presenter piece's own clip-start frame ("clip:{sceneId}"
+// segmentIds — a second, disjoint namespace from real transcript "sN"
+// ids). Without the clip-start entries, "insert at frame 0" snaps to the
+// nearest transcript segment instead, which routinely starts a few frames
+// after the clip's own start (silence trimmed before the first spoken
+// word) — landing the background a few frames late. Deliberately a
+// separate fetch from getChapterBoundaryPositions rather than reusing it
+// for backgrounds too: ChapterStrip's title-boundary drag writes its
+// snapped segmentId straight into title_scenes.json, which only ever
+// resolves real "sN" ids — mixing "clip:..." ids into that shared list
+// would make a title dragged onto one silently fail to resolve. See
+// background_insertable_positions (generate_background_scenes.py) for the
+// server-side counterpart.
+export const getBackgroundInsertablePositions = (episodePath: string) =>
+    fetch(`${API_BASE}/api/episode/background-insertable-positions?path=${encodeURIComponent(episodePath)}`)
+        .then((res) => (res.ok ? res.json() : { positions: [] }))
+        .then((data) => (data.positions ?? []) as ChapterBoundaryPosition[])
+        .catch(() => [] as ChapterBoundaryPosition[]);
+
 export interface StoryboardChapter {
     chapterId: string;
     chapterText: string;

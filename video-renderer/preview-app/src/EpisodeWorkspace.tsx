@@ -263,6 +263,16 @@ export function EpisodeWorkspace() {
         return () => player.removeEventListener("frameupdate", onFrameUpdate);
     }, [episodeProps]);
 
+    // Live escape hatch for callers that need the player's REAL frame at
+    // the exact instant they act (e.g. BackgroundBar/AssetLibraryPanel
+    // inserting a background at "the playhead") rather than the
+    // `currentFrame` state above, which only updates on the next
+    // `frameupdate` event and can therefore lag the true position by a
+    // couple of frames — enough for an insert at frame 0 to land a few
+    // frames late. Falls back to the (possibly-stale) state if the player
+    // isn't mounted yet.
+    const getCurrentFrame = () => playerRef.current?.getCurrentFrame() ?? currentFrame;
+
     // scene-plan.json first exists once analyze_scenes (stage 7 of 15)
     // completes — well before any AI-proposal stage has run. Gate the
     // initial fetch on that stage specifically, rather than firing blindly
@@ -611,7 +621,7 @@ export function EpisodeWorkspace() {
                             onSaved={reloadScenePlan}
                             isActive={activeTab === "assets"}
                             backgrounds={episodeProps.backgrounds ?? []}
-                            currentFrame={currentFrame}
+                            getCurrentFrame={getCurrentFrame}
                         />
                     )}
                     <EpisodeAnalysisPanel
@@ -789,12 +799,12 @@ export function EpisodeWorkspace() {
                 <BackgroundBar
                     scenePlan={episodeProps.scenePlan}
                     totalFrames={totalFrames}
-                    currentFrame={currentFrame}
                     onSeek={seekToAbsoluteFrame}
                     episodePath={episodePath}
                     onSaved={reloadScenePlan}
                     backgrounds={episodeProps.backgrounds ?? []}
                     timelineZoom={timelineZoom}
+                    getCurrentFrame={getCurrentFrame}
                 />
             </div>
 

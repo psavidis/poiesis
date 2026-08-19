@@ -6,7 +6,7 @@ import type {
     EpisodeBackground,
     ScenePlan,
 } from "video-renderer-src/episode/types";
-import { getBackgroundScenes, getChapterBoundaryPositions, saveBackgroundScenes, type ChapterBoundaryPosition } from "./api";
+import { getBackgroundInsertablePositions, getBackgroundScenes, saveBackgroundScenes, type ChapterBoundaryPosition } from "./api";
 import { insertBackgroundAtFrame, nearestSegmentId } from "./backgroundInsert";
 import { colors, radius, typography } from "./tokens";
 import type { TimelineZoom } from "./useTimelineZoom";
@@ -64,12 +64,16 @@ const MOD_KEY_LABEL = navigator.platform.toLowerCase().includes("mac") ? "Cmd" :
 interface Props {
     scenePlan: ScenePlan;
     totalFrames: number;
-    currentFrame: number;
     onSeek: (absoluteFrame: number) => void;
     episodePath: string;
     onSaved: () => void;
     backgrounds: EpisodeBackground[];
     timelineZoom: TimelineZoom;
+    // Live read of the player's actual current frame — used when opening/
+    // committing an insert, since `frameupdate`-derived state only
+    // updates on the next event and can lag the true playhead by a
+    // couple of frames (see EpisodeWorkspace.tsx).
+    getCurrentFrame: () => number;
 }
 
 // One "gap" (no background) or "span" (an inserted background, running
@@ -129,12 +133,12 @@ function segmentsFromBackgroundScenes(scenes: BackgroundScene[], totalFrames: nu
 export function BackgroundBar({
     scenePlan,
     totalFrames,
-    currentFrame,
     onSeek,
     episodePath,
     onSaved,
     backgrounds,
     timelineZoom,
+    getCurrentFrame,
 }: Props) {
     const { windowFrames, windowStartFrame, frameToPct, playheadPct, playheadVisible, zoomToAtLeast4x } =
         timelineZoom;
@@ -142,6 +146,10 @@ export function BackgroundBar({
     const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
     const [pendingDeleteIndex, setPendingDeleteIndex] = useState<number | null>(null);
     const [insertPickerAnchor, setInsertPickerAnchor] = useState<{ x: number; y: number } | null>(null);
+    // The frame the insert picker was opened at (Cmd+B keydown), captured
+    // once via getCurrentFrame() rather than re-read later when the user
+    // actually picks a background — see getCurrentFrame's own doc comment.
+    const insertFrameRef = useRef(0);
     const [inserting, setInserting] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
     const trackRef = useRef<HTMLDivElement>(null);
@@ -153,15 +161,21 @@ export function BackgroundBar({
     const [updatingMotion, setUpdatingMotion] = useState(false);
     const selectedAnchorRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
-    // Every transcript segment's resolved timeline frame — the same
-    // snapping data ChapterStrip's boundary drag uses, needed here to
-    // resolve "insert a background starting at the playhead" to a real
-    // segmentId (background_scenes.json entries are keyed by segmentId,
-    // not raw frame, same as title_scenes.json).
+    // Every position a background can resolve to — transcript segment
+    // starts plus each presenter piece's own clip-start frame (see
+    // getBackgroundInsertablePositions) — needed here to resolve both a
+    // NEW insert at the playhead and an EXISTING segment's derived
+    // startFrame (segmentsFromBackgroundScenes) back to a real segmentId
+    // (background_scenes.json entries are keyed by segmentId, not raw
+    // frame, same as title_scenes.json). Must include the clip-start
+    // entries, not just getChapterBoundaryPositions's transcript-only
+    // ones — an existing background positioned via a "clip:..." id
+    // (inserted at a clip's exact start) would otherwise never re-resolve
+    // back to itself here.
     const [boundaryPositions, setBoundaryPositions] = useState<ChapterBoundaryPosition[]>([]);
     useEffect(() => {
         let cancelled = false;
-        getChapterBoundaryPositions(episodePath).then((positions) => {
+        getBackgroundInsertablePositions(episodePath).then((positions) => {
             if (!cancelled) setBoundaryPositions(positions);
         });
         return () => {
@@ -212,14 +226,16 @@ export function BackgroundBar({
 
             e.preventDefault();
             const rect = trackRef.current.getBoundingClientRect();
+            const frame = getCurrentFrame();
+            insertFrameRef.current = frame;
             setPendingDeleteIndex(null);
-            setInsertPickerAnchor({ x: rect.left + frameToPct(currentFrame) * (rect.width / 100), y: rect.bottom });
+            setInsertPickerAnchor({ x: rect.left + frameToPct(frame) * (rect.width / 100), y: rect.bottom });
         };
 
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [currentFrame, backgrounds.length]);
+    }, [backgrounds.length, getCurrentFrame]);
 
     // Only an image background has a motion setting to edit — a video
     // background already has its own motion, so Cmd+E is a no-op there
@@ -297,7 +313,7 @@ export function BackgroundBar({
         setInserting(true);
         setSaveError(null);
 
-        const result = await insertBackgroundAtFrame(episodePath, currentFrame, backgroundId, imageMotion, imageMotionSpeed);
+        const result = await insertBackgroundAtFrame(episodePath, insertFrameRef.current, backgroundId, imageMotion, imageMotionSpeed);
 
         if (result.ok) {
             onSaved();

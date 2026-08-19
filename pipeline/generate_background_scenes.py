@@ -13,6 +13,33 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from generate_title_scenes import indexed_segments, resolvable_segment_positions  # noqa: E402
 
 
+# A background insert "at frame 0" (or any other exact clip start) needs a
+# real snap target AT that frame — but resolvable_segment_positions only
+# offers transcript-segment starts, and a clip's first transcript segment
+# routinely starts a few frames AFTER the clip's own sourceStartFrame
+# (silence/dead-air already trimmed before the first spoken word — see
+# key_footage.py). Snapping "frame 0" to the nearest transcript segment in
+# that case lands the background a few frames late, not at the clip's real
+# start. "clip:{sceneId}" is a second, disjoint id namespace (never "sN")
+# so it can never collide with — or get misresolved as — a real transcript
+# segmentId elsewhere (titles, in particular, only ever resolve "sN" ids;
+# see merge_title_scenes). Backgrounds are a pure visual overlay with no
+# transcript tie of their own (unlike titles), so anchoring one to a clip's
+# own start rather than a spoken word is exactly the right granularity.
+def background_insertable_positions(scene_plan, transcript, manifest):
+    positions = resolvable_segment_positions(scene_plan, transcript, manifest)
+
+    positions += [
+        {"segmentId": f"clip:{scene['id']}", "timelineFrame": scene["timelineStartFrame"]}
+        for scene in scene_plan["scenes"]
+        if scene["type"] == "presenter"
+    ]
+
+    positions.sort(key=lambda p: p["timelineFrame"])
+
+    return positions
+
+
 def load_json(path: Path):
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
@@ -71,7 +98,7 @@ def merge_background_scenes(scene_plan, entries, transcript, manifest):
 
     positions_by_segment = {
         p["segmentId"]: p["timelineFrame"]
-        for p in resolvable_segment_positions(scene_plan, transcript, manifest)
+        for p in background_insertable_positions(scene_plan, transcript, manifest)
     }
 
     resolved = []

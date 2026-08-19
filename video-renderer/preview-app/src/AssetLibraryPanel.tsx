@@ -42,7 +42,12 @@ interface Props {
     // selected moment" the way Images/Code do, since a background has no
     // per-moment concept at all.
     backgrounds: EpisodeBackground[];
-    currentFrame: number;
+    // Live read of the player's actual current frame, used at insert time
+    // — `frameupdate`-derived state only updates on the next event and
+    // can lag the true playhead by a couple of frames, which showed up as
+    // backgrounds inserted "at 0:00" landing a few frames late (see
+    // EpisodeWorkspace.tsx).
+    getCurrentFrame: () => number;
 }
 
 // A standing, always-browsable library of the episode's indexed images/
@@ -76,7 +81,7 @@ export function AssetLibraryPanel({
     onSaved,
     isActive,
     backgrounds: backgroundLibrary,
-    currentFrame,
+    getCurrentFrame,
 }: Props) {
     const [images, setImages] = useState<ImageAsset[]>([]);
     const [codeAssets, setCodeAssets] = useState<CodeAsset[]>([]);
@@ -223,7 +228,7 @@ export function AssetLibraryPanel({
         setError(null);
         setHint(null);
 
-        const result = await insertBackgroundAtFrame(episodePath, currentFrame, backgroundId, imageMotion, imageMotionSpeed);
+        const result = await insertBackgroundAtFrame(episodePath, getCurrentFrame(), backgroundId, imageMotion, imageMotionSpeed);
 
         if (result.ok) {
             onSaved();

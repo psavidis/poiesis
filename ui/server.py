@@ -49,6 +49,7 @@ from generate_cut_candidates import (  # noqa: E402
     compute_overridden_cut_fields,
 )
 from generate_background_scenes import (  # noqa: E402
+    background_insertable_positions,
     merge_background_scenes,
 )
 from llm.client import LLMClient  # noqa: E402
@@ -437,6 +438,51 @@ def chapter_boundary_positions(path: str):
         manifest = json.load(f)
 
     return {"positions": resolvable_segment_positions(scene_plan, episode_transcript, manifest)}
+
+
+@app.get("/api/episode/background-insertable-positions")
+def background_insertable_positions_route(path: str):
+    """Every position a background can snap to when inserted at the
+    playhead (BackgroundBar's Cmd+B, AssetLibraryPanel's Backgrounds tab)
+    — every transcript segment's resolved frame (see
+    chapter_boundary_positions above) PLUS each presenter piece's own
+    timelineStartFrame. The clip-start entries matter because a clip's
+    first transcript segment routinely starts a few frames after the
+    clip's own start (silence trimmed before the first spoken word) —
+    without them, inserting a background exactly at a clip's start (e.g.
+    the episode's own frame 0) snaps to the nearest transcript segment
+    instead and lands a few frames late. Deliberately a separate endpoint
+    from chapter-boundary-positions rather than adding these entries
+    there: ChapterStrip's title-boundary drag writes its own snapped
+    segmentId straight into title_scenes.json, which only ever resolves
+    real "sN" transcript ids (see merge_title_scenes) — mixing in
+    "clip:..." ids there would make a title snapped onto one silently
+    fail to resolve. See background_insertable_positions's own doc
+    comment."""
+
+    episode = resolve_episode(path)
+    processing = episode / "processing"
+
+    scene_plan_path = processing / "scene-plan.json"
+    episode_transcript_path = processing / "episode_transcript.json"
+    manifest_path = processing / "manifest.json"
+
+    if not scene_plan_path.exists():
+        raise HTTPException(status_code=404, detail="scene-plan.json not found — run the pipeline first")
+
+    if not episode_transcript_path.exists() or not manifest_path.exists():
+        raise HTTPException(status_code=404, detail="episode_transcript.json/manifest.json not found — run the pipeline first")
+
+    with scene_plan_path.open("r", encoding="utf-8") as f:
+        scene_plan = json.load(f)
+
+    with episode_transcript_path.open("r", encoding="utf-8") as f:
+        episode_transcript = json.load(f)
+
+    with manifest_path.open("r", encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    return {"positions": background_insertable_positions(scene_plan, episode_transcript, manifest)}
 
 
 class StoryboardChapter(BaseModel):

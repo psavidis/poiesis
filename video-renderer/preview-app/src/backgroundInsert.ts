@@ -1,6 +1,6 @@
 import {
+    getBackgroundInsertablePositions,
     getBackgroundScenes,
-    getChapterBoundaryPositions,
     saveBackgroundScenes,
     type ChapterBoundaryPosition,
 } from "./api";
@@ -20,14 +20,23 @@ export function nearestSegmentId(positions: ChapterBoundaryPosition[], frame: nu
     ).segmentId;
 }
 
-// Inserts (or overwrites, if one already resolves to the same segmentId)
-// a background_scenes.json entry starting at the given frame — it runs
-// until whichever entry starts next (or episode end), the same auto-
+// Inserts a background_scenes.json entry starting at the given frame — it
+// runs until whichever entry starts next (or episode end), the same auto-
 // close-by-the-next-entry model generate_background_scenes.py always
 // applies. Works at ANY frame, not just an empty gap: inserting inside an
 // already-covered span splits it there (the existing entry's own span
 // simply shortens to end at the new one's start — no separate "split"
 // logic needed, purely a consequence of how durations are derived).
+//
+// Drops every existing entry whose OWN resolved frame is >= this insert's
+// frame, not just one exact-segmentId match — positions now come from
+// getBackgroundInsertablePositions, which offers both transcript-segment
+// AND clip-start snap points (see its own doc comment), so two different
+// inserts aimed at "the same place" can legitimately resolve to two
+// different, nearby segmentIds (e.g. a clip's frame-0 start vs. its first
+// spoken word a few frames later). Only matching the exact segmentId would
+// leave the earlier insert's now-superseded entry behind as a same-frame
+// duplicate/sliver instead of replacing it.
 export async function insertBackgroundAtFrame(
     episodePath: string,
     frame: number,
@@ -35,17 +44,23 @@ export async function insertBackgroundAtFrame(
     imageMotion?: BackgroundImageMotion,
     imageMotionSpeed?: BackgroundImageMotionSpeed
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-    const positions = await getChapterBoundaryPositions(episodePath);
+    const positions = await getBackgroundInsertablePositions(episodePath);
     const segmentId = nearestSegmentId(positions, frame);
 
     if (!segmentId) {
         return { ok: false, error: "Couldn't resolve this position to a transcript segment yet — try again in a moment." };
     }
 
+    const insertFrame = positions.find((p) => p.segmentId === segmentId)!.timelineFrame;
+    const frameById = new Map(positions.map((p) => [p.segmentId, p.timelineFrame]));
+
     try {
         const current = await getBackgroundScenes(episodePath);
         const next = [
-            ...current.filter((e) => e.segmentId !== segmentId),
+            ...current.filter((e) => {
+                const existingFrame = frameById.get(e.segmentId);
+                return existingFrame === undefined || existingFrame < insertFrame;
+            }),
             {
                 segmentId,
                 backgroundId,
