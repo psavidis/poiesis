@@ -1677,12 +1677,14 @@ async def ws_run_render(websocket: WebSocket):
         metadata = {"format": output_format, "resolution": resolution}
 
         if output_format == "davinci":
-            # Same underlying scene-plan-driven, per-scene transparent
-            # render as render_episode.sh --transparent, just cut into one
-            # clip per track scene and assembled into an OTIO timeline the
-            # user imports into a fresh DaVinci Resolve project — see
-            # pipeline/export_davinci.py's own docstring. Background/intro/
-            # outro/music stay a manual Resolve step either way.
+            # Presenter/title/moment/beat render as transparent clips (same
+            # per-scene approach render_episode.sh --transparent uses,
+            # just cut into one clip per scene); captions export as a
+            # native captions.srt subtitle file, and background/image
+            # scenes place their real source media directly — none of
+            # those three are ever rendered by Remotion. See
+            # pipeline/export_davinci.py's own docstring. Intro/outro/
+            # music stay a manual Resolve step either way.
             command = [
                 sys.executable,
                 str(PROJECT_ROOT / "pipeline" / "export_davinci.py"),

@@ -12,6 +12,7 @@ from pathlib import Path
 
 import opentimelineio as otio
 
+from generate_episode_assets import format_timestamp
 from overlay_placement import absolute_position
 
 PIPELINE_DIR = Path(__file__).parent
@@ -39,19 +40,30 @@ RENDERER_DIR = PROJECT_ROOT / "video-renderer"
 RENDER_CONCURRENCY = min(2, os.cpu_count() or 1)
 
 # One clip per element of each of these types, each on its own OTIO track —
-# titles/captions/moments/images/beats are never baked into their parent
-# presenter's clip here (contrast render_episode.sh --transparent, which
-# renders one flattened composite). "presenter" is handled separately since
-# it also produces an audio track from the same source.
-OVERLAY_TRACK_TYPES = ["title", "caption", "moment", "image", "beat"]
+# titles/moments/beats are never baked into their parent presenter's clip
+# here (contrast render_episode.sh --transparent, which renders one
+# flattened composite). "presenter" is handled separately since it also
+# produces an audio track from the same source. "caption"/"image"/
+# "background" are NOT in this list — they're exported as native Resolve
+# data/source-media instead of rendered clips (see build_srt/
+# add_native_asset_track), per docs/specs/resolve-native-export-
+# architecture.md's Category A/B principle: don't render something that
+# can be represented as editable Resolve data. What's left here
+# (title/moment/beat) has no reliable native-Resolve representation
+# available today — OTIO has no keyframe/text-object schema and driving
+# Resolve's own scripting API for that is a separate, heavier undertaking
+# (rejected for this pass: requires Resolve Studio running, and its
+# transform/title APIs have documented silent-failure modes) — so they
+# stay Remotion-rendered transparent clips, same as before this change.
+OVERLAY_TRACK_TYPES = ["title", "moment", "beat"]
 
 TRACK_NAMES = {
     "presenter": "Video — Presenter",
     "presenter-audio": "Audio — Presenter",
     "title": "Video — Titles",
-    "caption": "Video — Captions",
     "moment": "Video — Moments",
     "image": "Video — Images",
+    "background": "Video — Background",
     "beat": "Video — Beats",
 }
 
@@ -95,11 +107,11 @@ def presenter_scenes(scene_plan):
 
 
 def overlay_scenes_of_type(scene_plan, scene_type):
-    """title/caption/moment/image scenes of one type, in timeline order.
-    Captions respect their parent presenter scene's effects.captions flag —
-    the same per-scene on/off state generate_captions.py --disable already
-    writes to scene-plan.json, so the export doesn't need its own separate
-    caption toggle."""
+    """Scenes of one type (title/moment/beat, or caption for build_srt), in
+    timeline order. Captions respect their parent presenter scene's
+    effects.captions flag — the same per-scene on/off state
+    generate_captions.py --disable already writes to scene-plan.json, so
+    the SRT export doesn't need its own separate caption toggle."""
 
     by_id = scenes_by_id(scene_plan)
 
@@ -114,14 +126,136 @@ def overlay_scenes_of_type(scene_plan, scene_type):
     return sorted(scenes, key=lambda s: absolute_position(s, by_id))
 
 
+def build_srt(scene_plan) -> str:
+    """SRT built directly from scene-plan.json's own "caption" scenes — the
+    exact same reviewed/edited/split captions already shown in the Poiesis
+    preview (post-silence-trim, one line per cue after generate_captions.py's
+    line-chunking) — rather than re-deriving timing from the raw episode
+    transcript (generate_episode_assets.py's own generate_srt does that, for
+    a different purpose: a rough whole-episode subtitle file, not
+    scene-plan-accurate cue timing). Imported into Resolve as a native,
+    editable subtitle track (File -> Import -> Subtitle) instead of
+    rendering captions as transparent clips — captions are plain timed text,
+    Category A in the resolve-native-export-architecture.md spec."""
+
+    captions = overlay_scenes_of_type(scene_plan, "caption")
+    by_id = scenes_by_id(scene_plan)
+    fps = scene_plan["fps"]
+
+    lines = []
+
+    for index, scene in enumerate(captions, start=1):
+        start_frame = absolute_position(scene, by_id)
+        end_frame = start_frame + scene["durationInFrames"]
+
+        lines.append(
+            f"{index}\n"
+            f"{format_timestamp(start_frame / fps)} --> {format_timestamp(end_frame / fps)}\n"
+            f"{scene['text']}\n"
+        )
+
+    return "\n".join(lines)
+
+
+def load_asset_paths(episode: Path, artifact_name: str, list_key: str) -> dict:
+    """id -> absolute source-file path, from an index_assets.py/
+    index_backgrounds.py-produced artifact (assets.json/backgrounds.json).
+    Empty dict (not an error) if the artifact doesn't exist yet — an episode
+    with no images/backgrounds never ran that indexing stage, same
+    "absence means none" convention scene-plan.json's own optional fields
+    already use."""
+
+    path = episode / "processing" / artifact_name
+
+    if not path.exists():
+        return {}
+
+    data = load_json(path)
+
+    return {item["id"]: (episode / item["path"]).resolve() for item in data.get(list_key, [])}
+
+
+def add_native_asset_track(timeline, scene_plan, scenes, asset_paths, id_field, track_kind, track_name):
+    """Places each scene's real source file (image or background media,
+    resolved via asset_paths[scene[id_field]]) directly on its own OTIO
+    track at its own absolute timeline position — no Remotion render
+    involved. Same Gap-filling/ordering logic as add_clip_track, but the
+    media_reference points at the ORIGINAL asset file rather than a clip
+    rendered under clips_dir, and there's no rendered-clip existence check
+    (validate_export only validates what render_clip actually produced).
+    No-op if scenes is empty, same convention as add_clip_track."""
+
+    if not scenes:
+        return
+
+    by_id = scenes_by_id(scene_plan)
+    fps = scene_plan["fps"]
+
+    track = otio.schema.Track(name=track_name, kind=track_kind)
+    timeline.tracks.append(track)
+
+    cursor = 0
+
+    for scene in scenes:
+
+        asset_path = asset_paths.get(scene[id_field])
+
+        if asset_path is None:
+            print(f"WARNING: {scene['id']} references unknown asset {scene[id_field]!r} — skipped.")
+            continue
+
+        start_frame = absolute_position(scene, by_id)
+        duration_frames = scene["durationInFrames"]
+
+        gap_frames = start_frame - cursor
+
+        if gap_frames > 0:
+            track.append(
+                otio.schema.Gap(
+                    source_range=otio.opentime.TimeRange(
+                        start_time=otio.opentime.RationalTime(0, fps),
+                        duration=otio.opentime.RationalTime(gap_frames, fps),
+                    )
+                )
+            )
+        elif gap_frames < 0:
+            print(
+                f"WARNING: {scene['id']} starts at frame {start_frame}, before "
+                f"the previous clip on {track_name} ends at {cursor} — "
+                f"clip may be misplaced in the exported timeline."
+            )
+
+        media_reference = otio.schema.ExternalReference(
+            target_url=str(asset_path),
+            available_range=otio.opentime.TimeRange(
+                start_time=otio.opentime.RationalTime(0, fps),
+                duration=otio.opentime.RationalTime(duration_frames, fps),
+            ),
+        )
+
+        clip = otio.schema.Clip(
+            name=clip_label(scene),
+            media_reference=media_reference,
+            source_range=otio.opentime.TimeRange(
+                start_time=otio.opentime.RationalTime(0, fps),
+                duration=otio.opentime.RationalTime(duration_frames, fps),
+            ),
+        )
+
+        track.append(clip)
+
+        cursor = start_frame + duration_frames
+
+
 def total_clips(scene_plan):
     """Total number of clips export_davinci() will render or skip — one per
     presenter scene plus one per overlay scene of each OVERLAY_TRACK_TYPES
-    type (captions filtered by their parent's effects.captions flag, same
-    as overlay_scenes_of_type/render_overlay_clips actually iterate). Used
-    to print an upfront __TOTAL__ line so a caller streaming this script's
-    stdout (see ui/server.py's _stream_command) can show a real N-of-M
-    progress bar instead of an open-ended scrolling log — see #65's
+    type (title/moment/beat). Captions/images/backgrounds are excluded —
+    they're placed as native data/source-media, not rendered, so they
+    never touch this render-progress count. Used to print an upfront
+    __TOTAL__ line so a caller streaming this script's stdout (see
+    ui/server.py's _stream_command) can show a real N-of-M progress bar
+    instead of an open-ended scrolling log — see #65's
     sibling request for the render console UI."""
 
     return len(presenter_scenes(scene_plan)) + sum(
@@ -244,12 +378,11 @@ def render_presenter_clips(scene_plan, clips_dir: Path, resolution=None, resume=
 
 def render_overlay_clips(scene_plan, scene_type, clips_dir: Path, resolution=None, resume=False, progress=None, progress_lock=None):
     """One small transparent clip per overlay scene of the given type
-    (title/caption/moment/image), each covering just that scene's own
-    absolute frame range. Returns [(scene_id, clip_path), ...] in timeline
-    order (see render_presenter_clips' own comment on why concurrent
-    rendering doesn't disturb this). Empty list if there are no scenes of
-    this type (or, for captions, none with captions enabled on their
-    parent) — the caller skips creating a track in that case."""
+    (title/moment/beat — see OVERLAY_TRACK_TYPES), each covering just that
+    scene's own absolute frame range. Returns [(scene_id, clip_path), ...]
+    in timeline order (see render_presenter_clips' own comment on why
+    concurrent rendering doesn't disturb this). Empty list if there are no
+    scenes of this type — the caller skips creating a track in that case."""
 
     by_id = scenes_by_id(scene_plan)
     scenes = overlay_scenes_of_type(scene_plan, scene_type)
@@ -282,6 +415,12 @@ def clip_label(scene):
 
     if scene["type"] == "presenter":
         return f"presenter — {scene['id']}"
+
+    if scene["type"] == "image":
+        return scene.get("caption") or scene["assetId"]
+
+    if scene["type"] == "background":
+        return scene["backgroundId"]
 
     return scene["id"]
 
@@ -366,17 +505,33 @@ def add_clip_track(timeline, scene_plan, clips, track_kind, track_name):
         cursor = start_frame + duration_frames
 
 
-def build_otio_timeline(scene_plan, presenter_clips, overlay_clips_by_type):
+def build_otio_timeline(scene_plan, presenter_clips, overlay_clips_by_type, episode: Path):
     """presenter_clips: [(scene_id, clip_path), ...] from
     render_presenter_clips. overlay_clips_by_type: {scene_type: [(scene_id,
     clip_path), ...]} from render_overlay_clips, one entry per type in
     OVERLAY_TRACK_TYPES. Builds one OTIO track per element type (skipping
-    types with no clips) — Presenter video, Presenter audio (same source
+    types with no clips) — Background (native source media, bottom of the
+    stack so it sits behind the presenter, same compositing order the
+    renderer itself uses), Presenter video, Presenter audio (same source
     files as the video track, referenced as an audio Track so Resolve's
     OTIO import actually pulls in the embedded PCM audio instead of
-    silently dropping it), then Titles/Captions/Moments/Images."""
+    silently dropping it), then Titles/Moments/Beats (rendered), then
+    Images (native source media) on top. Captions are NOT an OTIO track —
+    see build_srt, imported into Resolve as a separate native subtitle
+    file instead."""
 
     timeline = otio.schema.Timeline(name=scene_plan.get("episode", "Episode"))
+
+    background_paths = load_asset_paths(episode, "backgrounds.json", "backgrounds")
+    add_native_asset_track(
+        timeline,
+        scene_plan,
+        overlay_scenes_of_type(scene_plan, "background"),
+        background_paths,
+        "backgroundId",
+        otio.schema.TrackKind.Video,
+        TRACK_NAMES["background"],
+    )
 
     add_clip_track(timeline, scene_plan, presenter_clips, otio.schema.TrackKind.Video, TRACK_NAMES["presenter"])
     add_clip_track(timeline, scene_plan, presenter_clips, otio.schema.TrackKind.Audio, TRACK_NAMES["presenter-audio"])
@@ -390,15 +545,28 @@ def build_otio_timeline(scene_plan, presenter_clips, overlay_clips_by_type):
             TRACK_NAMES[scene_type],
         )
 
+    image_paths = load_asset_paths(episode, "assets.json", "assets")
+    add_native_asset_track(
+        timeline,
+        scene_plan,
+        overlay_scenes_of_type(scene_plan, "image"),
+        image_paths,
+        "assetId",
+        otio.schema.TrackKind.Video,
+        TRACK_NAMES["image"],
+    )
+
     return timeline
 
 
-def validate_export(scene_plan, presenter_clips, overlay_clips_by_type, timeline_path: Path):
+def validate_export(scene_plan, presenter_clips, overlay_clips_by_type, timeline_path: Path, srt_path: Path):
     """Deterministic check, not an LLM judgment call — mirrors
     qa_check.py's check_missing_media pattern: every scene that should have
-    produced a clip actually has one on disk, and the OTIO timeline itself
-    was written. Catches a partial/failed render before the user opens a
-    broken project in Resolve."""
+    produced a clip actually has one on disk, the OTIO timeline itself was
+    written, and the captions.srt file exists whenever the episode
+    actually has captions to export. See validate_native_assets for the
+    image/background asset-resolution counterpart. Catches a partial/
+    failed export before the user opens a broken project in Resolve."""
 
     issues = []
 
@@ -413,6 +581,35 @@ def validate_export(scene_plan, presenter_clips, overlay_clips_by_type, timeline
     for scene_id, clip_path in expected:
         if not clip_path.exists():
             issues.append(f"Missing rendered clip for {scene_id}: {clip_path}")
+
+    has_captions = bool(overlay_scenes_of_type(scene_plan, "caption"))
+    if has_captions and not srt_path.exists():
+        issues.append(f"Missing captions file: {srt_path}")
+
+    return issues
+
+
+def validate_native_assets(scene_plan, episode: Path):
+    """Every image/background scene's assetId/backgroundId must resolve to
+    a real file in assets.json/backgrounds.json — add_native_asset_track
+    already prints a WARNING and skips a scene it can't resolve rather than
+    failing the whole export, so this re-checks the same condition to
+    surface it as a proper export issue too, not just a console line easy
+    to miss in a streamed log (see ui/server.py's _stream_command)."""
+
+    issues = []
+
+    image_paths = load_asset_paths(episode, "assets.json", "assets")
+    for scene in overlay_scenes_of_type(scene_plan, "image"):
+        if scene["assetId"] not in image_paths:
+            issues.append(f"Missing asset for {scene['id']}: assetId {scene['assetId']!r} not found in assets.json")
+
+    background_paths = load_asset_paths(episode, "backgrounds.json", "backgrounds")
+    for scene in overlay_scenes_of_type(scene_plan, "background"):
+        if scene["backgroundId"] not in background_paths:
+            issues.append(
+                f"Missing asset for {scene['id']}: backgroundId {scene['backgroundId']!r} not found in backgrounds.json"
+            )
 
     return issues
 
@@ -456,11 +653,15 @@ def export_davinci(episode: Path, scene_plan, resolution=None, resume=False):
         for scene_type in OVERLAY_TRACK_TYPES
     }
 
-    timeline = build_otio_timeline(scene_plan, presenter_clips, overlay_clips_by_type)
+    timeline = build_otio_timeline(scene_plan, presenter_clips, overlay_clips_by_type, episode)
 
     otio.adapters.write_to_file(timeline, str(timeline_path))
 
-    issues = validate_export(scene_plan, presenter_clips, overlay_clips_by_type, timeline_path)
+    srt_path = export_dir / "captions.srt"
+    srt_path.write_text(build_srt(scene_plan), encoding="utf-8")
+
+    issues = validate_export(scene_plan, presenter_clips, overlay_clips_by_type, timeline_path, srt_path)
+    issues.extend(validate_native_assets(scene_plan, episode))
 
     return timeline_path, issues
 
@@ -468,17 +669,22 @@ def export_davinci(episode: Path, scene_plan, resolution=None, resume=False):
 def main():
 
     parser = argparse.ArgumentParser(
-        description="Export an episode as a DaVinci Resolve-importable OTIO "
-                     "timeline: one transparent ProRes clip per scene-plan "
-                     "element (presenter, title, caption, moment, image), "
-                     "each on its own track, positioned on a timeline.otio "
-                     "the user imports via Resolve's File -> Import "
-                     "Timeline -> OpenTimelineIO. Background/intro/outro/"
-                     "music stay a manual step, same as render_episode.sh "
-                     "--transparent. Data flow is one-directional (Poiesis "
-                     "-> Resolve) — edits made in Resolve are never read "
-                     "back into scene-plan.json; fix the edit plan and "
-                     "re-export instead."
+        description="Export an episode as a DaVinci Resolve-importable "
+                     "project: timeline.otio (presenter/title/moment/beat "
+                     "as rendered transparent ProRes clips, one per "
+                     "scene-plan element, each on its own track — plus "
+                     "background/image scenes placed as their REAL source "
+                     "media, never rendered) and captions.srt (a native, "
+                     "editable Resolve subtitle track, also never "
+                     "rendered) — per docs/specs/resolve-native-export-"
+                     "architecture.md's Category A/B principle: render "
+                     "only what can't be represented as editable Resolve "
+                     "data. Import via Resolve's File -> Import Timeline "
+                     "-> OpenTimelineIO, then File -> Import -> Subtitle "
+                     "for captions.srt. Data flow is one-directional "
+                     "(Poiesis -> Resolve) — edits made in Resolve are "
+                     "never read back into scene-plan.json; fix the edit "
+                     "plan and re-export instead."
     )
 
     parser.add_argument("episode_folder")
@@ -524,7 +730,10 @@ def main():
         print("DaVinci export completed")
     print("Timeline:")
     print(timeline_path)
+    print("Captions:")
+    print(timeline_path.parent / "captions.srt")
     print("Import via Resolve: File -> Import Timeline -> OpenTimelineIO")
+    print("Then: File -> Import -> Subtitle, for captions.srt")
     print("================================")
 
     if issues:

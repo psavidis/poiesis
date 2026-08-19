@@ -24,14 +24,14 @@ def test_group_clips_by_bin_groups_matching_clips_together():
             "presenter-scene-001.mov",
             "presenter-scene-002.mov",
             "title-scene-title-000.mov",
-            "caption-scene-caption-5.mov",
+            "moment-scene-moment-5.mov",
         ]
     )
 
     assert grouped == {
         "Presenter": ["presenter-scene-001.mov", "presenter-scene-002.mov"],
         "Titles": ["title-scene-title-000.mov"],
-        "Captions": ["caption-scene-caption-5.mov"],
+        "Moments": ["moment-scene-moment-5.mov"],
     }
 
 

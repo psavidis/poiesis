@@ -48,12 +48,16 @@ export const CaptionText = ({
     const opacity = isHidden ? 0 : baseOpacity;
 
     return (
+        // zIndex above the presenter's own (see Episode.tsx's
+        // AnimatedPresenterFrame) so the caption stays visible over the
+        // presenter regardless of DOM order.
         <AbsoluteFill
             style={{
                 justifyContent: "flex-end",
                 alignItems: "center",
                 paddingBottom: "6%",
                 pointerEvents: "none",
+                zIndex: 20,
             }}
         >
             <div

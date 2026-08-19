@@ -289,6 +289,17 @@ const AnimatedPresenterFrame = ({
     const activeWindow = layoutWindows.find((w) => sceneFrame >= w.start && sceneFrame < w.end);
     const isHidden = activeWindow?.side === "hidden";
 
+    // widthPct/leftPct/topPct/heightPct describe the presenter's own
+    // on-screen FRAMING (where his body sits, how much of the frame he
+    // occupies) — this still slides for every window kind, "corner"
+    // included, so the presenter genuinely moves to make room for
+    // whichever side the moment content is on rather than staying put.
+    // What's DIFFERENT per kind is only how the video is clipped against
+    // that framing (see outerLeftPct etc. below): "corner" clips hard (a
+    // deliberate picture-in-picture), "left"/"right" don't clip at all
+    // (a gesture reaching past the framing naturally overlays the moment
+    // content instead of being sliced off), "hidden"/center never had a
+    // window to slide toward in the first place.
     let widthPct = centerGeo.widthPct;
     let leftPct = centerGeo.leftPct;
     let topPct = centerGeo.topPct;
@@ -361,32 +372,35 @@ const AnimatedPresenterFrame = ({
     // size and crop (cover against 100%/100%) — the presenter's on-screen
     // scale never changes between center and a side layout. Only the
     // visible *window* onto that fixed-scale video narrows (via the outer
-    // div's overflow: hidden + width), and the video is shifted left/right
-    // inside that window so the presenter (who was framed centered in the
-    // original shot) stays centered in whatever window is currently
-    // visible, rather than shifting the video's own crop/zoom to fit a
-    // narrower box (which is what made the presenter appear to shrink).
+    // div's width), and the video is shifted left/right inside that window
+    // so the presenter (who was framed centered in the original shot)
+    // stays centered in whatever window is currently visible, rather than
+    // shifting the video's own crop/zoom to fit a narrower box (which is
+    // what made the presenter appear to shrink).
     //
-    // outerLeftPct/outerWidthPct: the visible clipping window, as a
-    // fraction of the full composition — same as leftPct/widthPct above.
+    // outerLeftPct/outerWidthPct: the presenter's own on-screen framing,
+    // as a fraction of the full composition — same as leftPct/widthPct.
     //
-    // The inner video div is rendered at (100/outerWidthPct)*100% of the
-    // window's own width, so at 100% scale relative to the composition —
-    // i.e. video position 0%/100% (its own left/right edges) map to
-    // composition position 0%/100%, regardless of how narrow the window
-    // is. videoShiftPct positions that div (in window-relative %) so
-    // composition position 50% (where the presenter is framed) lands at
-    // the window's own horizontal center, keeping the presenter visually
-    // centered in whatever window is currently visible.
+    // clipToWindow controls whether that window is actually a hard crop
+    // (overflow: hidden) or just a positioning reference the video is
+    // centered against with nothing hiding what spills past it. "corner"
+    // (#48's content-dominant-code PiP) is a deliberate picture-in-
+    // picture and keeps the hard crop. "left"/"right" don't: the
+    // presenter still visibly moves/narrows toward one side (so there's
+    // real room made for the moment content), but a gesture or hair
+    // reaching past that framing isn't sliced off by a straight clip
+    // line — it naturally overlays the moment content instead, the way a
+    // real editor keys a presenter over a graphic rather than cropping
+    // him away from it whenever he moves. See the moment this replaced
+    // hard clipping (and briefly, full-frame-with-no-framing-at-all)
+    // entirely.
+    const clipToWindow = activeWindow?.side === "corner";
+
     const outerLeftPct = leftPct;
     const outerWidthPct = widthPct;
     const videoDivWidthPct = outerWidthPct === 0 ? 100 : (100 / outerWidthPct) * 100;
     const videoShiftPct = 50 - (videoDivWidthPct / 2);
 
-    // Vertical mirror of the above — a no-op (0/100 in, 0/100 out) for
-    // every layout except "corner" (#48), where the presenter's window
-    // shrinks vertically as well as horizontally rather than always
-    // spanning the full frame height the way left/right/center do.
     const outerTopPct = topPct;
     const outerHeightPct = heightPct;
     const videoDivHeightPct = outerHeightPct === 0 ? 100 : (100 / outerHeightPct) * 100;
@@ -418,7 +432,7 @@ const AnimatedPresenterFrame = ({
                     height: `${outerHeightPct}%`,
                     left: `${outerLeftPct}%`,
                     width: `${outerWidthPct}%`,
-                    overflow: "hidden",
+                    overflow: clipToWindow ? "hidden" : "visible",
                 }}
             >
                 <div

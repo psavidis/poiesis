@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { PresenterScene, ScenePlan } from "video-renderer-src/episode/types";
 import { getAssets, getMoments, saveMoments, switchMomentTreatment } from "./api";
+import { SIDE_MOVES_PRESENTER_TREATMENTS } from "./MomentBoxOverlay";
 import { momentIndexFromSceneId, normalizeMoment } from "./momentDuration";
 import { OverlayStrip, type EditableOverlay } from "./OverlayStrip";
 import { colors, radius, typography } from "./tokens";
@@ -437,6 +438,21 @@ export function MomentEditorPanel({ episodePath, sceneId, scenePlan, currentFram
                         <option value="fade">Fade only</option>
                     </select>
                     {resetButton("entrance")}
+                </div>
+            )}
+
+            {SIDE_MOVES_PRESENTER_TREATMENTS.has(moment.treatment) && (
+                <div style={styles.fieldRow}>
+                    <label style={styles.presentationLabel}>Presenter side</label>
+                    <select
+                        value={moment.presenterSide || "left"}
+                        onChange={(e) => update({ presenterSide: e.target.value })}
+                        style={{ ...styles.input, flex: 1 }}
+                    >
+                        <option value="left">Left (content on the right)</option>
+                        <option value="right">Right (content on the left)</option>
+                    </select>
+                    {resetButton("presenterSide")}
                 </div>
             )}
 

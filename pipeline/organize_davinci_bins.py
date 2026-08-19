@@ -41,17 +41,20 @@ import re
 # export_davinci.py's OVERLAY_TRACK_TYPES, since this script runs inside
 # Resolve's embedded Python (a different interpreter/environment than the
 # one export_davinci.py runs in — no guarantee Poiesis's own pipeline
-# package is importable there).
+# package is importable there). "caption" and "image" are deliberately
+# absent — captions are exported as a native captions.srt file (see
+# build_srt) and images are placed as their real source media on their own
+# OTIO track (see add_native_asset_track), neither ever rendered as a
+# clip, so no caption-*.mov/image-*.mov filename is ever produced for this
+# to bin.
 BIN_NAMES = {
     "presenter": "Presenter",
     "title": "Titles",
-    "caption": "Captions",
     "moment": "Moments",
-    "image": "Images",
     "beat": "Beats",
 }
 
-CLIP_FILENAME_PATTERN = re.compile(r"^(presenter|title|caption|moment|image|beat)-")
+CLIP_FILENAME_PATTERN = re.compile(r"^(presenter|title|moment|beat)-")
 
 
 def bin_name_for_clip(filename: str) -> str | None:

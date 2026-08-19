@@ -69,6 +69,12 @@ function beatContainerStyle(side: "left" | "right"): React.CSSProperties {
         paddingLeft: side === "left" ? "6%" : 0,
         paddingRight: side === "right" ? "6%" : 0,
         pointerEvents: "none",
+        // Above the presenter's own zIndex (see Episode.tsx's
+        // AnimatedPresenterFrame) — beats normally sit outside the
+        // presenter's footprint by construction, but this keeps them
+        // visible even when a "corner" layout shrinks the presenter's
+        // window into unexpected territory.
+        zIndex: 20,
     };
 }
 

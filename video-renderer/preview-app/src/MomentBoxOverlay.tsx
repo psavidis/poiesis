@@ -48,6 +48,34 @@ function canEditBox(scene: MomentScene): boolean {
     return scene.treatment !== "comparison";
 }
 
+// Treatments where the presenter physically moves to make room for this
+// box (see Episode.tsx's layoutWindowsForScene, which reads presenterSide
+// for exactly these) — "full-visual"/"content-dominant-code" hide/shrink
+// the presenter instead of sliding to a side, so there's no side for a
+// drag to imply for them; "comparison" has no box at all (see canEditBox).
+// Exported for MomentEditorPanel's own explicit Presenter side selector —
+// same set, same reasoning, two different UI entry points to the same
+// underlying field.
+export const SIDE_MOVES_PRESENTER_TREATMENTS = new Set(["side-text", "side-image", "side-code", "side-diagram", "side-terms"]);
+
+// Derives which side the presenter should move to from where the box was
+// actually dragged, so "drag the image left/right" and "which way the
+// presenter moves" stay spatially consistent by construction, instead of
+// presenterSide being a fixed AI-decided value (almost always "left" per
+// prompts/moments.txt) that a box drag had no effect on. Content sits on
+// the OPPOSITE side from the presenter (see MomentTreatments.tsx's
+// sideContentStyle: presenterOnLeft -> content on the right) — so a box
+// dragged into the frame's right half implies the presenter should be on
+// the left, and vice versa. Judged by the box's horizontal CENTER, not its
+// left edge, so a wide box that merely starts left-of-center but is
+// mostly on the right still reads as "on the right."
+function presenterSideForBox(scene: MomentScene, box: MomentBox): "left" | "right" | undefined {
+    if (!SIDE_MOVES_PRESENTER_TREATMENTS.has(scene.treatment)) return undefined;
+
+    const centerXPct = box.xPct + box.widthPct / 2;
+    return centerXPct >= 50 ? "left" : "right";
+}
+
 const HANDLE_SIZE = 12;
 const MIN_BOX_PCT = 8; // a box this small or smaller isn't a usable drag target to shrink further
 
@@ -121,7 +149,17 @@ export function MomentBoxOverlay({
             const moments = (data.moments ?? []).map(normalizeMoment);
             if (!moments[index]) return;
 
-            moments[index] = { ...moments[index], box: nextBox };
+            // Dragging updates presenterSide too (see presenterSideForBox)
+            // so the presenter's own movement stays spatially consistent
+            // with where the box actually ended up, not left pointing at
+            // whatever side the AI originally guessed.
+            const nextPresenterSide = presenterSideForBox(scene, nextBox);
+
+            moments[index] = {
+                ...moments[index],
+                box: nextBox,
+                ...(nextPresenterSide ? { presenterSide: nextPresenterSide } : {}),
+            };
 
             await saveMoments(episodePath, moments);
             onSaved();
