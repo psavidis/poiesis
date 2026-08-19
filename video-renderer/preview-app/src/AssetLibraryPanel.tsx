@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
-import type { ScenePlan } from "video-renderer-src/episode/types";
+import type { BackgroundImageMotion, BackgroundImageMotionSpeed, EpisodeBackground, ScenePlan } from "video-renderer-src/episode/types";
 import { contentTypeAndPresentationFor } from "./MomentEditorPanel";
 import { momentIndexFromSceneId, normalizeMoment } from "./momentDuration";
 import { getAssets, getCodeAssets, getMoments, saveMoments } from "./api";
+import { insertBackgroundAtFrame } from "./backgroundInsert";
+import { IMAGE_MOTION_OPTIONS, IMAGE_MOTION_SPEED_OPTIONS } from "./BackgroundBar";
 import { colors, radius, typography } from "./tokens";
 
 interface ImageAsset {
@@ -33,6 +35,14 @@ interface Props {
     selectedMomentSceneId?: string;
     onSaved: () => void;
     isActive: boolean;
+    // The selectable background library (see index_backgrounds.py) and
+    // the player's current frame — the Backgrounds tab below inserts
+    // "at the playhead" the exact same way BackgroundBar's own Cmd+B
+    // does (same shared backgroundInsert.ts helper), not "apply to the
+    // selected moment" the way Images/Code do, since a background has no
+    // per-moment concept at all.
+    backgrounds: EpisodeBackground[];
+    currentFrame: number;
 }
 
 // A standing, always-browsable library of the episode's indexed images/
@@ -59,7 +69,15 @@ const TREATMENT_LABELS: Record<string, string> = {
     "content-dominant-code": "content-dominant code",
 };
 
-export function AssetLibraryPanel({ episodePath, scenePlan, selectedMomentSceneId, onSaved, isActive }: Props) {
+export function AssetLibraryPanel({
+    episodePath,
+    scenePlan,
+    selectedMomentSceneId,
+    onSaved,
+    isActive,
+    backgrounds: backgroundLibrary,
+    currentFrame,
+}: Props) {
     const [images, setImages] = useState<ImageAsset[]>([]);
     const [codeAssets, setCodeAssets] = useState<CodeAsset[]>([]);
     // The moment's OWN current assetId/codeAssetId, fetched fresh — not
@@ -71,10 +89,18 @@ export function AssetLibraryPanel({ episodePath, scenePlan, selectedMomentSceneI
     // clicked.
     const [currentAssetId, setCurrentAssetId] = useState<string | null>(null);
     const [currentCodeAssetId, setCurrentCodeAssetId] = useState<string | null>(null);
-    const [tab, setTab] = useState<"images" | "code">("images");
+    const [tab, setTab] = useState<"images" | "code" | "backgrounds">("images");
     const [applyingId, setApplyingId] = useState<string | null>(null);
     const [hint, setHint] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+    // Which background card's direction row is expanded, and within
+    // that, which direction's speed row — same nested reveal as
+    // BackgroundBar's own Cmd+B picker (see IMAGE_MOTION_OPTIONS/
+    // IMAGE_MOTION_SPEED_OPTIONS, imported from there rather than a
+    // second copy). Only relevant on the Backgrounds tab.
+    const [expandedBackgroundId, setExpandedBackgroundId] = useState<string | null>(null);
+    const [expandedBackgroundMotion, setExpandedBackgroundMotion] = useState<BackgroundImageMotion | null>(null);
+    const [insertingBackgroundId, setInsertingBackgroundId] = useState<string | null>(null);
 
     useEffect(() => {
         if (!isActive) return;
@@ -181,29 +207,61 @@ export function AssetLibraryPanel({ episodePath, scenePlan, selectedMomentSceneI
         }
     };
 
+    // Inserts the given background at the PLAYER'S CURRENT FRAME — not
+    // "apply to the selected moment" the way applyAsset above works,
+    // since a background has no per-moment concept at all. Same shared
+    // helper (and therefore identical semantics — works at any playhead
+    // position, splitting an already-covered span there) as
+    // BackgroundBar's own Cmd+B, so inserting from this panel behaves
+    // exactly the same as inserting from the timeline bar.
+    const insertBackground = async (
+        backgroundId: string,
+        imageMotion?: BackgroundImageMotion,
+        imageMotionSpeed?: BackgroundImageMotionSpeed
+    ) => {
+        setInsertingBackgroundId(backgroundId);
+        setError(null);
+        setHint(null);
+
+        const result = await insertBackgroundAtFrame(episodePath, currentFrame, backgroundId, imageMotion, imageMotionSpeed);
+
+        if (result.ok) {
+            onSaved();
+            setExpandedBackgroundId(null);
+            setExpandedBackgroundMotion(null);
+            setHint("Inserted — it runs from the current playhead position until the next background or the episode's end.");
+        } else {
+            setError(result.error);
+        }
+
+        setInsertingBackgroundId(null);
+    };
+
     if (!isActive) return null;
 
     return (
         <div style={styles.body}>
             <p style={styles.hint}>
-                        Every image and code file the pipeline can draw from for this episode — browse and
-                        apply one to the selected moment, independent of what the AI chose.
+                        {tab === "backgrounds"
+                            ? "Every image/video the pipeline found in this episode's background/ folder — insert one at the player's current position, independent of what's already there."
+                            : "Every image and code file the pipeline can draw from for this episode — browse and apply one to the selected moment, independent of what the AI chose."}
                     </p>
 
-                    {selectedMoment ? (
-                        <p style={styles.selectionStatus}>
-                            Editing the <strong>{selectedTreatmentLabel}</strong> moment you selected on the
-                            timeline
-                            {selectedContentType === "image" || selectedContentType === "code"
-                                ? ` — click ${selectedContentType === "image" ? "an image" : "a code file"} below to replace it.`
-                                : ". This treatment doesn't use an image or code file, so every card below is disabled."}
-                        </p>
-                    ) : (
-                        <p style={styles.selectionStatus}>
-                            No moment selected — click a moment on the timeline first, then come back here to
-                            change its image or code.
-                        </p>
-                    )}
+                    {tab !== "backgrounds" &&
+                        (selectedMoment ? (
+                            <p style={styles.selectionStatus}>
+                                Editing the <strong>{selectedTreatmentLabel}</strong> moment you selected on the
+                                timeline
+                                {selectedContentType === "image" || selectedContentType === "code"
+                                    ? ` — click ${selectedContentType === "image" ? "an image" : "a code file"} below to replace it.`
+                                    : ". This treatment doesn't use an image or code file, so every card below is disabled."}
+                            </p>
+                        ) : (
+                            <p style={styles.selectionStatus}>
+                                No moment selected — click a moment on the timeline first, then come back here to
+                                change its image or code.
+                            </p>
+                        ))}
 
                     <div style={styles.tabRow}>
                         <button
@@ -219,6 +277,13 @@ export function AssetLibraryPanel({ episodePath, scenePlan, selectedMomentSceneI
                             onClick={() => setTab("code")}
                         >
                             Code ({codeAssets.length})
+                        </button>
+                        <button
+                            className={tab === "backgrounds" ? undefined : "secondary"}
+                            style={styles.tabButton}
+                            onClick={() => setTab("backgrounds")}
+                        >
+                            Backgrounds ({backgroundLibrary.length})
                         </button>
                     </div>
 
@@ -307,6 +372,104 @@ export function AssetLibraryPanel({ episodePath, scenePlan, selectedMomentSceneI
                                             {asset.lineCount ? ` · ${asset.lineCount} lines` : ""}
                                         </span>
                                     </button>
+                                );
+                            })}
+                        </div>
+                    )}
+
+                    {tab === "backgrounds" && (
+                        <div style={styles.grid}>
+                            {backgroundLibrary.length === 0 && (
+                                <p style={styles.emptyHint}>
+                                    No files indexed yet — drop images/videos into the episode's background/
+                                    folder and run "Index backgrounds" in Advanced.
+                                </p>
+                            )}
+                            {backgroundLibrary.map((bg) => {
+                                const isImage = bg.mediaType === "image";
+                                const isExpanded = expandedBackgroundId === bg.id;
+                                const isInserting = insertingBackgroundId === bg.id;
+
+                                return (
+                                    <div key={bg.id} style={styles.card}>
+                                        <button
+                                            type="button"
+                                            style={styles.backgroundCardButton}
+                                            disabled={isInserting}
+                                            onClick={() => {
+                                                if (!isImage) {
+                                                    insertBackground(bg.id);
+                                                    return;
+                                                }
+                                                setExpandedBackgroundId(isExpanded ? null : bg.id);
+                                                setExpandedBackgroundMotion(null);
+                                            }}
+                                            title={bg.filename}
+                                        >
+                                            {bg.mediaType === "video" ? (
+                                                <video src={`/${bg.path}`} muted playsInline style={styles.thumb} />
+                                            ) : (
+                                                <img src={`/${bg.path}`} alt="" style={styles.thumb} />
+                                            )}
+                                            <span style={styles.cardCaption}>{bg.caption || bg.filename}</span>
+                                        </button>
+                                        {isExpanded && (
+                                            <div style={styles.motionRow}>
+                                                {IMAGE_MOTION_OPTIONS.map((option) => {
+                                                    if (option.value === "none") {
+                                                        return (
+                                                            <button
+                                                                key={option.value}
+                                                                type="button"
+                                                                className="secondary small"
+                                                                style={styles.motionOption}
+                                                                disabled={isInserting}
+                                                                onClick={() => insertBackground(bg.id, "none")}
+                                                            >
+                                                                {option.label}
+                                                            </button>
+                                                        );
+                                                    }
+
+                                                    const isSpeedExpanded = expandedBackgroundMotion === option.value;
+
+                                                    return (
+                                                        <div key={option.value}>
+                                                            <button
+                                                                type="button"
+                                                                className="secondary small"
+                                                                style={styles.motionOption}
+                                                                disabled={isInserting}
+                                                                onClick={() =>
+                                                                    setExpandedBackgroundMotion(isSpeedExpanded ? null : option.value)
+                                                                }
+                                                            >
+                                                                {option.label}
+                                                            </button>
+                                                            {isSpeedExpanded && (
+                                                                <div style={styles.speedRow}>
+                                                                    {IMAGE_MOTION_SPEED_OPTIONS.map((speedOption) => (
+                                                                        <button
+                                                                            key={speedOption.value}
+                                                                            type="button"
+                                                                            className="secondary small"
+                                                                            style={styles.speedOption}
+                                                                            disabled={isInserting}
+                                                                            onClick={() =>
+                                                                                insertBackground(bg.id, option.value, speedOption.value)
+                                                                            }
+                                                                        >
+                                                                            {speedOption.label}
+                                                                        </button>
+                                                                    ))}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+                                    </div>
                                 );
                             })}
                         </div>
@@ -440,5 +603,52 @@ const styles: Record<string, React.CSSProperties> = {
     error: {
         fontSize: typography.size.sm,
         color: colors.error,
+    },
+    // A background card is a plain div (styles.card, reused as a
+    // container here) wrapping this actual clickable button plus an
+    // optional expanded motion row below it — unlike the Images/Code
+    // cards, which are themselves the whole clickable button with
+    // nothing else inside.
+    backgroundCardButton: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        width: "100%",
+        padding: 0,
+        background: "none",
+        border: "none",
+        textAlign: "left",
+        cursor: "pointer",
+        fontSize: typography.size.sm,
+        color: colors.textPrimary,
+        fontFamily: "inherit",
+        fontWeight: typography.weight.regular,
+    },
+    motionRow: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 4,
+        marginTop: 6,
+        paddingTop: 6,
+        borderTop: `1px solid ${colors.border}`,
+    },
+    motionOption: {
+        textAlign: "left",
+        fontSize: typography.size.xs,
+        width: "100%",
+    },
+    speedRow: {
+        display: "flex",
+        flexDirection: "row",
+        gap: 4,
+        marginTop: 4,
+        marginLeft: 8,
+        paddingLeft: 6,
+        borderLeft: `2px solid ${colors.border}`,
+    },
+    speedOption: {
+        textAlign: "center",
+        fontSize: typography.size.xs,
+        flex: 1,
     },
 };

@@ -344,6 +344,10 @@ class BackgroundSceneEntry(BaseModel):
     # BackgroundImageMotion in types.ts). Absent/None means no motion,
     # same as every background entry before this field existed.
     imageMotion: str | None = None
+    # How much the drift scales, only meaningful when imageMotion is set
+    # (see BackgroundImageMotionSpeed in types.ts). Absent/None means
+    # "normal" — the renderer's own default.
+    imageMotionSpeed: str | None = None
 
 
 class BackgroundScenesUpdate(BaseModel):

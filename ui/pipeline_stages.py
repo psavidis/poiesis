@@ -94,6 +94,12 @@ PIPELINE_STAGES = [
         "code_assets.json",
     ),
     Stage(
+        "index_backgrounds",
+        "Index backgrounds",
+        lambda ep: [PYTHON, PIPELINE_DIR / "index_backgrounds.py", ep],
+        "backgrounds.json",
+    ),
+    Stage(
         "generate_cut_candidates",
         "Propose pause cuts (mechanical, no AI)",
         lambda ep: [PYTHON, PIPELINE_DIR / "generate_cut_candidates.py", ep],

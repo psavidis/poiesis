@@ -610,6 +610,8 @@ export function EpisodeWorkspace() {
                             selectedMomentSceneId={assetLibraryMomentId ?? undefined}
                             onSaved={reloadScenePlan}
                             isActive={activeTab === "assets"}
+                            backgrounds={episodeProps.backgrounds ?? []}
+                            currentFrame={currentFrame}
                         />
                     )}
                     <EpisodeAnalysisPanel

@@ -32,6 +32,28 @@ def _scene_plan_one_clip(duration=300):
     }
 
 
+def test_merge_background_scenes_carries_image_motion_speed_through():
+    scene_plan = _scene_plan_one_clip()
+    entries = [{"segmentId": "s0", "backgroundId": "bg-001", "imageMotion": "zoom-in", "imageMotionSpeed": "strong"}]
+
+    result = merge_background_scenes(scene_plan, entries, _transcript_two_segments(), _manifest_one_video())
+
+    backgrounds = [s for s in result["scenes"] if s["type"] == "background"]
+
+    assert backgrounds[0]["imageMotionSpeed"] == "strong"
+
+
+def test_merge_background_scenes_omits_image_motion_speed_when_absent():
+    scene_plan = _scene_plan_one_clip()
+    entries = [{"segmentId": "s0", "backgroundId": "bg-001", "imageMotion": "zoom-in"}]
+
+    result = merge_background_scenes(scene_plan, entries, _transcript_two_segments(), _manifest_one_video())
+
+    backgrounds = [s for s in result["scenes"] if s["type"] == "background"]
+
+    assert "imageMotionSpeed" not in backgrounds[0]
+
+
 def test_merge_background_scenes_carries_image_motion_through():
     scene_plan = _scene_plan_one_clip()
     entries = [{"segmentId": "s0", "backgroundId": "bg-001", "imageMotion": "palindrome"}]

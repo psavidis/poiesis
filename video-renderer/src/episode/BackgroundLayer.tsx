@@ -1,5 +1,5 @@
 import { AbsoluteFill, Img, Loop, OffthreadVideo, Sequence, staticFile, useCurrentFrame, interpolate } from "remotion";
-import type { BackgroundImageMotion } from "./types";
+import type { BackgroundImageMotion, BackgroundImageMotionSpeed } from "./types";
 
 // How long (in frames) the loop's own seam gets a crossfade dissolve
 // instead of a hard cut — "a little animation to smoothen the loop" (the
@@ -8,25 +8,39 @@ import type { BackgroundImageMotion } from "./types";
 // hide a jump cut between the clip's last and first frames.
 const LOOP_CROSSFADE_FRAMES = 15;
 
-// How far a static image drifts in/out — deliberately small and fixed,
-// not user-tunable (see BackgroundImageMotion's own doc comment: "does
-// not distract" is a hard design constraint here, not a per-use dial).
-// 1.0 -> 1.08 over a whole multi-second span reads as a slow, barely-
-// perceptible drift, not a zoom effect a viewer would consciously notice.
-const IMAGE_MOTION_MAX_SCALE = 1.08;
+// How far a static image drifts in/out, per speed preset — fixed values,
+// not a free-form dial (see BackgroundImageMotionSpeed's own doc
+// comment: "does not distract" is a hard design constraint here). "subtle"
+// is the ORIGINAL amount from before speed control existed; "normal" is
+// the default going forward (roughly double); "strong" is a clearly
+// noticeable but still smooth drift — all three still complete over the
+// WHOLE span, so "faster" here means a bigger zoom amount in the same
+// time, not a shorter cycle.
+const IMAGE_MOTION_MAX_SCALE_BY_SPEED: Record<BackgroundImageMotionSpeed, number> = {
+    subtle: 1.08,
+    normal: 1.15,
+    strong: 1.25,
+};
 
-function imageMotionScale(motion: BackgroundImageMotion | undefined, frame: number, durationInFrames: number): number {
+function imageMotionScale(
+    motion: BackgroundImageMotion | undefined,
+    speed: BackgroundImageMotionSpeed | undefined,
+    frame: number,
+    durationInFrames: number
+): number {
     if (!motion || motion === "none" || durationInFrames <= 0) return 1;
 
+    const maxScale = IMAGE_MOTION_MAX_SCALE_BY_SPEED[speed ?? "normal"];
+
     if (motion === "zoom-in") {
-        return interpolate(frame, [0, durationInFrames], [1, IMAGE_MOTION_MAX_SCALE], {
+        return interpolate(frame, [0, durationInFrames], [1, maxScale], {
             extrapolateLeft: "clamp",
             extrapolateRight: "clamp",
         });
     }
 
     if (motion === "zoom-out") {
-        return interpolate(frame, [0, durationInFrames], [IMAGE_MOTION_MAX_SCALE, 1], {
+        return interpolate(frame, [0, durationInFrames], [maxScale, 1], {
             extrapolateLeft: "clamp",
             extrapolateRight: "clamp",
         });
@@ -38,7 +52,7 @@ function imageMotionScale(motion: BackgroundImageMotion | undefined, frame: numb
     // its own separate loop/seam handling the way the video background
     // does.
     const midpoint = durationInFrames / 2;
-    return interpolate(frame, [0, midpoint, durationInFrames], [1, IMAGE_MOTION_MAX_SCALE, 1], {
+    return interpolate(frame, [0, midpoint, durationInFrames], [1, maxScale, 1], {
         extrapolateLeft: "clamp",
         extrapolateRight: "clamp",
     });
@@ -59,6 +73,7 @@ export const BackgroundLayer = ({
     crossfadeInFrames = 0,
     durationInFrames,
     imageMotion,
+    imageMotionSpeed,
 }: {
     path: string;
     mediaType: "image" | "video";
@@ -80,6 +95,7 @@ export const BackgroundLayer = ({
     // to anything other than "none"/absent.
     durationInFrames?: number;
     imageMotion?: BackgroundImageMotion;
+    imageMotionSpeed?: BackgroundImageMotionSpeed;
 }) => {
     const rawFrame = useCurrentFrame();
     // Re-aligned so frame 0 is the span's OWN start, not the Sequence's
@@ -98,7 +114,7 @@ export const BackgroundLayer = ({
             : 1;
 
     if (mediaType === "image") {
-        const scale = imageMotionScale(imageMotion, frame, durationInFrames ?? 0);
+        const scale = imageMotionScale(imageMotion, imageMotionSpeed, frame, durationInFrames ?? 0);
 
         return (
             <AbsoluteFill style={{ opacity, overflow: "hidden" }}>

@@ -767,6 +767,7 @@ export const Episode = ({
                             crossfadeInFrames={crossfadeInFrames}
                             durationInFrames={scene.durationInFrames}
                             imageMotion={scene.imageMotion}
+                            imageMotionSpeed={scene.imageMotionSpeed}
                         />
                     </Sequence>
                 );

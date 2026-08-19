@@ -1,25 +1,55 @@
 import { useEffect, useRef, useState } from "react";
-import type { BackgroundImageMotion, BackgroundScene, EpisodeBackground, ScenePlan } from "video-renderer-src/episode/types";
-import {
-    getBackgroundScenes,
-    getChapterBoundaryPositions,
-    saveBackgroundScenes,
-    type ChapterBoundaryPosition,
-} from "./api";
+import type {
+    BackgroundImageMotion,
+    BackgroundImageMotionSpeed,
+    BackgroundScene,
+    EpisodeBackground,
+    ScenePlan,
+} from "video-renderer-src/episode/types";
+import { getBackgroundScenes, getChapterBoundaryPositions, saveBackgroundScenes, type ChapterBoundaryPosition } from "./api";
+import { insertBackgroundAtFrame, nearestSegmentId } from "./backgroundInsert";
 import { colors, radius, typography } from "./tokens";
 import type { TimelineZoom } from "./useTimelineZoom";
 
 // "does not distract" is a hard design constraint (see BackgroundImageMotion's
-// own doc comment in types.ts) — three fixed, non-tunable directions, no
-// intensity slider.
-const IMAGE_MOTION_OPTIONS: { value: BackgroundImageMotion; label: string }[] = [
+// own doc comment in types.ts) — fixed, non-tunable directions, no
+// intensity slider (speed is its own separate fixed-preset choice, see
+// IMAGE_MOTION_SPEED_OPTIONS below).
+// Exported so AssetLibraryPanel's own Backgrounds tab can reuse the exact
+// same option set/labels rather than a second, independently-maintained
+// copy — both surfaces insert through the same shared
+// backgroundInsert.ts helper and should offer identical choices.
+export const IMAGE_MOTION_OPTIONS: { value: BackgroundImageMotion; label: string }[] = [
     { value: "none", label: "No motion" },
-    { value: "zoom-in", label: "Slow zoom in" },
-    { value: "zoom-out", label: "Slow zoom out" },
-    { value: "palindrome", label: "Slow zoom in/out" },
+    { value: "zoom-in", label: "Zoom in" },
+    { value: "zoom-out", label: "Zoom out" },
+    { value: "palindrome", label: "Zoom in/out" },
 ];
 
-const BACKGROUND_COLOR = colors.timelineImage;
+// How much the drift scales — a second, independent choice from
+// direction (see BackgroundImageMotionSpeed's own doc comment). "normal"
+// is the default; shown first/highlighted rather than "subtle" being the
+// implied default, since normal is what a fresh pick lands on if the
+// user doesn't touch this row at all.
+export const IMAGE_MOTION_SPEED_OPTIONS: { value: BackgroundImageMotionSpeed; label: string }[] = [
+    { value: "subtle", label: "Subtle" },
+    { value: "normal", label: "Normal" },
+    { value: "strong", label: "Strong" },
+];
+
+// One distinct color per background in the library, assigned by the
+// background's own position in the (stable, append-only — see
+// index_backgrounds.py) library list rather than randomly, so a given
+// background always renders the same color across reloads/re-renders.
+// Cycles if there are ever more backgrounds than colors.
+const BACKGROUND_SEGMENT_COLORS = [
+    colors.timelineImage,
+    colors.timelineText,
+    colors.timelineBeat,
+    colors.timelineMomentCode,
+    colors.timelineVisual,
+    colors.timelineTitle,
+];
 // The implicit "no override — presenter's own natural footage" gap
 // between/before background spans — rendered so the bar always shows
 // something across the WHOLE episode even with zero backgrounds
@@ -53,6 +83,7 @@ type Segment = {
     startFrame: number;
     endFrame: number;
     imageMotion?: BackgroundImageMotion;
+    imageMotionSpeed?: BackgroundImageMotionSpeed;
 };
 
 function segmentsFromBackgroundScenes(scenes: BackgroundScene[], totalFrames: number): Segment[] {
@@ -70,6 +101,7 @@ function segmentsFromBackgroundScenes(scenes: BackgroundScene[], totalFrames: nu
             startFrame: scene.timelineStartFrame,
             endFrame: scene.timelineStartFrame + scene.durationInFrames,
             imageMotion: scene.imageMotion,
+            imageMotionSpeed: scene.imageMotionSpeed,
         });
         cursor = scene.timelineStartFrame + scene.durationInFrames;
     }
@@ -137,42 +169,46 @@ export function BackgroundBar({
         };
     }, [episodePath]);
 
-    const nearestSegmentIdForFrame = (frame: number): string | null => {
-        if (boundaryPositions.length === 0) return null;
-        return boundaryPositions.reduce((nearest, p) =>
-            Math.abs(p.timelineFrame - frame) < Math.abs(nearest.timelineFrame - frame) ? p : nearest
-        ).segmentId;
-    };
+    const nearestSegmentIdForFrame = (frame: number): string | null => nearestSegmentId(boundaryPositions, frame);
 
     if (totalFrames <= 0) return null;
 
     const backgroundScenes = scenePlan.scenes.filter((s): s is BackgroundScene => s.type === "background");
     const segments = segmentsFromBackgroundScenes(backgroundScenes, totalFrames);
     const backgroundById = new Map(backgrounds.map((b) => [b.id, b]));
-
-    // The gap (if any) the playhead currently sits inside — Cmd+B only
-    // does something meaningful there; a playhead already inside a real
-    // background segment has nothing to insert (mirrors MomentBar's own
-    // "requires a presenter scene under the playhead" gate).
-    const gapAtPlayhead = segments.find(
-        (s) => s.backgroundId === null && currentFrame >= s.startFrame && currentFrame < s.endFrame
+    const colorByBackgroundId = new Map(
+        backgrounds.map((b, i) => [b.id, BACKGROUND_SEGMENT_COLORS[i % BACKGROUND_SEGMENT_COLORS.length]])
     );
 
     // Cmd+B (Mac) / Ctrl+B (elsewhere) opens the background chooser at
-    // the playhead — global, doesn't require a selection first (inserting
-    // is independent of selection, matching MomentBar's own Cmd+I rule).
-    // Deliberately NOT Cmd+I: MomentBar's Cmd+I only checks for a
-    // presenter scene under the playhead, which is true almost anywhere a
-    // background gap also is, so sharing the shortcut opened BOTH bars'
-    // insert pickers at once (confirmed live) — a distinct shortcut avoids
-    // that collision entirely rather than trying to arbitrate whose
-    // Cmd+I "wins" at a given playhead position.
+    // the playhead — works at ANY position, not just an empty gap. A
+    // background already covering the playhead's own position is simply
+    // split there: the new entry starts at the playhead and the existing
+    // one's own span shortens to end there, the same auto-close-by-the-
+    // next-entry model generate_background_scenes.py already implements
+    // (no separate "split" logic needed — inserting a new entry with a
+    // later timelineStartFrame than an existing one already does this).
+    // Previously this required an empty gap under the playhead, which
+    // meant Cmd+B silently did nothing anywhere past the FIRST inserted
+    // background, since one background covering the rest of the episode
+    // (the normal state right after any insert) leaves no gap left to
+    // click into — confirmed live as the actual cause of "I can't insert
+    // a second background."
+    //
+    // Doesn't require a selection first (inserting is independent of
+    // selection, matching MomentBar's own Cmd+I rule). Deliberately NOT
+    // Cmd+I: MomentBar's Cmd+I only checks for a presenter scene under
+    // the playhead, which is true almost anywhere a background gap also
+    // is, so sharing the shortcut opened BOTH bars' insert pickers at
+    // once (confirmed live) — a distinct shortcut avoids that collision
+    // entirely rather than trying to arbitrate whose Cmd+I "wins" at a
+    // given playhead position.
     useEffect(() => {
         const onKeyDown = (e: KeyboardEvent) => {
             if (e.key.toLowerCase() !== "b" || !(e.metaKey || e.ctrlKey)) return;
             const target = e.target as HTMLElement | null;
             if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
-            if (!gapAtPlayhead || !trackRef.current || backgrounds.length === 0) return;
+            if (!trackRef.current || backgrounds.length === 0) return;
 
             e.preventDefault();
             const rect = trackRef.current.getBoundingClientRect();
@@ -183,7 +219,7 @@ export function BackgroundBar({
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [gapAtPlayhead?.startFrame, currentFrame, backgrounds.length]);
+    }, [currentFrame, backgrounds.length]);
 
     // Only an image background has a motion setting to edit — a video
     // background already has its own motion, so Cmd+E is a no-op there
@@ -249,42 +285,36 @@ export function BackgroundBar({
     // segmentId rather than duplicating it (shouldn't normally happen
     // since Cmd+I only opens over a gap, but stays correct if segment
     // resolution snaps two nearby frames to the same segmentId).
-    // imageMotion is only meaningful for an image pick — passed through
-    // regardless (harmless/ignored by the renderer for a video pick), so
-    // the picker doesn't need to know the background's own mediaType to
-    // decide whether to send it.
-    const doInsert = async (backgroundId: string, imageMotion?: BackgroundImageMotion) => {
+    // imageMotion/imageMotionSpeed are only meaningful for an image pick
+    // — passed through regardless (harmless/ignored by the renderer for a
+    // video pick), so the picker doesn't need to know the background's
+    // own mediaType to decide whether to send them.
+    const doInsert = async (
+        backgroundId: string,
+        imageMotion?: BackgroundImageMotion,
+        imageMotionSpeed?: BackgroundImageMotionSpeed
+    ) => {
         setInserting(true);
         setSaveError(null);
 
-        try {
-            const segmentId = nearestSegmentIdForFrame(currentFrame);
-            if (!segmentId) {
-                setSaveError("Couldn't resolve this position to a transcript segment yet — try again in a moment.");
-                return;
-            }
+        const result = await insertBackgroundAtFrame(episodePath, currentFrame, backgroundId, imageMotion, imageMotionSpeed);
 
-            const current = await getBackgroundScenes(episodePath);
-            const next = [
-                ...current.filter((e) => e.segmentId !== segmentId),
-                { segmentId, backgroundId, ...(imageMotion ? { imageMotion } : {}) },
-            ];
-            await saveBackgroundScenes(episodePath, next);
+        if (result.ok) {
             onSaved();
             setInsertPickerAnchor(null);
-        } catch (err) {
-            setSaveError(String(err));
-        } finally {
-            setInserting(false);
+        } else {
+            setSaveError(result.error);
         }
+
+        setInserting(false);
     };
 
-    // Updates ONLY the imageMotion field of the selected segment's own
-    // entry — matched by its resolved start frame's nearest segmentId,
-    // same identity approach doDelete already uses (a merged
+    // Updates the imageMotion/imageMotionSpeed fields of the selected
+    // segment's own entry — matched by its resolved start frame's nearest
+    // segmentId, same identity approach doDelete already uses (a merged
     // BackgroundScene carries no segmentId of its own to match against
     // directly).
-    const doUpdateMotion = async (imageMotion: BackgroundImageMotion) => {
+    const doUpdateMotion = async (imageMotion: BackgroundImageMotion, imageMotionSpeed: BackgroundImageMotionSpeed) => {
         if (selectedIndex === null) return;
         const segment = segments[selectedIndex];
         if (!segment?.backgroundId) return;
@@ -298,7 +328,7 @@ export function BackgroundBar({
             const index = current.findIndex((e) => e.segmentId === segmentId);
             if (index === -1) return;
 
-            const next = current.map((e, i) => (i === index ? { ...e, imageMotion } : e));
+            const next = current.map((e, i) => (i === index ? { ...e, imageMotion, imageMotionSpeed } : e));
             await saveBackgroundScenes(episodePath, next);
             onSaved();
             setMotionEditorAnchor(null);
@@ -362,7 +392,9 @@ export function BackgroundBar({
                                 ...styles.segment,
                                 left: `${leftPct}%`,
                                 width: `${widthPct}%`,
-                                background: isReal ? BACKGROUND_COLOR : EMPTY_COLOR,
+                                background: isReal
+                                    ? colorByBackgroundId.get(segment.backgroundId!) ?? BACKGROUND_SEGMENT_COLORS[0]
+                                    : EMPTY_COLOR,
                                 cursor: isReal ? "pointer" : "default",
                                 ...(isSelected ? styles.segmentSelected : {}),
                             }}
@@ -382,8 +414,32 @@ export function BackgroundBar({
                                           selectedAnchorRef.current = { x: e.clientX, y: e.clientY };
                                           setSelectedIndex(i);
                                           setPendingDeleteIndex(null);
-                                          onSeek(segment.startFrame);
-                                          zoomToAtLeast4x(segment.startFrame + (segment.endFrame - segment.startFrame) / 2);
+                                          // Seeks to the CLICKED position, not the
+                                          // segment's own start — unlike every
+                                          // other bar's segments (moments/beats/
+                                          // images, all short), a background span
+                                          // routinely covers most or all of the
+                                          // episode, so "jump to this segment's
+                                          // start" reads as "clicking anywhere
+                                          // resets the playhead to the beginning"
+                                          // and silently defeated Cmd+B's own
+                                          // "insert at the playhead" contract
+                                          // (confirmed live: a click meant to
+                                          // position the playhead partway through
+                                          // a long background actually snapped it
+                                          // back to frame 0, so the very next
+                                          // Cmd+B resolved to the SAME segmentId
+                                          // as the existing entry and silently
+                                          // overwrote it instead of splitting).
+                                          const rect = trackRef.current?.getBoundingClientRect();
+                                          const clickedFrame = rect
+                                              ? Math.round(
+                                                    windowStartFrame +
+                                                        clamp((e.clientX - rect.left) / rect.width, 0, 1) * windowFrames
+                                                )
+                                              : segment.startFrame;
+                                          onSeek(clickedFrame);
+                                          zoomToAtLeast4x(clickedFrame);
                                       }
                                     : undefined
                             }
@@ -410,6 +466,7 @@ export function BackgroundBar({
                 <MotionEditor
                     anchor={motionEditorAnchor}
                     currentMotion={selectedSegment.imageMotion ?? "none"}
+                    currentSpeed={selectedSegment.imageMotionSpeed ?? "normal"}
                     disabled={updatingMotion}
                     onPick={doUpdateMotion}
                     onClose={() => setMotionEditorAnchor(null)}
@@ -446,10 +503,13 @@ export function BackgroundBar({
 // Cmd+B's chooser — a small fixed-position popup near wherever the
 // shortcut was pressed, same pattern as MomentBar's own InsertTypePicker,
 // just choosing WHICH background instead of which moment kind (there's
-// only one "kind" here). An IMAGE entry expands into its own row of
-// motion buttons (see IMAGE_MOTION_OPTIONS) so direction is chosen in
-// the same step as picking the file, per the feature's own design —
-// a video entry has no motion setting, so it's a single one-click insert.
+// only one "kind" here). An IMAGE entry expands into a direction row
+// (see IMAGE_MOTION_OPTIONS); picking any direction other than "none"
+// expands further into a speed row (see IMAGE_MOTION_SPEED_OPTIONS) —
+// direction and speed are two independent choices, so this is a
+// two-step nested reveal rather than one flat list of every direction×
+// speed combination. A video entry has no motion setting at all, so
+// it's a single one-click insert.
 function BackgroundPicker({
     anchor,
     backgrounds,
@@ -460,15 +520,19 @@ function BackgroundPicker({
     anchor: { x: number; y: number };
     backgrounds: EpisodeBackground[];
     disabled: boolean;
-    onPick: (backgroundId: string, imageMotion?: BackgroundImageMotion) => void;
+    onPick: (backgroundId: string, imageMotion?: BackgroundImageMotion, imageMotionSpeed?: BackgroundImageMotionSpeed) => void;
     onClose: () => void;
 }) {
     const boxRef = useRef<HTMLDivElement>(null);
-    // Which image entry's motion row is expanded — at most one at a
+    // Which image entry's direction row is expanded — at most one at a
     // time, collapsed again on outside click/Escape same as the picker
     // itself. A video entry has no expanded state (single click inserts
     // immediately).
     const [expandedImageId, setExpandedImageId] = useState<string | null>(null);
+    // Which direction (within the currently-expanded image) has its own
+    // speed row expanded — "none" never expands further, there's nothing
+    // to tune about no motion.
+    const [expandedMotion, setExpandedMotion] = useState<BackgroundImageMotion | null>(null);
 
     useEffect(() => {
         const onOutsideClick = (e: MouseEvent) => {
@@ -509,24 +573,67 @@ function BackgroundPicker({
                             className="secondary small"
                             style={styles.pickerOption}
                             disabled={disabled}
-                            onClick={() => (isImage ? setExpandedImageId(isExpanded ? null : b.id) : onPick(b.id))}
+                            onClick={() => {
+                                if (!isImage) {
+                                    onPick(b.id);
+                                    return;
+                                }
+                                setExpandedImageId(isExpanded ? null : b.id);
+                                setExpandedMotion(null);
+                            }}
                         >
                             {b.caption || b.filename} ({b.mediaType})
                         </button>
                         {isExpanded && (
                             <div style={styles.motionRow}>
-                                {IMAGE_MOTION_OPTIONS.map((option) => (
-                                    <button
-                                        key={option.value}
-                                        type="button"
-                                        className="secondary small"
-                                        style={styles.motionOption}
-                                        disabled={disabled}
-                                        onClick={() => onPick(b.id, option.value)}
-                                    >
-                                        {option.label}
-                                    </button>
-                                ))}
+                                {IMAGE_MOTION_OPTIONS.map((option) => {
+                                    if (option.value === "none") {
+                                        return (
+                                            <button
+                                                key={option.value}
+                                                type="button"
+                                                className="secondary small"
+                                                style={styles.motionOption}
+                                                disabled={disabled}
+                                                onClick={() => onPick(b.id, "none")}
+                                            >
+                                                {option.label}
+                                            </button>
+                                        );
+                                    }
+
+                                    const isSpeedExpanded = expandedMotion === option.value;
+
+                                    return (
+                                        <div key={option.value}>
+                                            <button
+                                                type="button"
+                                                className="secondary small"
+                                                style={styles.motionOption}
+                                                disabled={disabled}
+                                                onClick={() => setExpandedMotion(isSpeedExpanded ? null : option.value)}
+                                            >
+                                                {option.label}
+                                            </button>
+                                            {isSpeedExpanded && (
+                                                <div style={styles.speedRow}>
+                                                    {IMAGE_MOTION_SPEED_OPTIONS.map((speedOption) => (
+                                                        <button
+                                                            key={speedOption.value}
+                                                            type="button"
+                                                            className="secondary small"
+                                                            style={styles.speedOption}
+                                                            disabled={disabled}
+                                                            onClick={() => onPick(b.id, option.value, speedOption.value)}
+                                                        >
+                                                            {speedOption.label}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
                             </div>
                         )}
                     </div>
@@ -537,24 +644,32 @@ function BackgroundPicker({
 }
 
 // Cmd+E's editor for an already-inserted image background's own motion —
-// same 4-option set as the insert picker's expanded image row, just
-// without the file choice (that's fixed once inserted; changing the
-// FILE means removing and re-inserting, same as every other bar's own
-// "delete + re-add to change identity" convention).
+// same nested direction->speed reveal as the insert picker's expanded
+// image row, just without the file choice (that's fixed once inserted;
+// changing the FILE means removing and re-inserting, same as every other
+// bar's own "delete + re-add to change identity" convention). Pre-opens
+// the current direction's speed row so both current choices are visible
+// at once, rather than requiring the user to re-click through the same
+// nesting just to see what's already selected.
 function MotionEditor({
     anchor,
     currentMotion,
+    currentSpeed,
     disabled,
     onPick,
     onClose,
 }: {
     anchor: { x: number; y: number };
     currentMotion: BackgroundImageMotion;
+    currentSpeed: BackgroundImageMotionSpeed;
     disabled: boolean;
-    onPick: (motion: BackgroundImageMotion) => void;
+    onPick: (motion: BackgroundImageMotion, speed: BackgroundImageMotionSpeed) => void;
     onClose: () => void;
 }) {
     const boxRef = useRef<HTMLDivElement>(null);
+    const [expandedMotion, setExpandedMotion] = useState<BackgroundImageMotion | null>(
+        currentMotion !== "none" ? currentMotion : null
+    );
 
     useEffect(() => {
         const onOutsideClick = (e: MouseEvent) => {
@@ -582,21 +697,61 @@ function MotionEditor({
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
         >
-            {IMAGE_MOTION_OPTIONS.map((option) => (
-                <button
-                    key={option.value}
-                    type="button"
-                    className="secondary small"
-                    style={{
-                        ...styles.pickerOption,
-                        ...(option.value === currentMotion ? styles.pickerOptionActive : {}),
-                    }}
-                    disabled={disabled}
-                    onClick={() => onPick(option.value)}
-                >
-                    {option.label}
-                </button>
-            ))}
+            {IMAGE_MOTION_OPTIONS.map((option) => {
+                const isActiveDirection = option.value === currentMotion;
+
+                if (option.value === "none") {
+                    return (
+                        <button
+                            key={option.value}
+                            type="button"
+                            className="secondary small"
+                            style={{ ...styles.pickerOption, ...(isActiveDirection ? styles.pickerOptionActive : {}) }}
+                            disabled={disabled}
+                            onClick={() => onPick("none", currentSpeed)}
+                        >
+                            {option.label}
+                        </button>
+                    );
+                }
+
+                const isSpeedExpanded = expandedMotion === option.value;
+
+                return (
+                    <div key={option.value}>
+                        <button
+                            type="button"
+                            className="secondary small"
+                            style={{ ...styles.pickerOption, ...(isActiveDirection ? styles.pickerOptionActive : {}) }}
+                            disabled={disabled}
+                            onClick={() => setExpandedMotion(isSpeedExpanded ? null : option.value)}
+                        >
+                            {option.label}
+                        </button>
+                        {isSpeedExpanded && (
+                            <div style={styles.speedRow}>
+                                {IMAGE_MOTION_SPEED_OPTIONS.map((speedOption) => (
+                                    <button
+                                        key={speedOption.value}
+                                        type="button"
+                                        className="secondary small"
+                                        style={{
+                                            ...styles.speedOption,
+                                            ...(isActiveDirection && speedOption.value === currentSpeed
+                                                ? styles.pickerOptionActive
+                                                : {}),
+                                        }}
+                                        disabled={disabled}
+                                        onClick={() => onPick(option.value, speedOption.value)}
+                                    >
+                                        {speedOption.label}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                );
+            })}
         </div>
     );
 }
@@ -712,5 +867,19 @@ const styles: Record<string, React.CSSProperties> = {
     motionOption: {
         textAlign: "left",
         fontSize: typography.size.xs,
+    },
+    speedRow: {
+        display: "flex",
+        flexDirection: "row",
+        gap: 4,
+        marginTop: 4,
+        marginLeft: 12,
+        paddingLeft: 8,
+        borderLeft: `2px solid ${colors.border}`,
+    },
+    speedOption: {
+        textAlign: "center",
+        fontSize: typography.size.xs,
+        flex: 1,
     },
 };

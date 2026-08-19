@@ -93,6 +93,10 @@ def merge_background_scenes(scene_plan, entries, transcript, manifest):
             # Defaults to None (no motion), same as every background
             # scene before this field existed.
             "imageMotion": entry.get("imageMotion"),
+            # Only meaningful when imageMotion is set — see
+            # BackgroundImageMotionSpeed's own doc comment in types.ts.
+            # Defaults to None (renderer treats that as "normal").
+            "imageMotionSpeed": entry.get("imageMotionSpeed"),
         })
 
     resolved.sort(key=lambda r: r["timelineStartFrame"])
@@ -114,6 +118,9 @@ def merge_background_scenes(scene_plan, entries, transcript, manifest):
 
         if entry.get("imageMotion"):
             background_scene["imageMotion"] = entry["imageMotion"]
+
+        if entry.get("imageMotionSpeed"):
+            background_scene["imageMotionSpeed"] = entry["imageMotionSpeed"]
 
         background_scenes.append(background_scene)
 

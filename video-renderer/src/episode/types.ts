@@ -134,19 +134,27 @@ export interface TitleScene {
 // BackgroundScene covering it, meaning "no override — presenter's own
 // natural footage" (unchanged rendering, per the feature's own design
 // decision), not a synthetic "none" entry.
-// A slow, deliberately subtle drift applied to a STATIC IMAGE background
-// over its own span's full duration — "does not distract" is a hard
-// design constraint here (see the feature's own ask), so this is not a
-// tunable intensity, just a direction. Only meaningful when the
-// referenced EpisodeBackground has mediaType "image" — a video
-// background already has its own motion and this field is ignored for
-// it. "none" (absent/undefined also means this) is a flat, static image
-// with no motion at all, unchanged from before this field existed.
-// "zoom-in"/"zoom-out" run linearly across the whole span; "palindrome"
-// zooms in across the first half and back out across the second half, so
-// one full cycle always exactly matches the span's own length regardless
-// of how long it ends up being (see BackgroundLayer.tsx).
+// A slow drift applied to a STATIC IMAGE background over its own span's
+// full duration — "does not distract" is a hard design constraint here
+// (see the feature's own ask), so this is a small, fixed set of presets
+// (see BackgroundImageMotionSpeed), never a free-form slider. Only
+// meaningful when the referenced EpisodeBackground has mediaType "image"
+// — a video background already has its own motion and this field is
+// ignored for it. "none" (absent/undefined also means this) is a flat,
+// static image with no motion at all, unchanged from before this field
+// existed. "zoom-in"/"zoom-out" run linearly across the whole span;
+// "palindrome" zooms in across the first half and back out across the
+// second half, so one full cycle always exactly matches the span's own
+// length regardless of how long it ends up being (see
+// BackgroundLayer.tsx).
 export type BackgroundImageMotion = "none" | "zoom-in" | "zoom-out" | "palindrome";
+
+// How much the image scales across its drift — a preset, not a tunable
+// number (see BackgroundImageMotion's own doc comment for why). Absent
+// means "normal", the default going forward — "subtle" is kept as the
+// ORIGINAL fixed amount from before speed control existed, for anyone
+// who already picked it and specifically wants the gentler drift.
+export type BackgroundImageMotionSpeed = "subtle" | "normal" | "strong";
 
 export interface BackgroundScene {
     type: "background";
@@ -155,6 +163,9 @@ export interface BackgroundScene {
     timelineStartFrame: number;
     durationInFrames: number;
     imageMotion?: BackgroundImageMotion;
+    // Only meaningful when imageMotion is set to anything other than
+    // "none"/absent.
+    imageMotionSpeed?: BackgroundImageMotionSpeed;
 }
 
 // A moment's treatment implies whether/how the presenter moves:

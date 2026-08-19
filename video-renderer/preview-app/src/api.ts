@@ -140,6 +140,10 @@ export interface BackgroundSceneProposal {
     // motion, only meaningful when the referenced background's own
     // mediaType is "image".
     imageMotion?: "none" | "zoom-in" | "zoom-out" | "palindrome";
+    // How much the drift scales (see BackgroundImageMotionSpeed in
+    // episode/types.ts). Absent means "normal", only meaningful when
+    // imageMotion is set.
+    imageMotionSpeed?: "subtle" | "normal" | "strong";
 }
 
 // The human-authored per-span selections (see
