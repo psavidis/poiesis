@@ -178,6 +178,12 @@ export function EpisodeWorkspace() {
         setInlineEditTarget({ kind: "beat", sceneId });
     };
 
+    const openInlineCaptionEditor = (sceneId: string, anchor: { x: number; y: number }) => {
+        setSelectedEditor(null);
+        setInlineEditAnchor(anchor);
+        setInlineEditTarget({ kind: "caption", sceneId });
+    };
+
     // Patches the selected beat's text directly in local episodeProps state
     // on every keystroke — playerProps (below) re-derives from this, so the
     // Player picks up the edit immediately, before the real save commits
@@ -919,6 +925,7 @@ export function EpisodeWorkspace() {
                         setInlineEditTarget(null);
                         setSelectedEditor({ kind: "moment", sceneId: momentSceneId });
                     }}
+                    onSelectCaption={(sceneId, anchor) => openInlineCaptionEditor(sceneId, anchor)}
                     onSelectScene={(sceneId) => setSelectedSceneIdForChat(sceneId)}
                 />
             </div>

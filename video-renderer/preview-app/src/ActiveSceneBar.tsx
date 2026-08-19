@@ -4,11 +4,15 @@ import { colors, radius, typography } from "./tokens";
 interface Props {
     track: Scene | undefined;
     overlays: Scene[];
-    // Clicking a title/moment chip opens that scene's editor (see #27) —
-    // other scene types (presenter, caption, image, beat) have no editor
-    // yet, so their chips stay inert for these.
+    // Clicking a title/moment/caption chip opens that scene's editor (see
+    // #27, and the caption inline-text editor) — other scene types
+    // (presenter, image, beat) have no editor yet, so their chips stay
+    // inert for these.
     onSelectTitle?: (titleText: string) => void;
     onSelectMoment?: (sceneId: string) => void;
+    // Captions have no structured panel — this opens InlineTextEditor, a
+    // floating box anchored at the click position.
+    onSelectCaption?: (sceneId: string, anchor: { x: number; y: number }) => void;
     // Fires alongside onSelectTitle/onSelectMoment on the SAME click (see
     // #29) — prefills the edit-plan chat with this scene's real id, so one
     // click both opens the structured editor AND primes the
@@ -21,7 +25,14 @@ interface Props {
 // scene id is always visible to type straight into an edit-plan
 // instruction ("shorten scene-caption-42") without having to open
 // scene-plan.json separately.
-export function ActiveSceneBar({ track, overlays, onSelectTitle, onSelectMoment, onSelectScene }: Props) {
+export function ActiveSceneBar({
+    track,
+    overlays,
+    onSelectTitle,
+    onSelectMoment,
+    onSelectCaption,
+    onSelectScene,
+}: Props) {
     if (!track) {
         return <div style={styles.wrap}>No scene at this frame (gap in the timeline).</div>;
     }
@@ -33,6 +44,7 @@ export function ActiveSceneBar({ track, overlays, onSelectTitle, onSelectMoment,
                 kind="track"
                 onSelectTitle={onSelectTitle}
                 onSelectMoment={onSelectMoment}
+                onSelectCaption={onSelectCaption}
                 onSelectScene={onSelectScene}
             />
             {overlays.map((s) => (
@@ -42,6 +54,7 @@ export function ActiveSceneBar({ track, overlays, onSelectTitle, onSelectMoment,
                     kind="overlay"
                     onSelectTitle={onSelectTitle}
                     onSelectMoment={onSelectMoment}
+                    onSelectCaption={onSelectCaption}
                     onSelectScene={onSelectScene}
                 />
             ))}
@@ -78,20 +91,31 @@ function SceneChip({
     kind,
     onSelectTitle,
     onSelectMoment,
+    onSelectCaption,
     onSelectScene,
 }: {
     scene: Scene;
     kind: "track" | "overlay";
     onSelectTitle?: (titleText: string) => void;
     onSelectMoment?: (sceneId: string) => void;
+    // Unlike onSelectTitle/onSelectMoment (which open a full structured
+    // panel placed in the normal layout flow), captions have no structured
+    // panel — they open InlineTextEditor, a floating box that needs a
+    // screen position to anchor near, hence the click coordinates here.
+    onSelectCaption?: (sceneId: string, anchor: { x: number; y: number }) => void;
     onSelectScene?: (sceneId: string) => void;
 }) {
     const clickable =
-        (scene.type === "title" && onSelectTitle) || (scene.type === "moment" && onSelectMoment);
+        (scene.type === "title" && onSelectTitle) ||
+        (scene.type === "moment" && onSelectMoment) ||
+        (scene.type === "caption" && onSelectCaption);
 
-    const handleClick = () => {
+    const handleClick = (e: React.MouseEvent) => {
         if (scene.type === "title" && onSelectTitle) onSelectTitle(scene.text);
         if (scene.type === "moment" && onSelectMoment) onSelectMoment(scene.id);
+        if (scene.type === "caption" && onSelectCaption) {
+            onSelectCaption(scene.id, { x: e.clientX, y: e.clientY });
+        }
         if (clickable && onSelectScene) onSelectScene(scene.id);
     };
 

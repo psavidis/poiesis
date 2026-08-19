@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { getBeats, getMoments, getTitleScenes, saveBeats, saveMoments, saveTitleScenes } from "./api";
+import {
+    getBeats,
+    getMoments,
+    getScenePlan,
+    getTitleScenes,
+    saveBeats,
+    saveMoments,
+    saveTitleScenes,
+    updateSceneFields,
+} from "./api";
 import { momentIndexFromSceneId } from "./momentDuration";
 import { colors, radius, shadow, typography } from "./tokens";
 
@@ -12,7 +21,9 @@ import { colors, radius, shadow, typography } from "./tokens";
 const TEXT_ELIGIBLE_TREATMENTS = new Set(["bottom-callout", "side-text", "full-visual"]);
 
 export function isTextEligible(target: EditTarget): boolean {
-    if (target.kind === "title" || target.kind === "new-title" || target.kind === "beat") return true;
+    if (target.kind === "title" || target.kind === "new-title" || target.kind === "beat" || target.kind === "caption") {
+        return true;
+    }
     return TEXT_ELIGIBLE_TREATMENTS.has(target.treatment);
 }
 
@@ -32,7 +43,14 @@ export type EditTarget =
     // existing entry by text, unlike every other title edit.
     | { kind: "new-title"; newTitleSegmentId: string }
     | { kind: "moment"; sceneId: string; treatment: string }
-    | { kind: "beat"; sceneId: string };
+    | { kind: "beat"; sceneId: string }
+    // Captions live only in scene-plan.json (generate_captions.py writes
+    // them directly, no separate captions.json proposal file to merge like
+    // titles/beats/moments have), so this target writes straight through
+    // updateSceneFields — same deterministic single-scene path ImageBar's
+    // drag/resize edits already use — rather than the fetch-whole-array,
+    // patch-by-index, save-whole-array pattern the other kinds need.
+    | { kind: "caption"; sceneId: string };
 
 interface Props {
     episodePath: string;
@@ -115,6 +133,16 @@ export function InlineTextEditor({ episodePath, target, anchor, onSaved, onClose
                     setLoaded(true);
                 })
                 .catch((e) => setError(String(e)));
+        } else if (target.kind === "caption") {
+            getScenePlan(episodePath)
+                .then((plan) => {
+                    const scene = (plan.scenes ?? []).find((s: any) => s.id === target.sceneId);
+                    const initial = scene?.text ?? "";
+                    setText(initial);
+                    originalTextRef.current = initial;
+                    setLoaded(true);
+                })
+                .catch((e) => setError(String(e)));
         } else {
             const index = momentIndexFromSceneId(target.sceneId);
             getMoments(episodePath)
@@ -191,6 +219,9 @@ export function InlineTextEditor({ episodePath, target, anchor, onSaved, onClose
                     i === index ? { ...b, text, overriddenFields: textOverriddenFields ?? b.overriddenFields } : b
                 );
                 await saveBeats(episodePath, next);
+            } else if (target.kind === "caption") {
+                if (!text.trim()) throw new Error("Caption text can't be empty.");
+                await updateSceneFields(episodePath, target.sceneId, { text });
             } else {
                 const index = momentIndexFromSceneId(target.sceneId);
                 const data = await getMoments(episodePath);

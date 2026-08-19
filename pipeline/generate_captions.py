@@ -11,6 +11,13 @@ PROJECT_ROOT = PIPELINE_DIR.parent
 # Must match CaptionText.tsx's fade envelope (4 frames in + 4 frames out).
 CAPTION_MIN_DURATION_FRAMES = 8
 
+# Rough character budget for a single caption line at CaptionText.tsx's
+# fontSize 32 / fontWeight 500 inside its 82%-wide box on a 1920px-wide
+# frame. Conservative on purpose: better to wrap one word early than let a
+# line spill onto a second line, which is the multi-line readability
+# problem this budget exists to prevent.
+CAPTION_MAX_LINE_CHARS = 42
+
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from generate_title_scenes import write_json_atomic  # noqa: E402
@@ -48,6 +55,50 @@ def should_regenerate(previous_output, force):
     return force
 
 
+def lines_for_segment_words(words, max_line_chars):
+    """Groups a segment's raw word-level transcript entries (Whisper's
+    {"word", "start", "end"} shape — same as generate_emphasis.py's
+    words_for_presenter_scene reads) into single-line chunks that fit within
+    max_line_chars, each carrying its own [start, end) time span (from its
+    first word's start to its last word's end) — this is what lets the
+    caption advance line-by-line in sync with speech instead of showing the
+    whole segment as one multi-line block."""
+
+    lines = []
+
+    current_words = []
+    current_text = ""
+
+    for word in words:
+
+        text = word["word"].strip()
+
+        if not text:
+            continue
+
+        candidate = f"{current_text} {text}".strip()
+
+        if current_words and len(candidate) > max_line_chars:
+            lines.append(current_words)
+            current_words = [word]
+            current_text = text
+        else:
+            current_words.append(word)
+            current_text = candidate
+
+    if current_words:
+        lines.append(current_words)
+
+    return [
+        {
+            "text": " ".join(w["word"].strip() for w in line_words),
+            "start": line_words[0]["start"],
+            "end": line_words[-1]["end"],
+        }
+        for line_words in lines
+    ]
+
+
 def captions_for_presenter_scene(scene, transcript, fps):
     """Clips this clip's transcript segments to the scene's post-silence-trim
     [sourceStartFrame, sourceEndFrame) window and returns them positioned
@@ -55,7 +106,15 @@ def captions_for_presenter_scene(scene, transcript, fps):
     relative-positioning pattern emphasis/image overlays use — so re-running
     analyze_scenes.py later (which can shift trim points) never leaves a
     caption pointing at the wrong moment; it's always correct relative to
-    the clip's own kept range."""
+    the clip's own kept range.
+
+    Each transcript segment is split into one caption per screen-line (via
+    lines_for_segment_words) rather than emitted as a single block, so a
+    long sentence advances line-by-line instead of wrapping to two or three
+    lines at once — full-segment text on screen at any given instant would
+    read as a paragraph, not a caption. Segments without word-level
+    timestamps (not yet re-transcribed with word timing) fall back to a
+    single caption spanning the whole segment, same as before."""
 
     if not transcript:
         return []
@@ -67,45 +126,63 @@ def captions_for_presenter_scene(scene, transcript, fps):
 
     for segment in transcript.get("segments", []):
 
-        segment_start = round(segment["start"] * fps)
-        segment_end = round(segment["end"] * fps)
+        words = segment.get("words")
 
-        clipped_start = max(segment_start, source_start)
-        clipped_end = min(segment_end, source_end)
+        if words:
+            spans = [
+                {
+                    "text": line["text"],
+                    "start": round(line["start"] * fps),
+                    "end": round(line["end"] * fps),
+                }
+                for line in lines_for_segment_words(words, CAPTION_MAX_LINE_CHARS)
+            ]
+        else:
+            spans = [
+                {
+                    "text": segment["text"].strip(),
+                    "start": round(segment["start"] * fps),
+                    "end": round(segment["end"] * fps),
+                }
+            ]
 
-        if clipped_end <= clipped_start:
-            continue
+        for span in spans:
 
-        # No cap: the caption must stay on screen for the full segment it
-        # transcribes, however long that is. Capping this (an earlier
-        # version did, at 6s) while keeping the full segment text made the
-        # caption disappear mid-sentence — verified against real footage,
-        # where it hit 79% of captions in a real episode. A caption sitting
-        # still on a long sentence is a minor style issue; one that vanishes
-        # before the speaker finishes is a broken experience.
-        duration = clipped_end - clipped_start
+            clipped_start = max(span["start"], source_start)
+            clipped_end = min(span["end"], source_end)
 
-        # Renderer's CaptionText fades in/out over 4 frames each way, so
-        # anything shorter than that fade envelope (8 frames) can't be
-        # trimmed to just a sliver — a segment straddling a scene's trim
-        # boundary and clipped down to a handful of frames isn't worth
-        # showing anyway.
-        if duration < CAPTION_MIN_DURATION_FRAMES:
-            continue
+            if clipped_end <= clipped_start:
+                continue
 
-        text = segment["text"].strip()
+            # No cap on a line's own duration beyond its natural speech
+            # span: the caption must stay on screen for as long as it takes
+            # to say it. An earlier version capped whole-segment duration at
+            # 6s while keeping the full segment text, which made the
+            # caption disappear mid-sentence — verified against real
+            # footage, where it hit 79% of captions in a real episode. Per
+            # line durations here are inherently short (one line of speech),
+            # so that failure mode doesn't apply.
+            duration = clipped_end - clipped_start
 
-        if not text:
-            continue
+            # Renderer's CaptionText fades in/out over 4 frames each way, so
+            # anything shorter than that fade envelope (8 frames) can't be
+            # trimmed to just a sliver — a line straddling a scene's trim
+            # boundary and clipped down to a handful of frames isn't worth
+            # showing anyway.
+            if duration < CAPTION_MIN_DURATION_FRAMES:
+                continue
 
-        captions.append(
-            {
-                "parentSceneId": scene["id"],
-                "offsetInParentFrames": clipped_start - source_start,
-                "durationInFrames": duration,
-                "text": text,
-            }
-        )
+            if not span["text"]:
+                continue
+
+            captions.append(
+                {
+                    "parentSceneId": scene["id"],
+                    "offsetInParentFrames": clipped_start - source_start,
+                    "durationInFrames": duration,
+                    "text": span["text"],
+                }
+            )
 
     return captions
 

@@ -1,8 +1,14 @@
 from generate_captions import (
+    CAPTION_MAX_LINE_CHARS,
     captions_for_presenter_scene,
+    lines_for_segment_words,
     merge_caption_scenes,
     should_regenerate,
 )
+
+
+def _word(text, start, end):
+    return {"word": text, "start": start, "end": end}
 
 
 def _presenter_scene(source_start, source_end, timeline_start=0, scene_id="scene-001"):
@@ -128,6 +134,108 @@ def test_captions_for_presenter_scene_handles_missing_transcript():
     scene = _presenter_scene(source_start=0, source_end=300)
 
     assert captions_for_presenter_scene(scene, None, fps=30) == []
+
+
+def test_lines_for_segment_words_splits_at_char_budget():
+    words = [
+        _word("a", 0.0, 0.5),
+        _word("stretch", 0.5, 1.0),
+        _word("of", 1.0, 1.5),
+        _word("thoroughly", 1.5, 2.0),
+        _word("unnecessarily", 2.0, 2.5),
+        _word("long", 2.5, 3.0),
+        _word("words", 3.0, 3.5),
+    ]
+
+    lines = lines_for_segment_words(words, max_line_chars=20)
+
+    assert all(len(line["text"]) <= 20 for line in lines)
+    # Every word must still show up, in order, across the lines.
+    assert " ".join(line["text"] for line in lines) == \
+        "a stretch of thoroughly unnecessarily long words"
+
+
+def test_lines_for_segment_words_line_spans_first_to_last_word():
+    words = [
+        _word("hello", 1.0, 1.5),
+        _word("there", 1.5, 2.2),
+    ]
+
+    lines = lines_for_segment_words(words, max_line_chars=CAPTION_MAX_LINE_CHARS)
+
+    assert len(lines) == 1
+    assert lines[0]["text"] == "hello there"
+    assert lines[0]["start"] == 1.0
+    assert lines[0]["end"] == 2.2
+
+
+def test_lines_for_segment_words_always_keeps_at_least_one_word_per_line():
+    # A single word longer than the budget must not produce an empty line —
+    # it gets its own line rather than being dropped.
+    words = [_word("supercalifragilisticexpialidocious", 0.0, 1.0)]
+
+    lines = lines_for_segment_words(words, max_line_chars=10)
+
+    assert len(lines) == 1
+    assert lines[0]["text"] == "supercalifragilisticexpialidocious"
+
+
+def test_captions_for_presenter_scene_splits_long_segment_into_line_captions():
+    # Regression guard for the multi-line-caption readability bug: a long
+    # segment with word timestamps must become several single-line captions
+    # advancing over time, not one block that wraps to 2-3 lines on screen.
+    scene = _presenter_scene(source_start=0, source_end=10000)
+
+    words = [
+        _word("instead", 0.0, 0.5),
+        _word("of", 0.5, 0.8),
+        _word("calculating", 0.8, 1.4),
+        _word("the", 1.4, 1.6),
+        _word("discount", 1.6, 2.2),
+        _word("on", 2.2, 2.4),
+        _word("the", 2.4, 2.5),
+        _word("order", 2.5, 2.9),
+        _word("using", 2.9, 3.3),
+        _word("a", 3.3, 3.4),
+        _word("service", 3.4, 4.0),
+    ]
+
+    transcript = {
+        "segments": [
+            {
+                "start": 0.0,
+                "end": 4.0,
+                "text": " ".join(w["word"] for w in words),
+                "words": words,
+            }
+        ]
+    }
+
+    captions = captions_for_presenter_scene(scene, transcript, fps=30)
+
+    assert len(captions) > 1
+    for caption in captions:
+        assert len(caption["text"]) <= CAPTION_MAX_LINE_CHARS
+    # Captions must be in speech order and non-overlapping.
+    for a, b in zip(captions, captions[1:]):
+        assert a["offsetInParentFrames"] + a["durationInFrames"] <= b["offsetInParentFrames"]
+
+
+def test_captions_for_presenter_scene_falls_back_to_whole_segment_without_word_timestamps():
+    # Segments not yet re-transcribed with word timing (no "words" key)
+    # must keep today's single-block-per-segment behavior.
+    scene = _presenter_scene(source_start=0, source_end=300)
+
+    transcript = {
+        "segments": [
+            {"start": 0.0, "end": 2.0, "text": "no word timing here"},
+        ]
+    }
+
+    captions = captions_for_presenter_scene(scene, transcript, fps=30)
+
+    assert len(captions) == 1
+    assert captions[0]["text"] == "no word timing here"
 
 
 def test_merge_caption_scenes_inserts_positioned_relative_to_parent_timeline():
