@@ -1962,3 +1962,317 @@ Poiesis should orchestrate the entire process.
 The ultimate goal is:
 
 > **Record once, review briefly, publish.**
+
+# Engineering Workflow for GitHub Issues
+
+When working on a GitHub issue, follow a systematic implementation workflow.
+
+## 1. Understand the Issue
+
+Before changing code:
+
+1. Read the issue carefully.
+2. Identify the expected behavior and acceptance criteria.
+3. Inspect the relevant existing code and architecture.
+4. Identify existing tests covering the affected behavior.
+5. Check whether the issue conflicts with the current product model or terminology.
+
+Do not implement based only on the issue title.
+
+## 2. Plan Before Implementing
+
+Before making changes, establish:
+
+- What needs to change.
+- Which existing components are affected.
+- Whether the change belongs in the domain, application, UI, pipeline, or infrastructure.
+- What behavior must be tested.
+- Whether existing abstractions should be reused rather than replaced.
+
+For non-trivial issues, briefly state the implementation plan before coding.
+
+Prefer the smallest change that correctly solves the issue.
+
+## 3. Implement Against the Semantic Model
+
+Changes should respect the Poiesis semantic model.
+
+Prefer modifying:
+
+- Chapters
+- Scenes
+- Moments
+- Assets
+- Visual Components
+- Semantic editing state
+
+rather than introducing low-level UI or rendering concepts into the domain.
+
+Do not create new concepts when an existing canonical concept can represent the behavior.
+
+## 4. Tests Are Part of the Implementation
+
+Every behavioral change should include appropriate tests.
+
+The implementation is not considered complete until the relevant tests pass.
+
+Prefer tests that verify observable behavior rather than implementation details.
+
+Use the testing style already established in the affected part of the codebase.
+
+Where appropriate, prefer:
+
+- Domain-level tests for domain behavior.
+- Integration tests for interactions between components.
+- End-to-end tests for important user workflows.
+- Rendering or visual checks where the issue affects generated video output.
+
+Avoid tests that merely verify private implementation details.
+
+## 5. Regression Protection
+
+For bug fixes:
+
+1. Reproduce the problematic behavior.
+2. Add a regression test that fails before the fix.
+3. Implement the fix.
+4. Verify that the regression test passes.
+5. Run the relevant existing test suite.
+
+A bug fix without regression coverage should be considered incomplete when the behavior can reasonably be tested.
+
+## 6. Verify the Complete Change
+
+Before considering an issue complete:
+
+1. Run the tests relevant to the changed code.
+2. Run broader tests when the change can affect other parts of the system.
+3. Run linting, type checking, formatting, or build validation when applicable.
+4. For UI changes, verify the actual UI behavior.
+5. For rendering changes, inspect the rendered output when practical.
+
+Do not assume that compilation or a successful render means the feature is correct.
+
+## 7. Keep Changes Focused
+
+Do not introduce unrelated refactoring while solving an issue.
+
+If existing code is problematic but unrelated to the issue:
+
+- Avoid changing it unless necessary.
+- Mention the problem separately if it is important.
+- Do not expand the scope without a reason.
+
+Prefer small, reviewable commits and changes.
+
+## 8. Update Documentation When Necessary
+
+If an implementation changes:
+
+- Product terminology
+- Architecture
+- User-facing behavior
+- Domain concepts
+- Development conventions
+
+update the relevant documentation or glossary.
+
+Documentation should describe the current system, not the implementation that existed before the issue.
+
+## 9. Issue Completion Criteria
+
+An issue is complete when:
+
+- The requested behavior is implemented.
+- The implementation fits the existing architecture.
+- Appropriate tests have been added or updated.
+- Relevant tests pass.
+- Regression risks have been considered.
+- The resulting behavior has been verified.
+- Documentation has been updated when necessary.
+
+Do not mark an issue complete merely because the code has been written.
+
+## 10. Final Report
+
+When finishing an issue, provide a concise summary containing:
+
+- What changed.
+- Which tests were added or modified.
+- Which verification commands were run.
+- Any limitations, remaining concerns, or follow-up work.
+
+The final report should make it clear whether the issue is actually verified or only implemented.
+
+## Engineering Principle
+
+Use this workflow:
+
+Understand
+  |
+  v
+Inspect
+  |
+  v
+Plan
+  |
+  v
+Implement
+  |
+  v
+Test
+  |
+  v
+Verify
+  |
+  v
+Review
+  |
+  v
+Complete
+
+The objective is not simply to produce working code.
+
+The objective is to produce a small, well-tested, architecturally consistent change that can be confidently integrated into Poiesis.
+
+# GitHub Issue Writing
+
+GitHub issues are designed to be quickly understandable and actionable by a human.
+
+When creating or updating GitHub issues, prefer the existing issue structure and categories already defined in the repository.
+
+## Issue Structure
+
+Use the appropriate issue type:
+
+- Bug
+- Feature
+- Task
+- Other repository-defined types when applicable
+
+Do not create a custom structure when an existing issue type already represents the work.
+
+Issues should fit naturally into the repository's existing issue templates and fields.
+
+## Keep Issues Simple
+
+Issue descriptions should be:
+
+- Short
+- Human-readable
+- Specific
+- Actionable
+- Easy to scan
+
+Do not write long essays explaining the entire reasoning behind an issue.
+
+Avoid unnecessary technical detail unless it is required to implement or understand the issue.
+
+Prefer concrete statements over abstract descriptions.
+
+## Prefer Structured Information
+
+Whenever possible, use:
+
+- Bullet lists
+- Numbered lists
+- Checklists
+- Short sections
+- Explicit requirements
+- Explicit acceptance criteria
+
+For example:
+
+Instead of:
+
+"The system should provide a persistent representation of the generated moments while also making sure that the state of the component remains visible in cases where the analysis has not generated any moments."
+
+Prefer:
+
+"Keep the Moments Bar visible in all states.
+
+Requirements:
+- Visible while analysis is running.
+- Visible when moments exist.
+- Visible when zero moments were generated.
+- Show a distinct failure state when analysis fails."
+
+## Separate Intent from Implementation
+
+Describe what needs to happen before explaining how it should be implemented.
+
+Prefer:
+
+"Keep the Moments Bar visible when zero moments are generated."
+
+over:
+
+"Change the React conditional rendering logic so that moments.length === 0 does not cause the component to return null."
+
+Implementation details belong in the implementation discussion unless they are necessary requirements.
+
+## Acceptance Criteria
+
+For non-trivial issues, explicitly define acceptance criteria.
+
+Keep them short and testable.
+
+Example:
+
+"Acceptance criteria:
+- Moments Bar is always visible.
+- Empty state is shown when there are zero moments.
+- Failure state is distinguishable from empty state.
+- Existing Moments Bar tests continue to pass."
+
+## Avoid Over-Specification
+
+Do not create unnecessarily complex issues.
+
+An issue should describe the smallest meaningful unit of work.
+
+If the work is genuinely large, split it into smaller issues rather than hiding multiple independent requirements inside one large description.
+
+If several issues are required, establish the relationship between them clearly.
+
+## Issue Quality Test
+
+Before creating or updating an issue, ask:
+
+1. Can I understand the problem in less than a minute?
+2. Is it clear what needs to change?
+3. Are the requirements easy to identify?
+4. Are the acceptance criteria testable?
+5. Is unnecessary implementation detail removed?
+6. Does the issue fit the repository's existing issue type and structure?
+
+If not, simplify the issue.
+
+## Principle
+
+GitHub issues are working documents, not design documents.
+
+Prefer:
+
+"Small, clear, actionable, testable"
+
+over:
+
+"Complete, exhaustive, and complicated."
+
+The issue should give the developer enough information to implement the change without making the developer decode a large amount of prose.
+
+## Final Report
+
+When finishing an issue, keep the report concise and human-readable.
+
+Prefer:
+
+- What changed.
+- Tests added or updated.
+- Verification performed.
+- Any remaining concern.
+
+Use bullet points whenever possible.
+
+Do not provide a long narrative unless the change is unusually complex.
