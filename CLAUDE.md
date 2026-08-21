@@ -2,11 +2,11 @@
 
 ## Purpose
 
-Poiesis is an AI-assisted video production tool for turning raw talking-head footage into polished software-engineering YouTube videos.
+Poiesis is an AI-assisted video production system for turning raw talking-head footage into polished software-engineering YouTube videos.
 
 The goal is **not** to build another general-purpose video editor.
 
-The goal is to build a **personal AI video-production system** that understands my scripts, footage, visual style, and reusable video components, and automates as much of the repetitive editing work as possible.
+The goal is to build a **personal AI video-production system** that understands my scripts, footage, visual style, reusable visual components, and editing preferences, and automates as much of the repetitive editing work as possible.
 
 Poiesis should allow me to go from:
 
@@ -18,6 +18,12 @@ to:
 
 with as little manual editing as possible.
 
+The human remains the director.
+
+AI performs the creative editing work.
+
+Poiesis provides the editing environment, orchestration, assets, rendering, and feedback loop.
+
 ---
 
 # Vision
@@ -26,27 +32,28 @@ I create software-engineering videos where I talk directly to the camera, usuall
 
 The videos typically contain:
 
-- Talking-head footage with background removal
-- Animated backgrounds
-- Intro and outro sequences
-- Animated titles
-- Important phrases appearing on screen
-- Code snippets
-- Diagrams
-- Images and screenshots
-- B-roll
-- Captions
-- Transitions
-- Subtle animations
-- Music and sound effects
+* Talking-head footage
+* Background removal
+* Animated backgrounds
+* Intro and outro sequences
+* Animated titles
+* Important phrases
+* Code snippets
+* Diagrams
+* Images and screenshots
+* B-roll
+* Captions
+* Transitions
+* Subtle animations
+* Music and sound effects
 
-Today, producing this kind of video manually can take many hours even when the recorded footage is already good.
+Producing this manually can take many hours even when the recorded footage is already good.
 
 Poiesis should automate both the **mechanical** and **creative** editing decisions that can reasonably be automated by AI.
 
-The human should remain the director.
+The objective is not to eliminate human creative control.
 
-The AI should be the editor.
+The objective is to eliminate repetitive manual editing.
 
 ---
 
@@ -56,10 +63,10 @@ Poiesis is **not a traditional nonlinear video editor**.
 
 It should not attempt to reproduce:
 
-- Premiere Pro
-- Final Cut Pro
-- DaVinci Resolve
-- CapCut
+* Premiere Pro
+* Final Cut Pro
+* DaVinci Resolve
+* CapCut
 
 The primary interaction should not be:
 
@@ -67,843 +74,459 @@ The primary interaction should not be:
 
 Instead, it should be:
 
-> Give Poiesis the footage and script, let AI construct an edit plan, review the decisions, make corrections through natural language, and render the result.
+> Understand the content, generate a semantic edit, expose the decisions as editable Moments, and let the creator correct the result through direct manipulation or natural language.
 
-The central artifact is therefore the **semantic edit plan**, not a traditional timeline.
+The central product concept is therefore not the traditional timeline.
 
----
+It is the combination of:
 
-# Target Workflow
-
-The intended workflow is:
-
-    RAW FOOTAGE
-         |
-         v
-    INGESTION
-         |
-         v
-    TRANSCRIPTION
-         |
-         v
-    SEGMENT ANALYSIS
-         |
-         v
-    AI EDITING PLAN
-         |
-         v
-    HUMAN REVIEW
-         |
-         +----------------+
-         |                |
-      approve          ask AI to
-                       modify
-         |                |
-         +-------+--------+
-                 |
-                 v
-             REMOTION
-                 |
-                 v
-              RENDER
-                 |
-                 v
-                QA
-                 |
-                 v
-            FINAL VIDEO
-
-The ideal experience is:
-
-1. Record the episode.
-
-2. Drop the footage into Poiesis.
-
-3. Poiesis transcribes and understands the footage.
-
-4. Claude creates an initial edit plan.
-
-5. Poiesis renders a preview.
-
-6. I review the video.
-
-7. I tell the AI things like:
-
-    - "Remove this pause."
-    - "Make this section more engaging."
-    - "Show the code when I mention the implementation."
-    - "Replace this text animation with a diagram."
-    - "Move the title earlier."
-
-8. Claude modifies the edit plan.
-
-9. Poiesis renders again.
-
-10. I approve the final video.
-
-The objective is to make the final human review take **minutes rather than hours**.
+**Content → Chapters → Moments → Assets → Visual Components → Render**
 
 ---
 
-# Existing Codebase
+# The Semantic Model
 
-Poiesis already contains useful infrastructure for this workflow.
+The semantic model is the foundation of Poiesis.
 
-**Do not throw away the existing codebase simply because some parts of the UI or editor are difficult to maintain.**
+The system should represent the video at a level that is meaningful to both humans and AI.
 
-The existing architecture should be treated as the foundation and evolved toward the vision described in this document.
+The core concepts are:
 
-Existing useful capabilities include:
+```text
+Episode
+   |
+   +-- Source Footage
+   |
+   +-- Transcript
+   |
+   +-- Chapters
+   |
+   +-- Moments
+   |
+   +-- Assets
+   |
+   +-- Visual Components
+   |
+   +-- Edit / Composition
+```
 
-- Video ingestion
-- Footage preparation
-- Transcription
-- Segment extraction
-- Segment normalization
-- LLM integration
-- Remotion-based rendering
-- Video composition
-- Processing pipelines
+The exact domain model should evolve with the codebase.
 
-These components should be preserved and refactored where necessary.
-
-The project should evolve incrementally rather than being rewritten from scratch.
-
-Before replacing an existing component, determine:
-
-1. What responsibility it currently has.
-2. Whether that responsibility is still needed.
-3. Whether the component can be simplified.
-4. Whether it belongs in the new architecture.
-5. Whether replacing it would actually improve the product.
-
-Do not rewrite working infrastructure merely because a new architecture looks cleaner.
-
----
-
-# The Semantic Edit Plan
-
-The most important architectural concept in Poiesis is the **Edit Plan**.
-
-The AI should not directly manipulate pixels or a traditional timeline.
-
-Instead, it should produce a structured representation of what the video should contain.
-
-Conceptually:
-
-    {
-      "scenes": [
-        {
-          "type": "presenter",
-          "source": "03.mp4",
-          "start": 0,
-          "end": 18
-        },
-        {
-          "type": "title",
-          "text": "What Is Encapsulation?",
-          "start": 18,
-          "end": 23
-        },
-        {
-          "type": "concept",
-          "concept": "encapsulation",
-          "start": 23,
-          "end": 38
-        },
-        {
-          "type": "code",
-          "language": "java",
-          "source": "examples/encapsulation.java",
-          "start": 38,
-          "end": 52
-        }
-      ]
-    }
-
-This is illustrative rather than a required schema.
-
-The exact domain model should evolve with the project.
+Do not prematurely lock the model to a particular JSON schema.
 
 The important principle is:
 
-> **AI decisions should be represented as structured, inspectable data.**
+> **The semantic meaning of the video must exist independently of rendering implementation.**
 
-This makes the system:
+---
 
-- Deterministic where possible
-- Testable
-- Editable
-- Debuggable
-- Renderable
-- Versionable
-- Understandable by humans and AI agents
+# Chapters
 
-The Edit Plan should be the boundary between **AI reasoning** and **video rendering**.
+Chapters represent the major narrative structure of an episode.
+
+A chapter may correspond to:
+
+* A major topic
+* A conceptual section
+* A transition in the argument
+* A logical part of the script
+* A major visual section
+
+Chapters should be understandable and editable by the creator.
+
+The AI should be able to:
+
+* Detect chapters
+* Name chapters
+* Suggest chapter boundaries
+* Move chapter boundaries
+* Rename chapters
+* Merge chapters
+* Split chapters
+
+Chapters are a narrative structure, not merely arbitrary time ranges.
+
+---
+
+# Moments
+
+**Moments are a first-class concept in Poiesis.**
+
+A Moment represents a meaningful visual or editorial intervention associated with a portion of the narration.
+
+Examples:
+
+* Important phrase
+* Title
+* Code
+* Diagram
+* Screenshot
+* Image
+* Comparison
+* Callout
+* Concept visualization
+* Full-screen statement
+* Presenter composition change
+* B-roll
+* Transition
+* Other reusable visual treatment
+
+A Moment should capture both **what should happen** and enough semantic information to understand why it exists.
+
+Conceptually:
+
+```json
+{
+  "type": "diagram",
+  "start": 38,
+  "end": 52,
+  "purpose": "Explain event flow",
+  "visualConcept": "Producer sends an event through Kafka to a consumer",
+  "asset": "event-flow-diagram"
+}
+```
+
+This is illustrative only.
+
+The exact schema should evolve with the application.
+
+The important principle is:
+
+> **A Moment is a semantic editing decision, not merely a rendered clip.**
+
+---
+
+# Moments Bar
+
+The Moments Bar is a fundamental part of the editing experience.
+
+It should provide a persistent visual representation of the Moments associated with the episode.
+
+### Critical behavior
+
+The Moments Bar must **always be visible**.
+
+If AI analysis produces zero Moments, the bar must still exist and represent the valid empty state.
+
+Do not conditionally hide the Moments Bar because:
+
+```text
+moments.length === 0
+```
+
+An empty result is still meaningful state.
+
+The UI should distinguish between:
+
+* Moments are currently being calculated
+* Moments have been calculated and there are none
+* Moments exist and can be edited
+* Analysis failed
+
+The failure state must not accidentally look like an empty successful result.
+
+The Moments Bar should therefore be treated as part of the persistent editor structure rather than a result that appears only when AI generated content.
+
+---
+
+# Editing Moments
+
+Moments should be directly editable.
+
+The creator should be able to change things such as:
+
+* Start time
+* End time
+* Type
+* Text
+* Visual treatment
+* Asset
+* Position
+* Duration
+* Animation
+* Configuration
+* Relationship to the narration
+
+The system should make simple edits extremely cheap.
+
+For example:
+
+> "Move this moment two seconds earlier."
+
+> "Make this moment shorter."
+
+> "Remove this."
+
+> "Use a diagram instead."
+
+> "Show the presenter here."
+
+> "Use the same treatment as the previous moment."
+
+These operations should modify structured semantic state rather than directly modifying rendered video.
+
+---
+
+# Command+E
+
+Editing should support fast keyboard-driven workflows.
+
+**Command+E is a core editing interaction.**
+
+The exact command behavior should follow the current application implementation/specification, but keyboard-first editing should be preferred wherever it makes common editing operations faster.
+
+The editor should not require the user to navigate complex menus for frequent operations.
+
+---
+
+# Natural-Language Editing
+
+Natural-language editing is a first-class feature of Poiesis.
+
+The user should be able to describe desired changes conversationally.
+
+Examples:
+
+> "Remove this pause."
+
+> "Make this section faster."
+
+> "Show the code when I mention the implementation."
+
+> "Replace this text with a diagram."
+
+> "Move the title earlier."
+
+> "Make this less visually busy."
+
+> "Use the same animation as the previous episode."
+
+> "Show me full screen during this explanation."
+
+> "Create a moment here explaining the relationship between these two components."
+
+The AI should interpret the request and modify the semantic editing model.
+
+It should **not** directly manipulate rendered pixels.
+
+The preferred flow is:
+
+```text
+User request
+     |
+     v
+AI understanding
+     |
+     v
+Structured edit change
+     |
+     v
+Updated semantic model
+     |
+     v
+Preview / render
+```
+
+The system should make the resulting change inspectable.
+
+---
+
+# Conversational Editing
+
+The conversational AI interface should eventually support a natural editing loop:
+
+```text
+Creator
+   |
+   | "Change this"
+   v
+AI
+   |
+   | understands context
+   v
+Edit Plan / Moments
+   |
+   v
+Preview
+   |
+   v
+Creator
+   |
+   +---- "Good"
+   |
+   +---- "Try something else"
+```
+
+The AI should understand the current editing context.
+
+For example, when the user says:
+
+> "Make this one smaller."
+
+the system should understand which Moment "this one" refers to from the current UI context.
+
+Natural language should complement direct manipulation, not replace it.
+
+---
+
+# Assets
+
+Assets are first-class editing resources.
+
+Poiesis should maintain a clear distinction between different asset categories.
+
+Examples include:
+
+* Full-screen images
+* Images
+* Diagrams
+* Code
+* Screenshots
+* B-roll
+* Backgrounds
+* Audio
+* Other reusable visual resources
+
+Assets should have clear ownership and predictable organization.
+
+The asset structure should reflect how the creator actually uses them rather than being a generic media bin copied from professional NLEs.
+
+The AI should be able to:
+
+* Identify when an existing asset is relevant
+* Select an appropriate asset
+* Suggest a new asset
+* Associate an asset with a Moment
+* Reuse assets across episodes
+
+The system should avoid unnecessarily duplicating assets.
+
+---
+
+# Visual Components
+
+Assets are not the same thing as visual components.
+
+A visual component is a reusable piece of the Poiesis visual language.
+
+Examples:
+
+```text
+Presenter
+AnimatedTitle
+ImportantPhrase
+CodeBlock
+ConceptDiagram
+Comparison
+Callout
+Quote
+Caption
+Timeline
+FlowDiagram
+ArchitectureDiagram
+ScreenshotFocus
+FullScreenStatement
+SectionTransition
+ChapterTitle
+```
+
+A component defines **how something is presented**.
+
+An asset defines **what content is presented**.
+
+The AI should combine these concepts.
+
+For example:
+
+```text
+Moment
+   |
+   +-- purpose: Explain architecture
+   |
+   +-- component: FlowDiagram
+   |
+   +-- asset/data: architecture definition
+```
 
 ---
 
 # AI Responsibilities
 
-Claude should be responsible primarily for **creative and semantic decisions**.
+Claude should primarily be responsible for **creative and semantic decisions**.
 
 ## Understand the Content
 
-Claude should be able to:
+The AI should be able to:
 
-- Understand the script
-- Understand the transcript
-- Identify topics
-- Identify sections
-- Identify important concepts
-- Identify key phrases
-- Understand technical explanations
-- Understand the intended narrative
+* Understand the script
+* Understand the transcript
+* Identify topics
+* Identify chapters
+* Identify concepts
+* Identify important phrases
+* Understand technical explanations
+* Understand narrative structure
+* Identify visual opportunities
+* Understand the intended argument
 
 ## Decide the Edit
 
-Claude should eventually be able to:
+The AI should eventually be able to:
 
-- Select good takes
-- Remove obvious mistakes
-- Identify unnecessary pauses
-- Identify repeated or redundant sections
-- Decide where visual changes are useful
-- Decide when text should appear
-- Decide when code should appear
-- Decide when diagrams are useful
-- Decide when screenshots or images would help
-- Decide when the presenter should remain on screen
-- Decide when to change the visual composition
-- Decide which reusable visual component should be used
+* Select good takes
+* Remove obvious mistakes
+* Identify unnecessary pauses
+* Identify repeated or redundant sections
+* Decide where visual changes are useful
+* Decide when text should appear
+* Decide when code should appear
+* Decide when diagrams are useful
+* Decide when screenshots or images would help
+* Decide when the presenter should remain visible
+* Decide when the visual composition should change
+* Select appropriate reusable components
+* Select appropriate assets
+* Create and configure Moments
 
 ## Improve Engagement
 
-The AI should look for sections where the visual presentation becomes monotonous.
+The AI should look for sections where visual presentation becomes monotonous.
 
 For example:
 
-> 20 seconds of talking head with no visual change
-
-might become:
-
-    Presenter
+```text
+20 seconds of talking head
         |
         v
-    Important phrase
+Important concept
         |
         v
-    Animated concept
+Diagram
         |
         v
-    Presenter
+Presenter
         |
         v
-    Code example
-
-The objective is **not** to add animations everywhere.
-
-The objective is to add meaningful visual changes where they improve comprehension or engagement.
-
-Avoid "AI slop" where every sentence gets an animation.
-
-Visual changes should have a reason.
-
----
-
-# Deterministic Video Processing
-
-LLMs should not be responsible for operations that can be implemented deterministically.
-
-Use conventional video-processing tools for things such as:
-
-- Cutting
-- Concatenation
-- Encoding
-- Audio normalization
-- Silence removal
-- Resolution changes
-- Format conversion
-- Frame extraction
-- Audio extraction
-- Media inspection
-
-FFmpeg should be used where appropriate.
-
-Other specialized tools can be introduced when necessary.
-
-The principle is:
-
-> **Use AI for judgment. Use software for execution.**
-
-Do not ask an LLM to perform deterministic media-processing work that can be handled reliably by normal software.
-
----
-
-# Remotion
-
-Remotion is the primary rendering and composition engine.
-
-Remotion should remain responsible for:
-
-- Video composition
-- Presenter placement
-- Backgrounds
-- Text
-- Captions
-- Code blocks
-- Diagrams
-- Animations
-- Transitions
-- Images
-- Screenshots
-- Reusable visual components
-- Intro
-- Outro
-
-The visual language of the channel should be implemented as a reusable **video component system**.
-
-Conceptually, the system may contain components such as:
-
-    <Presenter />
-
-    <AnimatedTitle />
-
-    <ImportantPhrase />
-
-    <CodeBlock />
-
-    <ConceptDiagram />
-
-    <Comparison />
-
-    <Callout />
-
-    <Quote />
-
-    <Caption />
-
-The exact component architecture should be determined by the existing codebase and evolving requirements.
-
-The AI should compose these components rather than inventing a completely new visual system for every episode.
-
----
-
-# Channel Editing Style
-
-Poiesis is initially designed for a specific software-engineering YouTube channel.
-
-The editing style should therefore be treated as a **design system**.
-
-The system should eventually encode rules such as:
-
-- Presenter remains visually prominent.
-- Do not obscure the presenter unnecessarily.
-- Use visual changes to support the explanation.
-- Do not animate every sentence.
-- Important concepts deserve stronger visual treatment.
-- Technical concepts should often use diagrams or code.
-- Code should be readable.
-- Text should be concise.
-- Animations should feel intentional rather than distracting.
-- Maintain a consistent visual identity between episodes.
-- Reuse established animation patterns.
-- Intro and outro should remain consistent.
-
-These rules should live in project documentation/configuration that Claude can inspect.
-
-The AI should learn the editing style from:
-
-1. Explicit editing rules.
-2. Existing Remotion components.
-3. Existing visual assets.
-4. Previous episodes where available.
-5. Human corrections and feedback.
-
-The goal is for Poiesis to become increasingly consistent with my personal editing style.
-
----
-
-# Human-in-the-Loop
-
-Poiesis should not attempt to remove the human from the creative process.
-
-The intended relationship is:
-
-    Human
-      |
-      | provides
-      v
-    Content + intent + style
-      |
-      v
-    AI
-      |
-      | proposes
-      v
-    Edit Plan
-      |
-      v
-    Human
-      |
-      | reviews / corrects
-      v
-    Final Edit Plan
-      |
-      v
-    Remotion
-      |
-      v
-    Video
-
-The human should be able to override AI decisions easily.
-
-Natural-language editing should eventually be a first-class interaction.
-
-Examples:
-
-> "Cut the first 2 seconds."
-
-> "Use a diagram here."
-
-> "Make this section faster."
-
-> "Remove this animation."
-
-> "Show me full screen during this explanation."
-
-> "Use the same animation as the previous episode."
-
-> "This section is too visually busy."
-
-The AI should modify the structured edit plan rather than directly manipulating rendered video.
-
----
-
-# Editor UI
-
-A traditional timeline editor is **not the primary goal**.
-
-A lightweight review interface is preferable.
-
-The UI should allow the user to:
-
-- Preview the rendered video
-- Inspect scenes
-- Inspect source footage
-- See the edit plan
-- Approve or reject AI decisions
-- Make simple corrections
-- Ask Claude for changes
-- Re-render previews
-
-A timeline may exist as a visualization or convenience, but it should not become the architectural center of the application.
-
-## Important
-
-Do not spend large amounts of development effort turning Poiesis into a full nonlinear editor.
-
-If an editor feature does not directly help the user review or correct an AI-generated edit, question whether it is necessary.
-
-The goal is not to compete with professional video-editing software.
-
-The goal is to automate professional-looking video production.
-
----
-
-# AI Provider Architecture
-
-The AI layer should be abstracted from the rest of the application.
-
-Claude should be the primary high-quality reasoning model.
-
-Local models can be used for cheaper or mechanical tasks where appropriate.
-
-Conceptually:
-
-    LLM
-    ├── Claude
-    ├── Local model
-    └── Other providers
-
-The core domain should not depend directly on one specific LLM provider.
-
-Use the most capable model for creative editing decisions and cheaper/local models for tasks where sophisticated reasoning is unnecessary.
-
-The architecture should make it possible to change the model without changing the video-production domain.
-
----
-
-# Processing Pipeline
-
-The pipeline should evolve toward clearly separated stages:
-
-    INGEST
-       |
-       v
-    PREPARE
-       |
-       v
-    TRANSCRIBE
-       |
-       v
-    SEGMENT
-       |
-       v
-    UNDERSTAND
-       |
-       v
-    PLAN
-       |
-       v
-    REVIEW
-       |
-       v
-    RENDER
-       |
-       v
-    QA
-       |
-       v
-    EXPORT
-
-Each stage should have a well-defined responsibility and preferably produce an inspectable artifact.
-
-Potential artifacts include:
-
-    transcript.json
-    segments.json
-    analysis.json
-    edit-plan.json
-    render.mp4
-    qa-report.json
-
-This allows both humans and AI agents to understand the current state of an episode.
-
-Intermediate artifacts should be useful for debugging and should not be hidden inside opaque application state.
-
----
-
-# Quality Assurance
-
-The system should eventually be able to automatically inspect its own output.
-
-Potential checks include:
-
-- Video duration
-- Missing media
-- Audio/video synchronization
-- Black frames
-- Broken assets
-- Text outside the viewport
-- Overlapping elements
-- Caption timing
-- Presenter visibility
-- Rendering errors
-- Unexpected scene transitions
-
-The pipeline should support an iterative process:
-
-    render
-       |
-       v
-    inspect
-       |
-       v
-    detect problems
-       |
-       v
-    modify edit plan
-       |
-       v
-    render again
-
-This creates an iterative AI editing loop rather than a one-shot generation process.
-
----
-
-# Non-Goals
-
-Poiesis should **not** become:
-
-- A Premiere Pro clone
-- A Final Cut clone
-- A DaVinci Resolve clone
-- A generic video editor
-- A social-media video editor
-- A fully autonomous AI filmmaker
-- A complex multi-track timeline application
-
-The goal is much narrower:
-
-> **Automate the production of polished software-engineering YouTube videos using my existing footage, scripts, visual components, and editing style.**
-
----
-
-# Design Principles
-
-## 1. Preserve the Existing Codebase
-
-Prefer incremental evolution over rewriting.
-
-Existing working functionality is valuable.
-
-Before replacing something, understand why it exists and whether it can be adapted.
-
-## 2. Keep the Domain Model Clean
-
-Do not allow UI concerns to leak into the core video-production model.
-
-The Edit Plan should be independent of the UI.
-
-The renderer should consume the Edit Plan rather than depending on UI state.
-
-## 3. AI Should Produce Decisions, Not Opaque Side Effects
-
-Prefer:
-
-    AI
-      |
-      v
-    Structured Plan
-      |
-      v
-    Deterministic Execution
-
-over:
-
-    AI
-      |
-      v
-    Random collection of video operations
-
-The AI's decisions should be explicit and inspectable.
-
-## 4. Everything Should Be Inspectable
-
-An engineer should be able to understand:
-
-> Why did Poiesis create this video?
-
-by inspecting the intermediate artifacts and edit plan.
-
-## 5. Prefer Reusable Components
-
-If an animation is useful once, consider making it reusable.
-
-The visual system should become more powerful with every episode.
-
-The goal is to build a growing library of reusable video primitives.
-
-## 6. Optimize for Iteration
-
-A bad AI edit is not a failure.
-
-The system should make it extremely cheap to say:
-
-> "No, change this."
-
-and produce another version.
-
-## 7. Optimize for My Time
-
-The ultimate metric is not:
-
-> How sophisticated is the editor?
-
-It is:
-
-> **How much time do I spend between recording the footage and uploading the video?**
-
-Every architectural and product decision should ultimately be evaluated against this metric.
-
----
-
-# Long-Term Goal
-
-The ideal Poiesis experience is:
-
-    ME
-     |
-     | Record the episode
-     v
-    Drop footage in
-     |
-     v
-    POIESIS
-     |
-     +------------------+
-     |                  |
-     v                  v
-    Understand        Create
-    footage           edit plan
-     |                  |
-     +--------+---------+
-              |
-              v
-           PREVIEW
-              |
-              v
-        "Looks good."
-              |
-              v
-           EXPORT
-              |
-              v
-         YOUTUBE VIDEO
-
-The purpose of Poiesis is not to make video editing more sophisticated.
-
-It is to make video editing **disappear as much as possible**.
-
-The creator should spend their time thinking about:
-
-> **What do I want to say?**
-
-rather than:
-
-> **How do I spend six hours turning what I said into a video?**
-
----
-
-# Development Directive
-
-When modifying Poiesis, always optimize for the vision described in this document.
-
-If an existing component is difficult to fix, first ask:
-
-> **Is this component necessary for the product we are trying to build?**
-
-Do not automatically make a complex video-editor abstraction more sophisticated.
-
-Prefer simplifying the product around:
-
-    Content
-       |
-       v
-    Understanding
-       |
-       v
-    Edit Plan
-       |
-       v
-    Review
-       |
-       v
-    Remotion
-       |
-       v
-    Video
-
-The existing Poiesis codebase is the starting point.
-
-The objective is to **evolve it into an AI-powered personal YouTube production system**, not to replace it with a new application.
-
-When making architectural decisions, favor:
-
-1. Reuse of existing working code.
-2. Small, composable domain concepts.
-3. Structured intermediate artifacts.
-4. Clear boundaries between AI reasoning and deterministic execution.
-5. Remotion as the rendering engine.
-6. Natural-language AI interaction.
-7. Human review instead of manual editing.
-8. Automation of repetitive work.
-9. A reusable visual design system.
-10. Simplicity over building a general-purpose editor.
-
-The ultimate goal is:
-
-> **Record once, review briefly, publish.**
-
-# Visual Storytelling & Professional Motion Design Directive
-
-This section defines the visual-quality standard for Poiesis.
-
-It is intentionally more demanding than simply producing "animated" videos.
-
-The objective is to produce videos that look **professionally designed and edited**, not merely AI-generated.
-
----
-
-# The Core Creative Goal
-
-Poiesis should not think of itself as an animation generator.
-
-It should think of itself as a:
-
-> **Professional visual storytelling and motion-design system for software-engineering videos.**
-
-The job of the AI is to transform spoken reasoning into a visual experience that helps the audience understand, remember, and follow the argument.
-
-The objective is NOT:
-
-> "Make the video more animated."
-
-The objective is:
-
-> **"Make the ideas easier and more compelling to understand through visuals."**
-
-This distinction is fundamental.
-
----
-
-# The Creative Director Model
-
-Claude should act as the **creative director and visual storyteller**.
-
-Remotion should act as the **motion-design and rendering engine**.
-
-Poiesis should act as the **orchestration and production system**.
-
-The relationship is:
-
-```
-SCRIPT / AUDIO
-      |
-      v
-SEMANTIC UNDERSTANDING
-      |
-      v
-CREATIVE DIRECTION
-      |
-      v
-VISUAL STORYBOARD
-      |
-      v
-SCENE SPECIFICATION
-      |
-      v
-REMOTION COMPONENTS
-      |
-      v
-    RENDER
-      |
-      v
-VISUAL QA / CRITIQUE
-      |
-      v
-   ITERATION
-      |
-      v
-  FINAL VIDEO
+Code
 ```
 
-Claude should make the creative decisions.
+But:
 
-Remotion should execute those decisions deterministically.
+> **Do not add visual changes simply because the screen has been static.**
+
+Visual changes should have a semantic reason.
+
+Avoid "AI slop" where every sentence receives an animation.
 
 ---
 
 # Do Not Animate Sentences
 
-One of the most important rules in Poiesis is:
+Do not treat the transcript as a sequence of sentences that need animation.
 
-> **Do not treat the transcript as a sequence of sentences that need animation.**
+Treat the narration as a sequence of **ideas**.
 
-Instead, treat the narration as a sequence of **ideas**.
-
-For every meaningful section of narration, determine:
+For every meaningful section ask:
 
 1. What is the speaker trying to communicate?
 2. What does the audience need to understand?
@@ -913,29 +536,23 @@ For every meaningful section of narration, determine:
 6. What should be emphasized?
 7. What visual representation would make the idea easier to understand?
 
-Only after answering those questions should a visual be selected.
+Only then select or create a Moment.
 
 ---
 
 # Show, Don't Repeat
 
-A visual should preferably add information rather than simply repeat the narration.
+A visual should preferably add information rather than simply repeat narration.
 
-For example, if the speaker says:
+Weak:
 
-> "A hotel knows that someone checked in, but it doesn't know where that person actually is."
-
-A weak implementation would display:
-
-```
+```text
 "Checked in ≠ Actually there"
 ```
 
-as animated text.
+Strong:
 
-A stronger implementation could show:
-
-```
+```text
 PMS
  |
  | Check-in
@@ -951,9 +568,7 @@ HOTEL
 Unknown physical location
 ```
 
-Then actual occupancy can progressively appear.
-
-The visual creates a mental model.
+The visual should create a mental model.
 
 That is the standard Poiesis should aim for.
 
@@ -961,7 +576,7 @@ That is the standard Poiesis should aim for.
 
 # Visual Purpose
 
-Every significant visual element should have an explicit purpose.
+Every significant Moment should have an explicit purpose.
 
 A visual should primarily serve one or more of:
 
@@ -979,13 +594,13 @@ A visual should primarily serve one or more of:
 * Attention direction
 * Narrative transition
 
-Avoid decorative animation that does not improve the communication.
+Avoid decorative animation that does not improve communication.
 
 ---
 
 # Visual Decision Hierarchy
 
-When deciding what should appear on screen, prefer this hierarchy:
+Prefer:
 
 ### 1. Real evidence
 
@@ -1018,27 +633,19 @@ when the idea needs explanation.
 
 Use large text when the **statement itself** is important.
 
-Typography should usually emphasize rather than explain a complicated concept.
-
 ### 4. Decorative motion
 
-Use only when it contributes to visual rhythm, polish, or transition.
-
-Decorative animation should never replace useful visual communication.
+Use only when it contributes to rhythm, polish, or transition.
 
 ---
 
 # Professional Visual Rhythm
 
-A professional video should not remain visually static for long periods when the content benefits from visual support.
+A professional video should have visual rhythm without becoming visually exhausting.
 
-However, visual change should also not happen continuously.
+Possible sequence:
 
-Think in terms of **visual rhythm**.
-
-For example:
-
-```
+```text
 PRESENTER
     |
     v
@@ -1060,11 +667,11 @@ CONCEPT VISUALIZATION
 PRESENTER
 ```
 
-The exact sequence should depend on the content.
+The exact sequence depends on the content.
 
-Avoid repetitive patterns such as:
+Avoid:
 
-```
+```text
 TEXT
 TEXT
 TEXT
@@ -1073,7 +680,7 @@ TEXT
 
 or:
 
-```
+```text
 ZOOM
 ZOOM
 ZOOM
@@ -1082,7 +689,7 @@ ZOOM
 
 or:
 
-```
+```text
 POP-IN
 POP-IN
 POP-IN
@@ -1097,14 +704,14 @@ Professionalism comes from variation combined with consistency.
 
 Not every moment requires a graphic.
 
-Some of the strongest moments may be:
+Some strong moments may be:
 
 * Presenter alone
-* A simple sentence
+* A simple statement
 * A pause
 * A clean composition
 * A slow camera movement
-* A minimal visual transition
+* A minimal transition
 
 Poiesis should intentionally create moments of visual silence.
 
@@ -1115,8 +722,6 @@ A video that constantly demands attention becomes exhausting.
 # Motion Must Communicate
 
 Animation should have semantic meaning whenever possible.
-
-Examples:
 
 ### Movement
 
@@ -1169,13 +774,13 @@ Prefer meaningful motion over generic effects.
 
 ---
 
-# Build A Professional Motion Vocabulary
+# Build a Professional Motion Vocabulary
 
 Poiesis should develop a reusable library of professional motion-design primitives.
 
 Examples:
 
-```
+```text
 TitleReveal
 KineticStatement
 WordHighlight
@@ -1209,9 +814,7 @@ ChapterTitle
 
 These should be reusable and parameterized.
 
-The AI should normally **select and configure** these primitives instead of inventing completely new animation implementations.
-
-The library should grow over time.
+The AI should normally **select and configure** these primitives rather than inventing completely new animation implementations.
 
 ---
 
@@ -1237,25 +840,23 @@ The visual system should have explicit reusable rules for:
 * Exit animations
 * Transitions
 
-The purpose is to make independently generated scenes feel like they belong to the same professional production.
+Independently generated Moments should still feel like they belong to the same production.
 
-Do not allow every scene to develop its own visual language.
+Do not allow every Moment to develop its own visual language.
 
 ---
 
 # Typography Rules
 
-Typography should be treated as a design system.
-
 Prefer:
 
-```
+```text
 ONE IMPORTANT IDEA
 ```
 
 over:
 
-```
+```text
 A paragraph of text explaining everything.
 ```
 
@@ -1273,15 +874,13 @@ Use smaller text for supporting information.
 
 Do not turn the video into a presentation deck.
 
-The viewer should be watching a video, not reading slides.
-
 ---
 
 # Diagrams Are First-Class Visuals
 
 For software-engineering content, diagrams should be one of the primary visual languages.
 
-Claude should recognize when the speaker is describing:
+The AI should recognize when the speaker describes:
 
 * Architecture
 * Data flow
@@ -1297,29 +896,9 @@ Claude should recognize when the speaker is describing:
 * Algorithms
 * Relationships
 
-and consider generating a diagram.
+and consider creating a diagram Moment.
 
-For example:
-
-```
-Client
-   |
-   v
- API
-   |
-   v
-Service
-   |
-+--+--+
-|     |
-v     v
-```
-
-DB    Kafka
-
-A diagram should not simply appear.
-
-It should usually be **constructed progressively in sync with the explanation**.
+A diagram should usually be constructed progressively in sync with the explanation.
 
 If the speaker introduces the API first, show the API.
 
@@ -1327,11 +906,11 @@ When the speaker explains the service, reveal the service.
 
 When the speaker explains the database, connect it.
 
-This allows the audience to build the mental model together with the speaker.
+The audience should build the mental model together with the speaker.
 
 ---
 
-# Code Is A Visual Storytelling Tool
+# Code Is a Visual Storytelling Tool
 
 Code should not simply be displayed as a static screenshot.
 
@@ -1341,9 +920,9 @@ When useful:
 * Highlight the important section.
 * De-emphasize irrelevant code.
 * Zoom into the relevant method.
-* Show a before/after.
-* Animate relationships between code and architecture.
-* Connect the code to the concept being explained.
+* Show before/after.
+* Connect code to architecture.
+* Animate relationships between code and the concept.
 
 The objective is:
 
@@ -1357,13 +936,11 @@ not:
 
 # Presenter Integration
 
-The presenter should remain an important visual anchor.
-
-Visuals should complement the presenter rather than constantly replacing them.
+The presenter remains an important visual anchor.
 
 Possible compositions include:
 
-```
+```text
 Presenter + supporting graphic
 
 Presenter + diagram
@@ -1377,8 +954,6 @@ Full-screen concept
 Presenter → graphic → presenter
 ```
 
-Use the presenter strategically.
-
 Do not obscure the presenter unnecessarily.
 
 Do not cover their face with graphics.
@@ -1389,7 +964,7 @@ Maintain visual hierarchy.
 
 # Scene Composition
 
-Every scene should have deliberate composition.
+Every visual Moment should have deliberate composition.
 
 Consider:
 
@@ -1407,13 +982,13 @@ Do not simply center everything.
 
 Do not automatically put text in the middle of the screen.
 
-Composition should depend on the content and the intended visual relationship.
+Composition should depend on the content and intended visual relationship.
 
 ---
 
 # Camera Language
 
-Virtual camera movement can be used to guide attention.
+Virtual camera movement can guide attention.
 
 Examples:
 
@@ -1422,7 +997,7 @@ Examples:
 * Pan across a diagram
 * Zoom into code
 * Move between connected architecture components
-* Follow a data flow
+* Follow data flow
 * Reveal a larger system
 
 Camera movement should have narrative purpose.
@@ -1433,7 +1008,7 @@ Avoid constant artificial zooming.
 
 # Transitions
 
-Transitions should reflect relationships between scenes.
+Transitions should reflect relationships between Moments.
 
 Prefer:
 
@@ -1446,15 +1021,13 @@ Prefer:
 * Progressive replacement
 * Crossfade where appropriate
 
-Avoid using random transition effects merely to separate scenes.
-
-The transition itself should ideally communicate continuity.
+Avoid random transition effects merely to separate Moments.
 
 ---
 
-# Semantic Scene Specification
+# Semantic Moment Specification
 
-The edit plan should eventually distinguish between:
+A Moment should eventually distinguish between:
 
 ### WHAT
 
@@ -1466,7 +1039,7 @@ Why the visual exists.
 
 ### HOW
 
-Which reusable visual component should communicate it.
+Which reusable component and assets communicate it.
 
 Conceptually:
 
@@ -1485,19 +1058,320 @@ Conceptually:
 }
 ```
 
-The exact domain model should evolve with the application.
+The exact domain model should evolve.
 
-The important principle is that **creative intent must survive independently of rendering implementation**.
+The important principle is:
+
+> **Creative intent must survive independently of rendering implementation.**
+
+---
+
+# AI Provider Architecture
+
+The AI layer must be abstracted from the rest of the application.
+
+Current important providers include:
+
+* Claude
+* Gemini
+* Local models where appropriate
+
+Conceptually:
+
+```text
+AI Provider
+   |
+   +-- Claude
+   |
+   +-- Gemini
+   |
+   +-- Local Model
+   |
+   +-- Other providers
+```
+
+Claude should remain the primary high-quality reasoning provider when sophisticated creative reasoning is required.
+
+Gemini should be supported as a first-class provider rather than being treated as a special-case integration.
+
+Local or cheaper models can be used for tasks where sophisticated reasoning is unnecessary.
+
+The core domain must not depend directly on one specific LLM provider.
+
+Provider-specific request/response formats belong at the AI infrastructure boundary.
+
+The semantic video-production domain should remain provider-independent.
+
+---
+
+# AI Should Produce Decisions, Not Opaque Side Effects
+
+Prefer:
+
+```text
+AI
+ |
+ v
+Structured semantic decisions
+ |
+ v
+Application orchestration
+ |
+ v
+Deterministic execution
+ |
+ v
+Render
+```
+
+over:
+
+```text
+AI
+ |
+ v
+Random collection of video operations
+```
+
+The AI's decisions should be explicit, inspectable, testable, and reproducible where possible.
+
+---
+
+# Processing Pipeline
+
+Poiesis should use clearly separated processing stages.
+
+Conceptually:
+
+```text
+INGEST
+   |
+   v
+PREPARE
+   |
+   v
+TRANSCRIBE
+   |
+   v
+SEGMENT
+   |
+   v
+UNDERSTAND
+   |
+   v
+CHAPTER
+   |
+   v
+MOMENT GENERATION
+   |
+   v
+REVIEW / EDIT
+   |
+   v
+RENDER
+   |
+   v
+QA
+   |
+   v
+EXPORT
+```
+
+Each stage should have a clear responsibility and preferably produce an inspectable artifact.
+
+Potential artifacts include:
+
+```text
+transcript.json
+segments.json
+analysis.json
+chapters.json
+moments.json
+edit-plan.json
+render.mp4
+qa-report.json
+```
+
+The exact artifacts may evolve.
+
+The principle is:
+
+> **The current state of an episode should be understandable without inspecting opaque internal application state.**
+
+---
+
+# Pipeline Orchestration
+
+The processing pipeline should be treated as an explicit workflow rather than an accidental chain of function calls.
+
+Stages may depend on outputs from earlier stages.
+
+The system should therefore make:
+
+* Dependencies
+* State
+* Failures
+* Retries
+* Intermediate results
+* Re-running individual stages
+
+explicit where practical.
+
+Do not introduce a heavyweight orchestration system merely for architectural fashion.
+
+The orchestration mechanism should be proportional to the actual complexity of the pipeline.
+
+The important requirement is that the workflow is:
+
+* Observable
+* Restartable
+* Deterministic where possible
+* Failure-aware
+* Incrementally executable
+
+A failed AI stage should not require rebuilding the entire episode from scratch.
+
+---
+
+# Deterministic Video Processing
+
+LLMs should not be responsible for operations that can be implemented deterministically.
+
+Use conventional video-processing tools for:
+
+* Cutting
+* Concatenation
+* Encoding
+* Audio normalization
+* Silence removal
+* Resolution changes
+* Format conversion
+* Frame extraction
+* Audio extraction
+* Media inspection
+
+FFmpeg should be used where appropriate.
+
+Other specialized tools can be introduced when necessary.
+
+The principle is:
+
+> **Use AI for judgment. Use software for execution.**
+
+---
+
+# Remotion
+
+Remotion is the primary rendering and composition engine.
+
+Remotion should remain responsible for:
+
+* Video composition
+* Presenter placement
+* Backgrounds
+* Text
+* Captions
+* Code blocks
+* Diagrams
+* Animations
+* Transitions
+* Images
+* Screenshots
+* Reusable visual components
+* Intro
+* Outro
+
+The semantic editor should **not become coupled to Remotion implementation details**.
+
+The preferred architecture is:
+
+```text
+Semantic Model
+     |
+     v
+Moment / Composition Specifications
+     |
+     v
+Remotion Components
+     |
+     v
+Rendered Video
+```
+
+Remotion executes the visual decisions.
+
+It should not be the source of truth for those decisions.
+
+---
+
+# Editor UI
+
+Poiesis does have an editor interface, but it is not intended to become a general-purpose nonlinear editor.
+
+The UI should be optimized for **AI-assisted review and semantic editing**.
+
+The editor should allow the user to:
+
+* Preview the video
+* Inspect chapters
+* Inspect Moments
+* Edit Moments
+* Inspect source footage
+* Manage assets
+* See the semantic structure of the episode
+* Approve or reject AI decisions
+* Ask AI for changes
+* Perform direct edits
+* Re-render previews
+
+The timeline may exist as a useful visualization and editing mechanism.
+
+However:
+
+> **The semantic model remains the architectural center, not the timeline.**
+
+Do not spend large amounts of development effort reproducing professional NLE functionality that does not directly improve AI-assisted production.
+
+---
+
+# AI + Direct Manipulation
+
+The editor should support two complementary editing modes:
+
+### Direct editing
+
+The creator can explicitly modify a Moment, chapter, asset, timing, or visual configuration.
+
+### Natural-language editing
+
+The creator can ask the AI to make the change.
+
+These should ultimately operate on the same underlying semantic model.
+
+For example:
+
+```text
+Direct UI edit
+      |
+      +------+
+             |
+Natural ----> Semantic Model
+language     |
+             v
+           Render
+```
+
+There should not be two independent editing systems.
 
 ---
 
 # Storyboard Before Implementation
 
-For substantial sections, Claude should first reason about the visual storyboard before writing or modifying Remotion code.
+For substantial sections, Claude should reason about the visual storyboard before implementing or modifying Remotion code.
 
-The preferred process is:
+Preferred process:
 
-```
+```text
 Narration
    |
    v
@@ -1510,21 +1384,478 @@ Visual opportunities
 Storyboard
    |
    v
+Moments
+   |
+   v
 Scene specifications
    |
    v
 Remotion implementation
 ```
 
-Do not immediately code the first visual idea that comes to mind.
+Do not immediately code the first visual idea.
 
-Compare possible visual approaches and choose the one that communicates best.
+Compare possible visual approaches and select the one that communicates best.
+
+---
+
+# Render → Inspect → Critique → Improve
+
+A rendered video is not automatically successful because the code compiled.
+
+The AI should inspect actual visual output whenever possible.
+
+Desired loop:
+
+```text
+IMPLEMENT
+   |
+   v
+RENDER
+   |
+   v
+INSPECT
+   |
+   v
+CRITIQUE
+   |
+   v
+IMPROVE
+   |
+   v
+RENDER AGAIN
+```
+
+Inspect actual frames or short rendered sections rather than reasoning only from source code.
+
+Source code cannot reliably tell you whether a composition looks professional.
+
+---
+
+# Quality Assurance
+
+The system should eventually inspect its own output.
+
+Potential checks include:
+
+* Video duration
+* Missing media
+* Audio/video synchronization
+* Black frames
+* Broken assets
+* Text outside viewport
+* Overlapping elements
+* Caption timing
+* Presenter visibility
+* Rendering errors
+* Unexpected scene transitions
+
+QA should distinguish between:
+
+1. Technical failures
+2. Structural problems
+3. Visual-quality problems
+
+A successful render is not necessarily a successful edit.
+
+---
+
+# Channel Editing Style
+
+Poiesis is initially designed for a specific software-engineering YouTube channel.
+
+The editing style should therefore be treated as a **design system**.
+
+The system should encode rules such as:
+
+* Presenter remains visually prominent.
+* Do not obscure the presenter unnecessarily.
+* Use visual changes to support explanation.
+* Do not animate every sentence.
+* Important concepts deserve stronger visual treatment.
+* Technical concepts should often use diagrams or code.
+* Code should be readable.
+* Text should be concise.
+* Animations should feel intentional.
+* Maintain consistent visual identity.
+* Reuse established animation patterns.
+* Intro and outro remain consistent.
+
+The AI should learn the style from:
+
+1. Explicit editing rules.
+2. Existing Remotion components.
+3. Existing visual assets.
+4. Previous episodes where available.
+5. Human corrections and feedback.
+
+The goal is for Poiesis to become increasingly consistent with my personal editing style.
+
+---
+
+# Human-in-the-Loop
+
+Poiesis should not remove the human from the creative process.
+
+The intended relationship is:
+
+```text
+Human
+  |
+  | content + intent + style
+  v
+AI
+  |
+  | proposes
+  v
+Chapters + Moments + Assets + Edit decisions
+  |
+  v
+Human
+  |
+  | reviews / corrects
+  v
+Final semantic edit
+  |
+  v
+Remotion
+  |
+  v
+Video
+```
+
+The human should be able to override AI decisions easily.
+
+The system should optimize for:
+
+> **AI does the work; human makes the important decisions.**
+
+---
+
+# Avoid AI Slop
+
+Poiesis must actively avoid visual patterns associated with low-quality AI-generated content.
+
+Avoid:
+
+* Excessive bouncing
+* Excessive zooming
+* Random particles
+* Random gradients
+* Generic glowing UI
+* Excessive glassmorphism
+* Emoji-heavy visuals
+* Random icons
+* Constant kinetic typography
+* Every-word animation
+* Unmotivated camera movement
+* Excessive transitions
+* Overly dense screens
+* Generic stock-looking illustrations
+* Visuals unrelated to narration
+
+When in doubt:
+
+> **Prefer simple, intentional, well-composed design over flashy animation.**
+
+---
+
+# Non-Goals
+
+Poiesis should **not** become:
+
+* A Premiere Pro clone
+* A Final Cut clone
+* A DaVinci Resolve clone
+* A generic video editor
+* A social-media video editor
+* A fully autonomous AI filmmaker
+* A complex multi-track NLE
+* A collection of unrelated AI-generated effects
+
+The goal is much narrower:
+
+> **Automate the production of polished software-engineering YouTube videos using my footage, scripts, visual components, assets, and editing style.**
+
+---
+
+# Existing Codebase
+
+Poiesis already contains useful infrastructure.
+
+**Do not throw away the existing codebase simply because some parts of the UI or editor are difficult to maintain.**
+
+Existing useful capabilities include:
+
+* Video ingestion
+* Footage preparation
+* Transcription
+* Segment extraction
+* Segment normalization
+* LLM integration
+* AI analysis
+* Remotion rendering
+* Video composition
+* Processing pipelines
+
+These components should be preserved and refactored where necessary.
+
+The project should evolve incrementally rather than being rewritten from scratch.
+
+Before replacing an existing component, determine:
+
+1. What responsibility it currently has.
+2. Whether that responsibility is still needed.
+3. Whether it can be simplified.
+4. Whether it belongs in the new architecture.
+5. Whether replacement actually improves the product.
+
+Do not rewrite working infrastructure merely because a new architecture looks cleaner.
+
+---
+
+# Design Principles
+
+## 1. Preserve the Existing Codebase
+
+Prefer incremental evolution over rewriting.
+
+Existing working functionality is valuable.
+
+## 2. Keep the Domain Model Clean
+
+UI concerns should not leak into the core video-production model.
+
+The semantic model should remain independent of the UI.
+
+The renderer should consume semantic specifications rather than UI state.
+
+## 3. Moments Are Semantic Decisions
+
+A Moment should represent meaningful editorial intent.
+
+It should not merely be a rectangle on a timeline.
+
+## 4. AI Produces Decisions, Software Executes Them
+
+Prefer:
+
+```text
+AI
+ |
+ v
+Structured decisions
+ |
+ v
+Application
+ |
+ v
+Deterministic execution
+```
+
+## 5. Everything Should Be Inspectable
+
+An engineer should be able to understand:
+
+> Why did Poiesis create this video?
+
+by inspecting the episode state, chapters, Moments, assets, and intermediate artifacts.
+
+## 6. Prefer Reusable Components
+
+If a visual treatment is useful once, consider making it reusable.
+
+The visual system should become more powerful with every episode.
+
+## 7. Optimize for Iteration
+
+A bad AI edit is not necessarily a failure.
+
+The system should make it extremely cheap to say:
+
+> "No, change this."
+
+and produce another version.
+
+## 8. Optimize for My Time
+
+The ultimate metric is not:
+
+> How sophisticated is the editor?
+
+It is:
+
+> **How much time do I spend between recording the footage and uploading the video?**
+
+## 9. Do Not Hide Empty States
+
+An empty result is still a valid state.
+
+For example:
+
+> Zero generated Moments
+
+must not cause the Moments Bar to disappear.
+
+The UI should represent state explicitly rather than using absence of data as absence of interface.
+
+## 10. Prefer Semantic Editing Over Pixel Editing
+
+The creator should primarily manipulate:
+
+* What is being communicated
+* When it appears
+* Which asset is used
+* Which visual component presents it
+* Why it exists
+
+rather than manually manipulating rendered pixels.
+
+---
+
+# Development Directive
+
+When modifying Poiesis, always optimize for the vision described in this document.
+
+If an existing component is difficult to fix, first ask:
+
+> **Is this component necessary for the product we are trying to build?**
+
+Do not automatically make a complex video-editor abstraction more sophisticated.
+
+Prefer simplifying the product around:
+
+```text
+Content
+   |
+   v
+Understanding
+   |
+   v
+Chapters
+   |
+   v
+Moments
+   |
+   +---- Assets
+   |
+   +---- Visual Components
+   |
+   v
+Review / Edit
+   |
+   +---- Direct manipulation
+   |
+   +---- Natural language
+   |
+   v
+Semantic Model
+   |
+   v
+Remotion
+   |
+   v
+Video
+```
+
+The existing Poiesis codebase is the starting point.
+
+The objective is to **evolve it into an AI-powered personal YouTube production system**, not replace it with a new application.
+
+When making architectural decisions, favor:
+
+1. Reuse of existing working code.
+2. Small, composable domain concepts.
+3. Chapters and Moments as semantic editing primitives.
+4. Structured intermediate artifacts.
+5. Clear boundaries between AI reasoning and deterministic execution.
+6. Provider-independent AI architecture.
+7. Claude and Gemini as supported AI providers.
+8. Remotion as the rendering engine.
+9. Natural-language AI interaction.
+10. Direct semantic editing.
+11. Persistent and explicit UI state.
+12. Reusable visual components.
+13. Automation of repetitive work.
+14. Simplicity over building a general-purpose editor.
+
+---
+
+# Visual Storytelling & Professional Motion Design Directive
+
+Poiesis should not think of itself as an animation generator.
+
+It should think of itself as a:
+
+> **Professional visual storytelling and motion-design system for software-engineering videos.**
+
+The job of the AI is to transform spoken reasoning into a visual experience that helps the audience understand, remember, and follow the argument.
+
+The objective is NOT:
+
+> "Make the video more animated."
+
+The objective is:
+
+> **"Make the ideas easier and more compelling to understand through visuals."**
+
+---
+
+# Creative Director Model
+
+Claude should act as the **creative director and visual storyteller**.
+
+Remotion should act as the **motion-design and rendering engine**.
+
+Poiesis should act as the **orchestration and production system**.
+
+The relationship is:
+
+```text
+SCRIPT / AUDIO
+      |
+      v
+SEMANTIC UNDERSTANDING
+      |
+      v
+CREATIVE DIRECTION
+      |
+      v
+VISUAL STORYBOARD
+      |
+      v
+MOMENTS
+      |
+      v
+SCENE SPECIFICATIONS
+      |
+      v
+REMOTION COMPONENTS
+      |
+      v
+RENDER
+      |
+      v
+VISUAL QA / CRITIQUE
+      |
+      v
+ITERATION
+      |
+      v
+FINAL VIDEO
+```
+
+Claude should make creative decisions.
+
+The application should translate those decisions into structured state.
+
+Remotion should execute them deterministically.
 
 ---
 
 # The Audience Comprehension Test
 
-For every important scene ask:
+For every important Moment ask:
 
 > What should the audience understand after seeing this?
 
@@ -1532,15 +1863,15 @@ Then ask:
 
 > Is the visual actually helping them understand it?
 
-If removing the visual would make the explanation equally clear, consider whether the visual is necessary.
+If removing the visual would make the explanation equally clear, consider whether it is necessary.
 
-If the visual merely repeats the narration without adding useful information, consider replacing it.
+If the visual merely repeats narration without adding useful information, consider replacing it.
 
 ---
 
 # The Professionalism Test
 
-Before accepting a generated scene, evaluate:
+Before accepting a generated Moment, evaluate:
 
 ### Composition
 
@@ -1572,7 +1903,7 @@ Does it belong to the Poiesis visual language?
 
 ### Comprehension
 
-Does the visual make the concept easier to understand?
+Does it make the concept easier to understand?
 
 ### Originality
 
@@ -1580,108 +1911,23 @@ Does it look like a thoughtful production rather than a generic AI template?
 
 ---
 
-# Render → Inspect → Critique → Improve
-
-A rendered video is not automatically successful because the code compiled.
-
-The AI should inspect its actual visual output.
-
-The desired loop is:
-
-```
-IMPLEMENT
-   |
-   v
-RENDER
-   |
-   v
-INSPECT
-   |
-   v
-CRITIQUE
-   |
-   v
-IMPROVE
-   |
-   v
-RENDER AGAIN
-```
-
-When possible, inspect actual frames or short rendered sections rather than reasoning only from source code.
-
-Source code cannot reliably tell you whether a composition looks professional.
-
----
-
-# Avoid AI Slop
-
-Poiesis must actively avoid visual patterns commonly associated with low-quality AI-generated content.
-
-Avoid:
-
-* Excessive bouncing
-* Excessive zooming
-* Random particles
-* Random gradients
-* Generic glowing UI
-* Excessive glassmorphism
-* Emoji-heavy visuals
-* Random icons
-* Constant kinetic typography
-* Every-word animation
-* Unmotivated camera movement
-* Excessive transitions
-* Overly dense screens
-* Generic stock-looking illustrations
-* Visuals unrelated to the narration
-
-When in doubt:
-
-> **Prefer simple, intentional, well-composed design over flashy animation.**
-
----
-
-# The Ultimate Standard
-
-The final video should not feel like:
-
-> "AI generated a video."
-
-It should feel like:
-
-> **"A professional editor and motion designer produced this video."**
-
-AI should be invisible in the final result.
-
-The audience should notice:
-
-* Clear explanations
-* Strong visual storytelling
-* Excellent pacing
-* Consistent design
-* Professional motion
-* Useful diagrams
-* Well-timed emphasis
-* Good composition
-
-They should not notice the automation behind it.
-
----
-
 # Development Priority
 
-When improving Poiesis's visual generation capabilities, prioritize in this order:
+When improving Poiesis's visual-generation capabilities, prioritize:
 
 1. Better semantic understanding of narration.
 2. Better identification of visual opportunities.
-3. Better storyboard generation.
-4. Better reusable visual primitives.
-5. Better scene composition.
-6. Better timing synchronization.
-7. Better transitions.
-8. Better visual QA.
-9. Better iterative refinement.
-10. More visual variety.
+3. Better chapter detection.
+4. Better Moment generation.
+5. Better storyboard generation.
+6. Better reusable visual primitives.
+7. Better asset selection and management.
+8. Better scene composition.
+9. Better timing synchronization.
+10. Better transitions.
+11. Better visual QA.
+12. Better iterative refinement.
+13. More visual variety.
 
 Do NOT prioritize:
 
@@ -1691,7 +1937,7 @@ A small library of excellent components is more valuable than a huge library of 
 
 ---
 
-# Definition Of Success
+# Definition of Success
 
 Poiesis succeeds when:
 
@@ -1707,6 +1953,12 @@ The human should be the director.
 
 Claude should be the creative editor.
 
-Remotion should be the motion-design engine.
+Gemini should be available as an alternative AI provider.
+
+Remotion should be the motion-design and rendering engine.
 
 Poiesis should orchestrate the entire process.
+
+The ultimate goal is:
+
+> **Record once, review briefly, publish.**
