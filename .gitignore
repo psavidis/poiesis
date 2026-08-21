@@ -10,3 +10,4 @@ __pycache__/
 # with ui/ as its cwd, not video-renderer/ — see #65's sibling render-
 # progress work).
 .remotion/
+/video-renderer/public/
