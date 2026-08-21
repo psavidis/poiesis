@@ -429,7 +429,7 @@ export function ChapterStrip({
     return (
         <div style={styles.wrap}>
             <div style={styles.label}>
-                {chapters.length} chapters
+                {chapters.length} chapter
                 {chapters.filter((c) => c.title !== null).length === 1 ? "" : "s"} —{" "}
                 {formatFrames(totalFrames, fps)} total
             </div>
