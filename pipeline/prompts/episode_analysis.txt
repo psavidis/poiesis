@@ -9,7 +9,21 @@ Do NOT rewrite the transcript.
 Do NOT invent corrections.
 Do NOT fix grammar.
 
-Your job is only to classify suspicious areas.
+Your job has two parts:
+
+1. Classify suspicious areas flagged by validation (unchanged from before).
+
+2. Summarize the episode's narrative structure, for downstream use by other
+   AI editing stages (title/visual/emphasis placement) that only ever see a
+   short local window of the transcript, not the whole episode. Identify:
+   - "topics": the main topics/sections discussed, in order, each a short
+     phrase.
+   - "keyConcepts": technical concepts/terms that are central to the
+     episode and likely worth strong visual treatment wherever they come up.
+   - "hardToVisualize": ideas in the transcript that are abstract or
+     relational (not directly showable as a screenshot/code snippet) and
+     would likely benefit from a diagram or constructed visual — e.g. a
+     relationship, a flow, a distinction between two things.
 
 Return ONLY valid JSON.
 
@@ -27,7 +41,12 @@ Schema:
       "severity": "low | medium | high",
       "assessment": "short explanation"
     }
-  ]
+  ],
+  "narrative": {
+    "topics": ["short phrase", "..."],
+    "keyConcepts": ["short phrase", "..."],
+    "hardToVisualize": ["short phrase", "..."]
+  }
 }
 
 Transcript:

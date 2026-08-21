@@ -45,6 +45,11 @@ class OllamaClient:
 
     def __init__(self, model: str):
         self.model = model
+        # `ollama run` (used here, not the /api/generate HTTP endpoint)
+        # doesn't report token counts or cost in its plain stdout output,
+        # and a local model has no dollar cost regardless — always None,
+        # never guessed at.
+        self.last_usage = None
 
 
     def complete(self, prompt: str, thinking: bool = True) -> str:

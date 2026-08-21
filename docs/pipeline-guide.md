@@ -1,0 +1,392 @@
+alrigh# Poiesis Pipeline — Current State Guide
+
+This is a snapshot of what the pipeline can do today, and how to drive it. For the
+day-to-day command reference see the root `README.md` — this doc is the "how do all
+the pieces fit together" explanation.
+
+## The mental model
+
+Everything funnels into one artifact: `processing/scene-plan.json`. It's a flat,
+timeline-ordered list of scenes. Every pipeline stage either produces part of this file
+or reads it. Nothing renders until you're happy with what's in it. That's the whole
+architecture — AI stages propose scenes, deterministic code merges them, Remotion renders
+whatever the file says.
+
+```
+original_footage/*.mov
+      |
+      v
+ prepare_footage.py        -> processing/manifest.json
+      |
+      v
+ transcribe_footage.sh     -> processing/transcripts/
+      |
+      v
+ validate_transcripts.py   -> processing/transcript_validation.json
+      |
+      v
+ normalize_transcripts.py  -> processing/segments/
+      |
+      v
+ merge_segments.py         -> processing/episode_transcript.json
+      |
+      v
+ analyze_scenes.py         -> processing/scene-plan.json   (base: presenter scenes, silence-trimmed)
+      |
+      v
+ index_assets.py           -> processing/assets.json       (graphics/ folder indexed)
+      |
+      v
+ generate_title_scenes.py  -> processing/title_scenes.json + merges "title" scenes into scene-plan.json
+      |
+      v
+ generate_storyboard.py    -> processing/storyboard.json  (chapter-level visual-story reasoning,
+      |                       read as context by generate_moments.py below — no scenes of its own)
+      v
+ generate_moments.py       -> processing/moments.json + merges "moment" scenes (and parent layout)
+      |
+      v
+ generate_captions.py      -> processing/captions.json + merges "caption" scenes
+      |
+      v
+ generate_emphasis.py      -> processing/emphasis.json + merges "beat" scenes (kinetic word/phrase accents)
+      |
+      v
+ generate_scene_plan_ts.py -> video-renderer/generated/episode/scene-plan.ts  (Remotion reads this)
+      |
+      v
+ [optional] key_footage.py -> processing/keyed/*.webm       (green-screen removal, opt-in, slow)
+      |
+      v
+ render_episode.sh         -> rendered/<episode>.mp4
+      |
+      v
+ qa_check.py               -> processing/qa-report.json
+```
+
+Run all the stages above `key_footage.py` in one shot with `./create_episode.sh <episode-folder>`.
+`key_footage.py` and the final render/QA are separate, deliberate steps (see below for why).
+
+## The six scene types that exist today
+
+| Type | Who creates it | What it looks like | Position |
+|---|---|---|---|
+| `presenter` | `analyze_scenes.py` (deterministic) | your talking-head footage, silence-trimmed | absolute `timelineStartFrame` |
+| `title` | `generate_title_scenes.py` (AI) | full-screen text card, anchored to the transcript segment where a new topic actually begins — can split a clip mid-recording, not just sit at a clip boundary | absolute `timelineStartFrame` |
+| `moment` | `generate_moments.py` (AI) | `bottom-callout` (short phrase over the full-frame presenter), `side-text` (longer phrase filling one side), `side-image` (an indexed asset filling one side), `side-code` (a real source file from `code/`, syntax-highlighted), `side-diagram` (a small LLM-authored node/edge diagram), `side-terms` (a stack of 2-4 related terms, each with an emphasis level), `comparison` (two short labels flanking the full-frame presenter — a direct two-way contrast, presenter stays centered), or `full-visual` (an image, diagram, or headline phrase filling the ENTIRE frame — the presenter is hidden, voice continues) | relative to a parent `presenter` scene |
+| `image` | hand-authored / edit-plan only | inset picture-in-picture overlay from `graphics/` | relative to a parent `presenter` scene |
+| `caption` | `generate_captions.py` (deterministic) | burned-in subtitle text, lower-third | relative to a parent `presenter` scene |
+| `beat` | `generate_emphasis.py` (AI) | `word-pop` (a word/phrase pops into view), `underline` (an accent line draws under it), or `icon-accent` (the word/phrase next to a small icon — arrow/check/warning/gear) — a brief kinetic accent on a single word or short phrase, timed to when it's actually spoken | relative to a parent `presenter` scene |
+
+The AI never places these randomly. Titles are proposed from the whole episode transcript in
+one pass (not per clip), anchored to the transcript segment where a genuinely new topic
+begins — `merge_title_scenes` splits the presenter scene there if needed, so a title can land
+mid-recording rather than only at a clip's own start. Moment scenes only get *offered* to the
+AI for windows that have gone ≥18 seconds without a visual change (computed in code, not left
+to the LLM's judgment) — and even then the AI is told to skip most of them and only act on the
+strongest candidates. Every proposal is validated: `bottom-callout`/`side-text`/`full-visual`
+text must actually appear in what was said; `side-image`/`side-code`/`full-visual` image
+selections must reference a real, indexed asset (never an invented id); `side-diagram`/
+`full-visual` diagram node labels are checked against the window's transcript text as a guard
+against wholesale fabrication (diagrams are the one content type where the LLM constructs new
+structure rather than selecting from a list — see below); `side-terms`/`comparison` labels are
+checked the same way, word-by-word against the transcript, since they're short phrases rather
+than full sentences. `side-text`/`side-image`/`side-code`/`side-diagram`/`side-terms` require a
+`presenterSide` (`"left"`/`"right"`) so the presenter animates to that side to make room — two
+moments on the same parent can't claim overlapping on-screen windows. `bottom-callout`,
+`comparison`, and `full-visual` never set `presenterSide`: `bottom-callout` and `comparison`
+both leave the presenter full-frame (comparison's two labels flank the outer margins instead of
+requiring a side), while `full-visual` hides the presenter entirely (rather than moving it to a
+side) for its own window — reserved for visuals that need the whole frame, and kept rarer than
+the side treatments (see `config.json`'s `style.moments.fullVisualMaxRatioToSideMoments`).
+Nothing is trusted blindly.
+
+`beat` scenes work differently from `moment`/`title`: they're not monotony-gated, and they're
+not proposed against transcript text — they're proposed against *word-level* transcript
+timestamps (`words[]` on a transcript segment, populated by `transcribe_footage.sh`'s
+`--word_timestamps True` flag; an episode transcribed before that flag was added has no word
+timing and simply gets no beats until re-transcribed). The AI picks *which* words/phrases are
+worth a beat and what kind (`word-pop`/`underline`/`icon-accent`); `generate_emphasis.py`
+computes the beat's exact on-screen timing itself from the matched word's real start time —
+the LLM never states a frame offset directly, the same reasoning/execution split used
+everywhere else in this pipeline. Beats are meant to be a frequent, light rhythm (a spacing
+floor of `style.emphasis.minSecondsBetweenBeats`, not a rare-event density cap like moments),
+and are automatically skipped wherever they'd land on top of an already-placed `moment`/`image`
+overlay on the same parent scene.
+
+## How to process a new episode end to end
+
+```bash
+# 1. Drop footage into <episode>/original_footage/, then:
+./create_episode.sh /path/to/episode
+
+# 2. (Optional, and slow — see below) remove the green screen background:
+python3 pipeline/key_footage.py /path/to/episode
+
+# 3. Regenerate the Remotion codegen if you ran keying after step 1's codegen:
+python3 pipeline/generate_scene_plan_ts.py /path/to/episode
+
+# 4. Look at processing/scene-plan.json. Adjust anything you don't like (see below).
+
+# 5. Render:
+./render_episode.sh /path/to/episode              # default resolution from config.json
+./render_episode.sh /path/to/episode 3840x2160     # or override resolution per-render
+
+# 6. Check it:
+python3 pipeline/qa_check.py /path/to/episode
+```
+
+## How to parameterize / control the output
+
+**Resolution** — `config.json`'s `render.width`/`render.height` sets the default (currently
+1920x1080). Override per-render without touching config: `./render_episode.sh <episode> 3840x2160`.
+
+**Which LLM does the AI stages** — `config.json`'s `llm.provider`. Currently `claude-code`,
+which shells out to your Claude Code CLI login — no API key required, uses your existing
+subscription. (`ollama` and `anthropic`-API-key providers also exist in the code if you ever
+want to switch.)
+
+**Cost/token visibility** — every LLM call (`llm/client.py`) prints a usage line right after it
+completes: tokens in/out, the CLI's own reported cost estimate, and wall-clock duration, plus a
+running total for everything called through that same `LLMClient` instance (typically the
+lifetime of one pipeline stage script's process — `generate_moments.py`, `generate_title_scenes.py`,
+etc. each print their own stage-scoped total, not a whole-pipeline grand total, since each stage
+runs as its own subprocess). Not every provider can report everything: the `claude-code`
+provider reports cost + tokens + duration (`llm/claude_code_client.py`, parsed from the CLI's
+own `--output-format json` response, previously discarded); `anthropic` reports tokens but not
+a dollar figure (the Messages API doesn't return one); `ollama` reports neither (`ollama run`'s
+plain stdout has no usage metadata, and a local model has no dollar cost anyway). A field that a
+provider can't report stays `None` and is simply omitted from the printed line rather than
+shown as a misleading 0.
+
+**The edit plan itself** — `processing/scene-plan.json` is plain JSON, meant to be
+hand-edited:
+- Delete/edit any `title` scene's `text`, or a `moment` scene's `text` (bottom-callout/
+  side-text) or `assetId`/`caption` (side-image).
+- Delete/edit any `image` scene's `assetId` (must match an id in `processing/assets.json`)
+  or `caption`.
+- Delete/edit any `beat` scene's `text`, `offsetInParentFrames`, or `durationInFrames` — its
+  `kind`/`icon` stay AI-owned, same reasoning as a moment's `treatment`.
+- Adjust a `presenter` scene's `sourceStartFrame`/`sourceEndFrame` if the automatic
+  silence-trim cut too much or too little.
+- After hand-editing, re-run just the codegen step (`generate_scene_plan_ts.py`) — no need to
+  re-run the whole pipeline.
+- **In the app**: the preview app has a text box under the player for exactly this — "remove
+  the second title card", "make the DI Promise clip end 20 frames earlier" — Claude proposes
+  an edit (`pipeline/edit_plan.py`), validated against real scene ids and a per-type field
+  allowlist before applying, shown with a reason. See the README's "Natural-language editing"
+  section for the exact editable-field list.
+- You can also just describe the change to me in a Claude Code session and I'll edit the JSON
+  directly — same idea, no special tooling needed either way.
+
+**Which images get selected** — `processing/assets.json`, generated by `index_assets.py` from
+your `graphics/` folder. The AI only sees each image's `caption` field, never the pixels — so
+caption quality directly determines selection quality. Filename-derived captions are usually
+bad; write real ones.
+
+**How sparse/frequent the AI visual additions are** — `pipeline/visual_placement.py`'s
+`MONOTONY_THRESHOLD_SECONDS` (currently 18s) controls how long the presenter has to talk
+uninterrupted before a window even becomes eligible for a moment overlay.
+`generate_moments.py`'s `MAX_MOMENTS_PER_1000_FRAMES` caps total density.
+
+## Fast iteration — don't full-render to check a small change
+
+A full render re-encodes the whole episode; with keyed (background-removed) footage that's
+15–20+ minutes for a ~12 minute episode. For checking a change:
+
+```bash
+cd video-renderer
+npm run dev   # opens Remotion Studio — scrub the timeline live, no encoding
+```
+
+or a quick exported clip:
+
+```bash
+npx remotion render Episode --frames=5000-5300 --scale=0.5 /tmp/preview.mp4
+```
+
+`--frames` targets just the range you care about (read start/duration off `scene-plan.json`),
+`--scale=0.5` halves resolution. Both cut render time drastically — good enough to judge
+timing, titles, and keying quality.
+
+## Background removal (green screen)
+
+`pipeline/key_footage.py` is real, tested, and works — but it's a genuinely expensive
+operation (chroma-key + alpha-channel video encoding), so it's **not** part of the default
+`create_episode.sh` run. Run it explicitly when you want it:
+
+```bash
+python3 pipeline/key_footage.py /path/to/episode
+```
+
+It auto-detects letterboxing/crop, samples the actual green color from your footage, keys
++despills, and writes alpha-matted WebM files. On this machine, tuned settings get it to
+roughly real-time-per-clip (not the multiple-times-slower-than-realtime it was before tuning).
+`CHROMA_BLEND`/`DESPILL_MIX` (0.20/1.0) were widened from their original, tighter values
+(0.06/0.5) after the original settings produced a visibly hard, scalloped hair silhouette —
+verified against real footage that the wider values give a noticeably softer edge with no
+green fringe. Known limits: `chromakey` is still a single-threshold keyer, not true
+edge-aware alpha estimation (a dedicated matte-refinement tool like CapCut/Resolve does
+better on fine flyaway strands), and green spill under strong lighting isn't always fully
+eliminated by despill — usually fine for talking-head framing, more visible in extreme
+close-ups.
+
+**Audio**: `key_footage.py` strips audio from the keyed WebM (`-an` — it's a pure
+visual-keying pass). `Episode.tsx` doesn't rely on it for sound either way: every presenter
+scene plays audio from the *original* (unkeyed) source file via a separate `<Audio>`
+element, trimmed to the same `sourceStartFrame`/`sourceEndFrame` as the video, regardless of
+whether that scene uses keyed or raw footage. So audio is present and in sync whether or not
+you've run background removal.
+
+**No horizontal flip, anywhere in this path**: `key_footage.py` never applies an `hflip`, and
+neither does the Remotion compositing path (`Episode.tsx` and the moment components only ever
+use uniform `scale()`, never a negative-X transform). Footage should be recorded and, if
+finished outside Poiesis (e.g. a manual DaVinci pass), delivered without a horizontal-flip
+effect applied — a flip meant to "unmirror" a webcam preview will incorrectly mirror footage
+that was never mirrored to begin with (verified on real source footage: logos/text on
+clothing read correctly in the raw recording). If a rendered episode looks mirrored, the cause
+is upstream of this pipeline, not in it.
+
+## Looping video background (behind the presenter)
+
+If an episode has a `background/<video-file>` folder, `prepare_footage.py` picks it up
+automatically (first video file found — no naming convention required) and records it in
+`manifest.json`/`episode-props.ts`. `Episode.tsx` plays it as a continuously looping base
+layer, using Remotion's native `<Loop>` component (no manual seam-matching needed — it
+re-mounts the clip each cycle automatically). It's only visible where something is
+transparent on top of it — in practice that means **keyed presenter footage**; title cards
+and full-screen images paint their own opaque brand background over it, so it doesn't bleed
+through everywhere.
+
+Works with any looping clip you drop in a `background/` folder for future episodes — nothing
+is hardcoded to Episode 9's specific file. If the clip isn't a perfectly seamless loop, a
+soft/organic clip (particles, gradients, blur) tends to hide the seam well since there's no
+hard geometry to jump; a clip with sharp shapes or text would show the cut more.
+
+## Visual design (titles, moment overlays, image overlays)
+
+`video-renderer/src/episode/brand.ts` holds the shared palette (`background`, `accent`,
+text colors, corner radii) — change it there and `AnimatedTitle.tsx`, `MomentTreatments.tsx`
+(`BottomCallout`/`SideText`/`SideImage`), and `EpisodeImage.tsx` all update consistently,
+since they all import from it rather than hardcoding their own colors.
+
+The current look (dark navy background, orange accent border/underline, subtle background
+grid) was chosen after reviewing a specific reference channel's visual style — it's an
+approximation using typography/color/layout, not custom illustration (that reference channel
+uses bespoke character artwork, which is out of scope for what this can generate). If you
+want to move closer to a different visual reference, point me at it and I'll re-derive the
+palette/motion from it, same process as this round.
+
+## Clip-to-clip transitions
+
+`analyze_scenes.py` sets every presenter scene's `effects.transition` to `"crossfade"` by
+default — applied uniformly like the brand palette, not an AI decision per cut. When two
+presenter scenes are *directly* adjacent (no title card or anything else between them) and the
+later one has `transition: "crossfade"`, `Episode.tsx` cross-dissolves a short (9 frames,
+~0.3s at 30fps) overlap at the cut instead of a hard cut. It borrows real footage immediately
+before the incoming clip's own `sourceStartFrame` — the silence-trimmed dead air, not invented
+content — to fade in from, and only the video dissolves; audio still cuts cleanly at the true
+boundary so overlapping speech never happens. A title card sitting between two presenter
+scenes disables the crossfade for the one after it, since there's no adjacent presenter footage
+to dissolve from. Set a specific scene's `effects.transition` to `"none"` (by hand-editing
+`scene-plan.json` or a natural-language edit instruction) to force a hard cut at one particular
+boundary.
+
+## Concurrent tabs/runs against the same episode
+
+The control panel (`ui/server.py`) holds a per-episode, in-process lock (`ui/episode_locks.py`)
+around anything that touches an episode's files: the three quick edit endpoints (title/moment
+edits, natural-language edit-plan) and the long-running pipeline/stage/render websocket runs.
+Two tabs (or a forgotten stale tab) triggering a second operation against the *same* episode
+while one is already in flight get an immediate, clear rejection — a 409 for the edit
+endpoints, a `{"type": "error"}` message for the websocket runs — rather than silently racing
+the first one's writes or queueing behind a run that could take minutes with no explanation.
+Different episodes never contend with each other. This is a same-process, in-memory lock, not
+a filesystem lock — it coordinates the control panel server itself, not a separate
+`python3 pipeline/*.py` invocation run directly from a terminal outside the UI.
+
+## `side-code` and `side-diagram` (code snippet and diagram moments)
+
+Code snippets are grounded the same way images are: `index_code.py` indexes real source
+files from `<episode>/code/` (a genuine source-of-truth — the LLM only ever sees an id,
+language, and description, and can select an existing `codeAssetId`, never invent one, exactly
+like `side-image`). `CodeBlock.tsx` renders the real file content with Shiki syntax
+highlighting at render time, so editing the source file and re-rendering picks up the change
+without re-indexing.
+
+Diagrams are the one deliberate exception to "AI selects/fills structured fields, never
+invents free-form content": there's no pre-existing diagram asset to select from, so the LLM
+constructs a small node/edge graph directly (capped at 6 nodes / 8 edges, `DiagramBlock.tsx`
+computes layout deterministically from a `"horizontal"`/`"vertical"` flag — not an LLM
+decision). Each node label is checked against the window's own transcript text as a guard
+against wholesale fabrication before a diagram proposal is accepted.
+
+## What's deliberately NOT built (and why)
+
+- **A bidirectional DaVinci Resolve sync** — considered and explicitly rejected. Reading edits
+  back from a Resolve project into `scene-plan.json` would break the core architecture:
+  `scene-plan.json` stops being the single source of truth the moment two systems both write
+  to it. The real fix for "editing feels slow" was faster iteration tooling (Remotion Studio,
+  fast preview renders), not a second writable representation.
+
+  This does **not** rule out exporting *to* Resolve for finishing work — see
+  `pipeline/export_davinci.py` (issues #13, #16). That export is one-directional
+  (Poiesis → Resolve) and per-element: presenter footage, titles, captions, moments, and images
+  each render as their own transparent clip on their own OTIO track, so a Resolve project has
+  scene- and element-level cut points, independent audio, and organized tracks for finishing
+  (color, trim, intro/outro/background/music, audio mix). Nothing reads a Resolve project back
+  into `scene-plan.json` — if a caption, title, or moment is wrong, the fix happens in Poiesis
+  and the episode gets re-exported. The original ADR's fork risk was specifically about two
+  systems both writing the same state; a one-directional, re-exportable finishing pass doesn't
+  reintroduce that risk, so it isn't the "editable Resolve timeline" this ADR rejects.
+
+  Media-pool bin organization (grouping imported clips into Presenter/Titles/Captions/Moments/
+  Images folders) can't be driven by the `.otio` file itself — confirmed against Resolve's own
+  OTIO-import documentation, none of which describes any bin-driving construct in the OTIO
+  schema, and Resolve doesn't even preserve OTIO track names on import. Every clip lands in
+  whatever bin is active at import time regardless of which track it came from. The only way to
+  organize the media pool is Resolve's own Python Scripting API (Studio-only), run from inside
+  Resolve after the OTIO import — see `pipeline/organize_davinci_bins.py`. That script keys off
+  the clip filename convention `export_davinci.py` already produces
+  (`{scene_type}-{scene_id}.mov`), so it doesn't need the OTIO track structure at all; the same
+  one-directional reasoning applies (it only reorganizes what's already in Resolve, it never
+  writes anything back to `scene-plan.json`).
+
+## QA is metadata AND rendered-file checks, not a visual review
+
+`qa_check.py` runs two kinds of checks. Against `scene-plan.json` alone (no render needed):
+timeline gaps/overlaps, missing media, unknown video/asset ids, overlay scenes positioned
+outside their parent's bounds, and moment/layout consistency. Against a rendered file, if one
+exists: rendered-duration vs. expected, sustained black frames (ffmpeg `blackdetect`, tuned so
+this channel's dark brand background and title cards don't false-positive), a silent or
+missing audio track (`volumedetect`), and audio/video streams whose lengths have drifted apart.
+None of this replaces watching the video — there's still no check for a jarring transition,
+misplaced text, or a moment whose content just doesn't fit the footage. It catches the class of
+bug where the render is structurally broken (dropped audio, a corrupted segment, a truncated
+stream) before you notice by watching twelve minutes of silence.
+
+## Everything is tested
+
+229 automated Python tests currently cover: transcript normalization, silence trimming
+(including two real bugs found and fixed — Whisper hallucinating trailing garbage text, and
+unclamped frame math exceeding clip duration), scene-plan merging (including idempotency —
+re-running a stage twice no longer duplicates scenes), QA checks (including the rendered-file
+checks above, tested by mocking ffmpeg's output rather than shelling out in the test suite),
+the natural-language edit-plan endpoint, the per-episode concurrency lock (including that two
+different episodes never block each other), and the LLM client providers (including per-provider
+usage/cost reporting). Run them with:
+
+```bash
+.venv/bin/pytest
+```
+
+`video-renderer/` also has its own `vitest` suite (`src/episode/Episode.test.ts`) covering the
+renderer's pure layout/timing math — `layoutWindowsForScene` (the moment-driven presenter shift
+windows) and `crossfadeInFramesForScene` (the clip-to-clip crossfade clamping) — the two places
+where real visual bugs were found and fixed by watching renders earlier in this project's life.
+This doesn't cover component rendering or React behavior, only the frame-math functions that
+were previously only checkable by rendering a real frame and looking at it. Run with:
+
+```bash
+cd video-renderer && npm test
+```

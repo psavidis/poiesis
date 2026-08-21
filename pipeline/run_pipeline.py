@@ -40,15 +40,26 @@ def main():
         help="Force regeneration where supported"
     )
 
+    parser.add_argument(
+        "--skip-captions",
+        action="store_true",
+        help="Don't generate burned-in captions — removes any existing "
+             "caption scenes too, for episodes where full-sentence captions "
+             "are more tiresome than helpful"
+    )
+
     args = parser.parse_args()
 
     episode = Path(args.episode_folder).resolve()
 
     pipeline = Path(__file__).parent
 
+    project = pipeline.parent
+
 
     # 1. Prepare footage
     prepare_command = [
+        sys.executable,
         str(pipeline / "prepare_footage.py"),
         str(episode)
     ]
@@ -57,9 +68,6 @@ def main():
         prepare_command.append("--force")
 
     run(prepare_command)
-
-
-    project = pipeline.parent
 
 
     # 2. Transcription
@@ -76,6 +84,7 @@ def main():
 
     # 3. Validate transcripts
     validation_command = [
+        sys.executable,
         str(pipeline / "validate_transcripts.py"),
         str(episode)
     ]
@@ -85,6 +94,7 @@ def main():
 
     # 4. Normalize transcripts
     normalize_command = [
+        sys.executable,
         str(pipeline / "normalize_transcripts.py"),
         str(episode)
     ]
@@ -97,6 +107,7 @@ def main():
 
     # 5. Merge transcript segments
     merge_command = [
+        sys.executable,
         str(pipeline / "merge_segments.py"),
         str(episode)
     ]
@@ -107,32 +118,191 @@ def main():
     run(merge_command)
 
 
-    # 6. Analyze scenes and trim dead air
-    scene_analysis_command = [
-        str(pipeline / "analyze_scenes.py"),
-        str(episode)
-    ]
-
-    if args.force:
-        scene_analysis_command.append("--force")
-
-    run(scene_analysis_command)
-
-
-    # 7. Analyze episode
-    analysis_command = [
+    # 5a. Analyze episode (whole-episode narrative summary + transcript QA).
+    # Runs here — right after the transcript exists, before any AI stage
+    # that decides what appears on screen — so title/moment/emphasis
+    # proposals can be grounded in the episode's overall topics/key
+    # concepts instead of only ever seeing an isolated local window. It only
+    # needs episode_transcript.json + transcript_validation.json, both
+    # already produced by this point.
+    episode_analysis_command = [
+        sys.executable,
         str(pipeline / "analyze_episode.py"),
         str(episode)
     ]
 
     if args.force:
-        analysis_command.append("--force")
+        episode_analysis_command.append("--force")
 
-    run(analysis_command)
+    run(episode_analysis_command)
+
+
+    # 6. Analyze scenes and trim dead air
+    scene_analysis_command = [
+        sys.executable,
+        str(pipeline / "analyze_scenes.py"),
+        str(episode)
+    ]
+
+    run(scene_analysis_command)
+
+
+    # 6a. Index episode graphics/ into an asset manifest
+    index_assets_command = [
+        sys.executable,
+        str(pipeline / "index_assets.py"),
+        str(episode)
+    ]
+
+    run(index_assets_command)
+
+
+    # 6a-2. Index episode code/ into a code asset manifest — must run
+    # before generate_moments below, which already reads code_assets to
+    # propose codeAssetId-grounded moments.
+    index_code_command = [
+        sys.executable,
+        str(pipeline / "index_code.py"),
+        str(episode)
+    ]
+
+    run(index_code_command)
+
+
+    # 6a-3. Index episode background/ into a selectable background
+    # manifest (the library a human picks from — see
+    # generate_background_scenes.py below for the per-span selection
+    # itself, which is manual/deterministic, never AI-proposed).
+    index_backgrounds_command = [
+        sys.executable,
+        str(pipeline / "index_backgrounds.py"),
+        str(episode)
+    ]
+
+    run(index_backgrounds_command)
+
+
+    # 6a-3. Propose mid-take pause cuts for human review (#65) — measured
+    # directly from word-level transcript timing, no LLM judgment involved
+    # (pauses are a mechanical/measurable signal, not a subjective one).
+    # Runs after analyze_scenes.py (needs scene-plan.json's presenter
+    # source ranges) and before any stage that computes overlay offsets
+    # against the CURRENT timeline. KNOWN LIMITATION: cuts proposed here
+    # are only APPLIED when a human explicitly accepts one via PUT
+    # /api/episode/cut-candidates — if that happens after later stages
+    # (title scenes, moments, emphasis) already ran against the pre-cut
+    # timeline, their overlay offsets can go stale the same way any other
+    # manual scene-plan edit already risks today. Not gated/solved here —
+    # see generate_cut_candidates.py's own module docstring.
+    cut_candidates_command = [
+        sys.executable,
+        str(pipeline / "generate_cut_candidates.py"),
+        str(episode)
+    ]
+
+    if args.force:
+        cut_candidates_command.append("--force")
+
+    run(cut_candidates_command)
+
+
+    # 6b. Propose title scenes
+    title_scenes_command = [
+        sys.executable,
+        str(pipeline / "generate_title_scenes.py"),
+        str(episode)
+    ]
+
+    if args.force:
+        title_scenes_command.append("--force")
+
+    run(title_scenes_command)
+
+
+    # 6c. Propose chapter-level visual storyboard reasoning (runs before
+    # moment treatments are decided, so they can be judged against it)
+    storyboard_command = [
+        sys.executable,
+        str(pipeline / "generate_storyboard.py"),
+        str(episode)
+    ]
+
+    if args.force:
+        storyboard_command.append("--force")
+
+    run(storyboard_command)
+
+
+    # 6d. Propose moment overlay scenes (bottom-callout/side-text/side-image)
+    moments_command = [
+        sys.executable,
+        str(pipeline / "generate_moments.py"),
+        str(episode)
+    ]
+
+    if args.force:
+        moments_command.append("--force")
+
+    run(moments_command)
+
+
+    # 6e. Generate caption overlay scenes from trimmed transcripts
+    captions_command = [
+        sys.executable,
+        str(pipeline / "generate_captions.py"),
+        str(episode)
+    ]
+
+    if args.skip_captions:
+        captions_command.append("--disable")
+    elif args.force:
+        captions_command.append("--force")
+
+    run(captions_command)
+
+
+    # 6f. Propose kinetic emphasis ("beat") overlay scenes from word-level
+    # transcript timing — runs after moments/captions so it can see (and
+    # avoid colliding with) whatever they already placed.
+    emphasis_command = [
+        sys.executable,
+        str(pipeline / "generate_emphasis.py"),
+        str(episode)
+    ]
+
+    if args.force:
+        emphasis_command.append("--force")
+
+    run(emphasis_command)
+
+
+    # 6g. Re-merge any human-authored background selections on top of the
+    # scene plan every AI stage above just (re)wrote — never AI-proposed
+    # itself (the user is the only author of background_scenes.json), so
+    # this always runs, --force or not, purely to carry forward whatever
+    # background spans already exist onto the freshly regenerated plan.
+    background_scenes_command = [
+        sys.executable,
+        str(pipeline / "generate_background_scenes.py"),
+        str(episode)
+    ]
+
+    run(background_scenes_command)
+
+
+    # 7. Generate Remotion scene plan
+    scene_plan_command = [
+        sys.executable,
+        str(pipeline / "generate_scene_plan_ts.py"),
+        str(episode)
+    ]
+
+    run(scene_plan_command)
 
 
     # 8. Generate episode assets
     assets_command = [
+        sys.executable,
         str(pipeline / "generate_episode_assets.py"),
         str(episode)
     ]

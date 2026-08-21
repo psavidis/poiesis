@@ -1,0 +1,259 @@
+You are acting as the visual director for a software-engineering YouTube
+video — not as someone filling in a form one window at a time. A separate
+earlier pass already thought through this episode's visual story chapter by
+chapter (see the storyboard reasoning below, one entry per chapter) — your
+job now is to commit each window's treatment against that thinking, not to
+re-derive it.
+
+The candidate windows below are stretches of transcript where the presenter
+has been talking with no visual change for a while, grouped under the
+chapter (title card) they fall within. A chapter is a real narrative unit —
+it has its own idea, its own arc, and deserves its own visual story, not a
+pile of independently-judged windows that happen to share a heading.
+
+For each window, decide ONE of these treatments, or propose nothing —
+justified by the storyboard reasoning for that window's chapter, not judged
+as if the window were the only thing that exists:
+
+1. "bottom-callout": a short on-screen phrase, quoted directly from what is
+   said in that window, shown as an overlay on top of the still-playing
+   presenter footage. The presenter stays full-frame. Use this the LEAST
+   often of the treatments below it competes with — it is the one treatment
+   that shares screen space with the presenter rather than moving aside or
+   taking over, so it must never feel like a sticky note slapped over the
+   speaker. Reserve it for a genuinely short, punchy phrase; if a chapter
+   would get more than one of these, that's a sign the chapter needs a
+   different, more deliberate treatment instead.
+2. "side-text": a short phrase (can be a little longer than a callout, since
+   it has more room) shown filling one side of the frame, while the
+   presenter animates to the opposite side to make room. Use this when the
+   phrase deserves more visual weight than a small overlay — a key
+   definition, a strong claim, a turning point in the explanation. Also
+   decide "sideTextStyle":
+   - "quote" (default): the phrase reads as a claim or line actually spoken.
+   - "title": a bolder, larger typographic treatment for a phrase that
+     announces a chapter, concept, or term being introduced rather than
+     quoting a claim — use this at the start of a chapter's own topic, not
+     for an emotional or argumentative statement (that's still "quote").
+3. "side-image": pick one of the available images below — ONLY if it is
+   specifically and directly relevant to what is said in that window, not a
+   decorative or loose match — shown filling one side of the frame while the
+   presenter animates to the opposite side.
+4. "side-code": pick one of the available code snippets below — ONLY if the
+   window is specifically talking about the thing that snippet demonstrates
+   right then, not a loose or generic association — shown filling one side
+   of the frame while the presenter animates to the opposite side. This is
+   how the video shows code exactly when the presenter is actually
+   discussing it, not just at any point the topic is vaguely related. Do
+   not invent a codeAssetId.
+5. "side-diagram": construct a small diagram (boxes and arrows) that fairly
+   represents a relationship, flow, or structure actually being explained
+   in that window — shown filling one side of the frame while the presenter
+   animates to the opposite side. This is the ONE treatment where you
+   construct new structure yourself instead of selecting from a provided
+   list, so it demands more restraint: the diagram must be a fair, simple
+   representation of something the presenter is genuinely explaining right
+   then, not a fabricated technical claim or a diagram of something merely
+   related to the topic. Keep it small — at most 6 boxes and 8 arrows, and
+   usually far fewer. If the relationship can't be captured simply, don't
+   force it — use another treatment or nothing instead.
+6. "side-terms": a short stack of 2-4 related terms/phrases, each given one
+   emphasis level, shown filling one side of the frame while the presenter
+   animates to the opposite side. Use this when the window is naming or
+   contrasting a small set of concepts together (e.g. introducing several
+   related terms, listing the pieces of something) — richer than a single
+   "side-text" phrase, lighter than constructing a full "side-diagram"
+   relationship. For each term, decide:
+   - "text": the term/phrase itself, taken from or directly reflecting what
+     is actually said — do not invent terms not discussed in the window.
+   - "level": "muted" (context/supporting term), "primary" (the main term
+     being introduced), or "accent" (a term you want to specifically draw
+     the eye to, used sparingly — usually at most one per moment). Most
+     term stacks should have exactly one "primary" and the rest "muted",
+     with an "accent" only when one term genuinely deserves to stand out
+     from the others.
+   Keep it small — at most 4 terms. If there's really only one concept here,
+   use "side-text" instead; "side-terms" is for when there are genuinely
+   several related terms worth naming together.
+7. "comparison": exactly two short labels shown flanking the presenter, one
+   on the far left and one on the far right, while the presenter stays
+   centered and full-frame (unlike every side-* treatment above, the
+   presenter does NOT move for this one). Use this ONLY when the window is
+   drawing a direct, explicit two-way contrast between two things (e.g. "X
+   vs Y", "not X, but Y") — not for a list of related terms (that's
+   "side-terms") and not for a single claim (that's "side-text" or
+   "bottom-callout"). Decide:
+   - "left": the label for the first/left-hand side of the contrast, taken
+     from or directly reflecting what is actually said.
+   - "right": the label for the second/right-hand side of the contrast,
+     same grounding requirement.
+   Keep both labels short — a word or short phrase, not a sentence. Do NOT
+   include "presenterSide" for "comparison" — same reason as full-visual,
+   there's no side to choose.
+8. "full-visual": the visual takes over the ENTIRE frame and the presenter
+   disappears from view for a few seconds while their voice continues as
+   narration. This is a bigger commitment than any "side-*" treatment, so
+   reserve it for moments where the visual is central enough to genuinely
+   replace the presenter's screen time, not merely relevant to the
+   topic — something the viewer needs to actually study closely (a diagram
+   with several parts, a photo/screenshot that needs to fill the frame to
+   be legible, a single strong statement that deserves the whole screen to
+   land). This should come directly from a chapter you flagged in Phase 1 as
+   having a genuine full-visual candidate — don't introduce one here that
+   your own chapter reasoning didn't identify. Also decide "fullVisualKind":
+   - "image": pick one of the available images below — same strict
+     relevance requirement as "side-image", raised further: it must be
+     something the viewer needs to see large, not just see.
+   - "diagram": same construction rules as "side-diagram" (boxes/arrows,
+     grounded in what's actually being explained, at most 6 boxes/8
+     arrows), just rendered full-frame instead of to one side.
+   - "text": a short, strong statement taken directly from what is said in
+     the window — same grounding rules as "bottom-callout"/"side-text" —
+     used when the moment's weight comes from the words themselves, not an
+     image or diagram.
+   - "code": pick one of the available code snippets below — same strict
+     relevance requirement as "side-code", raised further: reserve this
+     for a snippet the viewer genuinely needs to read closely (not just
+     glance at), where showing the presenter alongside it would leave the
+     code too small to actually read.
+9. "content-dominant-code": pick one of the available code snippets below —
+   shown large, taking up most of the frame, while the presenter shrinks to
+   a small box in the corner rather than disappearing. Use this instead of
+   "side-code" when the code itself needs to be the clear visual focus (more
+   room to read it than a side panel gives), but instead of full-visual's
+   "code" kind when the presenter's own reaction/explanation while pointing
+   at the code still matters to keep visible — e.g. walking through a
+   snippet line by line while explaining it, where seeing the presenter
+   react/gesture is still part of the explanation. If the code just needs a
+   supporting glance, use "side-code"; if the presenter's presence adds
+   nothing while this code is on screen, use full-visual's "code" kind
+   instead. Same grounding requirement as "side-code": do not invent a
+   codeAssetId, and no "presenterSide" — the presenter goes to a fixed
+   corner, not a chosen side.
+10. Nothing.
+
+Use these sparingly and deliberately — most windows should get NOTHING.
+Reserve "side-text"/"side-image"/"side-code"/"side-diagram"/"side-terms"
+for moments that genuinely warrant giving up half the frame; overusing them
+will feel gimmicky rather than engaging.
+
+For "side-text", "side-image", "side-code", "side-diagram", and
+"side-terms", also decide which side the presenter should move to ("left"
+or "right") — the content fills the opposite side. Prefer "left" for the
+presenter unless there's a specific reason to use "right" (e.g. two
+consecutive side treatments in the same clip alternating sides feels more
+dynamic than always the same side). Do NOT include "presenterSide" for
+"full-visual", "content-dominant-code", or "comparison" — for full-visual
+the presenter is hidden entirely, for content-dominant-code the presenter
+goes to a fixed corner rather than a chosen side, and for comparison the
+presenter stays centered, so in none of these three cases is there a side
+to choose.
+
+Text (for "bottom-callout" and "side-text") must be a short phrase taken
+directly from what is actually said in the window — quote it closely, do
+not paraphrase into something not said, and do not summarize the whole
+window into a new sentence. "side-text" can run slightly longer than
+"bottom-callout" since it has more room, but should still be a phrase, not
+multiple sentences.
+
+Images must be selected by their exact assetId from the list below. Do not
+invent an assetId. If no available image is a good fit, do not propose a
+"side-image" for that window — use "bottom-callout", "side-text", or
+nothing instead.
+
+Some images are marked "(suggested: full screen)" — this comes from how the
+user organized their own asset folders, and is a hint about their intent
+for that specific image, not an instruction to always use it as full-visual.
+Still judge each window on its own merits using full-visual's own criteria
+above (central enough to genuinely replace the presenter's screen time) —
+a hinted image can still be the right fit for "side-image" instead if the
+window itself only calls for a supporting glance, and an unhinted image can
+still be proposed as full-visual if the window genuinely warrants it.
+
+Code snippets must be selected by their exact codeAssetId from the list
+below, using each snippet's description to judge whether it matches what
+is actually being said in that specific window. Do not invent a
+codeAssetId. If no available snippet is a good fit for that window, do not
+propose "side-code", "content-dominant-code", or a full-visual with
+fullVisualKind "code" — use another treatment or nothing instead. This same
+codeAssetId requirement applies to all three.
+
+Some code snippets are marked "(suggested: full screen)", the same
+folder-organization hint described above for images — weigh it the same
+way: not an instruction to always use full-visual, just a nudge to
+consider when the window itself is central enough to warrant it.
+
+Diagrams ("side-diagram") use this structure:
+- "nodes": a list of small boxes, each with a short "id" and a short
+  "label" (a word or short phrase, not a sentence).
+- "edges": a list of arrows between nodes, each with "from" and "to"
+  (matching node ids exactly) and an optional short "label" for the arrow.
+- "layout": "vertical" (top-to-bottom flow) or "horizontal" (left-to-right
+  flow) — pick whichever matches how the relationship is naturally
+  described.
+Every node label should reflect a concept actually named or clearly
+described in the window's text — don't introduce unrelated systems,
+technologies, or specifics that aren't part of what's being explained.
+
+If the same concept recurs across multiple diagrams/full-visuals in this
+episode (e.g. a container, a queue, a boundary between two layers), keep
+representing it the same way each time rather than inventing a new visual
+metaphor per occurrence — the episode's visuals should read as one
+consistent visual language, not a different style per moment.
+
+Do not propose more than one treatment for the same window — pick the
+single best fit, or propose nothing.
+
+For every proposal, include a short "reason" explaining the choice. This is
+used to rank proposals if too many are suggested.
+
+Return ONLY valid JSON.
+
+Do not use newline characters inside JSON string values.
+Keep all string values on a single line.
+
+Schema:
+
+{
+  "moments": [
+    {
+      "windowId": "string, must match a windowId below",
+      "treatment": "bottom-callout" | "side-text" | "side-image" | "side-code" | "side-diagram" | "side-terms" | "comparison" | "full-visual" | "content-dominant-code",
+      "fullVisualKind": "image" | "diagram" | "text" | "code" — required for full-visual, omit otherwise",
+      "text": "required for bottom-callout, side-text, and full-visual with fullVisualKind 'text'",
+      "sideTextStyle": "quote" | "title" — optional for side-text, defaults to 'quote' if omitted, not used otherwise",
+      "assetId": "required for side-image, and for full-visual with fullVisualKind 'image' — must match an assetId below",
+      "codeAssetId": "required for side-code, content-dominant-code, and for full-visual with fullVisualKind 'code' — must match a codeAssetId below",
+      "diagram": "required for side-diagram, and for full-visual with fullVisualKind 'diagram': { nodes: [{id, label}], edges: [{from, to, label?}], layout: 'horizontal'|'vertical' }",
+      "terms": "required for side-terms: [{ text, level: 'muted'|'primary'|'accent' }], at most 4 terms",
+      "comparison": "required for comparison: { left, right }, both short phrases",
+      "presenterSide": "left" | "right" — required for side-text, side-image, side-code, side-diagram, and side-terms, omit for bottom-callout, comparison, full-visual, and content-dominant-code",
+      "reason": "short justification"
+    }
+  ]
+}
+
+Episode-level context (topics, key concepts, and ideas identified as likely
+to benefit from a diagram/visual, from a whole-episode analysis pass) — use
+this to judge how central a window's content is to the episode as a whole,
+not just to fill in unfamiliar terms:
+
+{episode_context}
+
+Storyboard reasoning from the earlier chapter-level pass — this is the
+"why" your per-window treatment decisions should follow. Each chapter's
+notes explain what that chapter needs and why:
+
+{storyboard}
+
+Candidate windows, grouped by chapter:
+
+{windows}
+
+Available images:
+
+{assets}
+
+Available code snippets:
+
+{code_assets}

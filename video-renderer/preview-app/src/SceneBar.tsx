@@ -1,0 +1,401 @@
+import { useEffect, useRef, useState } from "react";
+import type { PresenterScene, ScenePlan, TitleScene } from "video-renderer-src/episode/types";
+import { colors, radius, typography } from "./tokens";
+import { getTitleScenes, saveTitleScenes } from "./api";
+import type { TimelineZoom } from "./useTimelineZoom";
+
+// Distinct from ChapterStrip's per-chapter color cycle (which groups scenes
+// by topic) — this strip shows the actual scene boundaries underneath that
+// grouping, so a fixed two-color-by-type scheme keeps the two strips
+// visually distinguishable at a glance.
+const PRESENTER_COLOR = colors.timelinePresenter;
+const TITLE_COLOR = colors.timelineTitle;
+
+// Display-only label for the edit shortcut's hint text — mirrors BeatBar's
+// own MOD_KEY_LABEL constant.
+const MOD_KEY_LABEL = navigator.platform.toLowerCase().includes("mac") ? "Cmd" : "Ctrl";
+
+interface Props {
+    scenePlan: ScenePlan;
+    totalFrames: number;
+    currentFrame: number;
+    onSeek: (absoluteFrame: number) => void;
+    // Passes the click's screen position alongside the title text so the
+    // caller can anchor a floating inline text editor near where the user
+    // actually clicked (see #34's InlineTextEditor) — not needed for the
+    // seek itself, only for positioning that editor.
+    onSelectTitle: (titleText: string, anchor: { x: number; y: number }) => void;
+    // Set by EpisodeWorkspace right after a chat edit touches a presenter
+    // or title scene on this bar (#54) — unlike ChapterStrip, scenes here
+    // do carry their own id, so this is keyed by sceneId directly.
+    highlightedId?: string | null;
+    // Required for the duration-drag handle (#83) to load/save
+    // title_scenes.json directly — same "fetch fresh, patch, save whole
+    // array" contract as BeatBar's commitResize.
+    episodePath: string;
+    onSaved: () => void;
+    // Single zoom/pan window shared with Moments/Images/Beats (#86) — owned
+    // by EpisodeWorkspace, not this component, so zooming here keeps every
+    // other bar in sync instead of each bar tracking its own scale.
+    timelineZoom: TimelineZoom;
+    // See BeatBar's identical prop's own doc comment — mutual-exclusion
+    // signal so this bar's selection (and its Cmd+E listener) clears
+    // itself once a different bar becomes the active selection owner.
+    activeSelectionBar: string | null;
+    onActivateSelection: () => void;
+}
+
+// Minimum on-screen duration a dragged title can be shrunk to, so a fast
+// drag-past-zero can't produce an unreadable flash-card title.
+const MIN_TITLE_DURATION_FRAMES = 6;
+
+// Every track scene (presenter clip or title card) as its own segment
+// across the full episode, so individual clips/titles are visible and
+// jumpable without scrubbing — ChapterStrip only shows chapter-level
+// grouping, not where each underlying clip/title actually starts. Title
+// segments use the same select-then-Cmd+E lifecycle as ChapterStrip (#40)
+// and BeatBar (#39) — click selects/highlights only, Cmd+E/Ctrl+E opens
+// the title editor.
+export function SceneBar({
+    scenePlan,
+    totalFrames,
+    currentFrame,
+    onSeek,
+    onSelectTitle,
+    highlightedId,
+    episodePath,
+    onSaved,
+    timelineZoom,
+    activeSelectionBar,
+    onActivateSelection,
+}: Props) {
+    const { zoom, windowFrames, windowStartFrame, frameToPct, playheadPct, playheadVisible, zoomToAtLeast4x } =
+        timelineZoom;
+
+    const [selectedTitle, setSelectedTitle] = useState<string | null>(null);
+    const selectedAnchorRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+    const trackRef = useRef<HTMLDivElement>(null);
+
+    // See BeatBar's identical effect's own doc comment — clears this bar's
+    // selection once a different bar takes over the shared selection.
+    useEffect(() => {
+        if (activeSelectionBar !== "scene") setSelectedTitle(null);
+    }, [activeSelectionBar]);
+
+    // Drag-to-resize a selected title's on-screen duration (#83) — same
+    // ref-driven "mutate during move, commit once on mouseup" pattern as
+    // BeatBar's startResize/commitResize, adapted to titles being matched
+    // by their stable segmentId rather than a positional array index.
+    const [dragSegmentId, setDragSegmentId] = useState<string | null>(null);
+    const [liveDuration, setLiveDuration] = useState<number>(0);
+    const dragRef = useRef<{
+        segmentId: string;
+        startX: number;
+        startDuration: number;
+        liveDuration: number;
+    } | null>(null);
+    const [saveError, setSaveError] = useState<string | null>(null);
+
+    // Seeds selection from an AI chat edit (#54). Only title scenes have a
+    // highlight affordance here (selectedTitle is text-keyed, matching the
+    // click handler below) — a highlighted presenter scene still seeks the
+    // player there, it just has no distinct highlighted style to seed.
+    useEffect(() => {
+        if (!highlightedId) return;
+        const scene = scenePlan.scenes.find((s) => s.id === highlightedId);
+        if (!scene || (scene.type !== "presenter" && scene.type !== "title")) return;
+        if (scene.type === "title") {
+            onActivateSelection();
+            setSelectedTitle(scene.text);
+            zoomToAtLeast4x(scene.timelineStartFrame + scene.durationInFrames / 2);
+        }
+        onSeek(scene.timelineStartFrame);
+        trackRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [highlightedId]);
+
+    useEffect(() => {
+        if (!selectedTitle) return;
+
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key.toLowerCase() !== "e" || !(e.metaKey || e.ctrlKey)) return;
+            const target = e.target as HTMLElement | null;
+            if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+
+            e.preventDefault();
+            onSelectTitle(selectedTitle, selectedAnchorRef.current);
+        };
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [selectedTitle, onSelectTitle]);
+
+    const startResize = (e: React.MouseEvent, scene: TitleScene) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setSaveError(null);
+        dragRef.current = {
+            segmentId: scene.text,
+            startX: e.clientX,
+            startDuration: scene.durationInFrames,
+            liveDuration: scene.durationInFrames,
+        };
+        setDragSegmentId(scene.text);
+        setLiveDuration(scene.durationInFrames);
+    };
+
+    // Writes the FULL titles array back (matching saveBeats/saveMoments's
+    // own "rewrite the whole file" contract). Titles have no positional
+    // index to key off in SceneBar (unlike BeatBar) but DO have unique text
+    // at any given time, so this reuses ChapterStrip's own
+    // match-by-.text convention (see commitBoundaryMove) for consistency.
+    const commitResize = async (titleText: string, newDuration: number) => {
+        try {
+            const current = await getTitleScenes(episodePath);
+            const index = current.findIndex((t) => t.text === titleText);
+            if (index === -1) return;
+
+            const next = current.map((t, i) =>
+                i === index ? { ...t, durationFrames: newDuration } : t
+            );
+
+            await saveTitleScenes(episodePath, next);
+            onSaved();
+        } catch (err) {
+            setSaveError(String(err));
+        }
+    };
+
+    // Same "subscribe once per drag, mutate a ref in the hot path, commit
+    // once on mouseup" pattern as BeatBar's own resize effect.
+    useEffect(() => {
+        if (!dragSegmentId) return;
+
+        const onMouseMove = (e: MouseEvent) => {
+            const drag = dragRef.current;
+            if (!drag || !trackRef.current) return;
+            const rect = trackRef.current.getBoundingClientRect();
+            const framesPerPixel = windowFrames / rect.width;
+            const deltaFrames = Math.round((e.clientX - drag.startX) * framesPerPixel);
+            const newDuration = Math.max(MIN_TITLE_DURATION_FRAMES, drag.startDuration + deltaFrames);
+
+            drag.liveDuration = newDuration;
+            setLiveDuration(newDuration);
+        };
+
+        const onMouseUp = () => {
+            const drag = dragRef.current;
+            dragRef.current = null;
+            setDragSegmentId(null);
+            if (drag) commitResize(drag.segmentId, drag.liveDuration);
+        };
+
+        window.addEventListener("mousemove", onMouseMove);
+        window.addEventListener("mouseup", onMouseUp);
+        return () => {
+            window.removeEventListener("mousemove", onMouseMove);
+            window.removeEventListener("mouseup", onMouseUp);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [dragSegmentId, windowFrames]);
+
+    if (totalFrames <= 0) return null;
+
+    const scenes = scenePlan.scenes.filter(
+        (s): s is PresenterScene | TitleScene => s.type === "presenter" || s.type === "title"
+    );
+
+    if (scenes.length === 0) return null;
+
+    const sorted = [...scenes].sort((a, b) => a.timelineStartFrame - b.timelineStartFrame);
+
+    const onTrackClick = (e: React.MouseEvent<HTMLDivElement>) => {
+        if (dragSegmentId) return;
+        setSelectedTitle(null);
+        const rect = e.currentTarget.getBoundingClientRect();
+        const pct = clamp((e.clientX - rect.left) / rect.width, 0, 1);
+        onSeek(Math.round(windowStartFrame + pct * windowFrames));
+    };
+
+    return (
+        <div style={styles.wrap}>
+            <div style={styles.label}>Scenes ({sorted.length})</div>
+
+            <div ref={trackRef} style={styles.track} onMouseDown={onTrackClick}>
+                {sorted.map((scene) => {
+                    const isTitle = scene.type === "title";
+                    const isDragging = isTitle && dragSegmentId === scene.text;
+                    const durationFrames = isDragging ? liveDuration : scene.durationInFrames;
+
+                    const leftPct = frameToPct(scene.timelineStartFrame);
+                    const rawWidthPct = (durationFrames / windowFrames) * 100;
+
+                    // Skip segments entirely outside the visible window —
+                    // same rationale as BeatBar's own skip, avoids
+                    // clamp-distorting far-off-screen scenes into visible
+                    // slivers at high zoom.
+                    if (leftPct + rawWidthPct < 0 || leftPct > 100) return null;
+
+                    const widthPct = Math.max(rawWidthPct, 0.4);
+                    const label = isTitle ? scene.text : `clip ${scene.videoId}`;
+                    const isSelected = isTitle && selectedTitle === scene.text;
+
+                    return (
+                        <div
+                            key={scene.id}
+                            style={{
+                                ...styles.segment,
+                                left: `${leftPct}%`,
+                                width: `${widthPct}%`,
+                                background: isTitle ? TITLE_COLOR : PRESENTER_COLOR,
+                                cursor: isTitle ? "pointer" : "default",
+                                ...(isSelected ? styles.segmentSelected : {}),
+                            }}
+                            title={
+                                isSelected
+                                    ? `${label} — press ${MOD_KEY_LABEL}+E to edit, drag right edge to resize`
+                                    : isTitle
+                                    ? `${scene.id} — click to select, then ${MOD_KEY_LABEL}+E to edit: ${label}`
+                                    : `${scene.id} — ${label}`
+                            }
+                            onClick={
+                                isTitle
+                                    ? (e) => {
+                                          if (isDragging) return;
+                                          e.stopPropagation();
+                                          selectedAnchorRef.current = { x: e.clientX, y: e.clientY };
+                                          onActivateSelection();
+                                          setSelectedTitle(scene.text);
+                                          onSeek(scene.timelineStartFrame);
+                                          // Auto-zooms in around the just-selected title so
+                                          // its resize handle is a comfortable drag target
+                                          // right away, instead of requiring a separate
+                                          // manual zoom step first (this session's ask).
+                                          zoomToAtLeast4x(scene.timelineStartFrame + scene.durationInFrames / 2);
+                                      }
+                                    : undefined
+                            }
+                        >
+                            {widthPct > 3 && <span style={styles.segmentLabel}>{label}</span>}
+                            {/* Only offered once selected — matches BeatBar/MomentBar's own
+                                rule (#82): while free-navigating (this title not yet
+                                selected), the only available action is click-to-select, so
+                                the cursor/handle shouldn't imply a resize is available yet. */}
+                            {isSelected && (
+                                <div
+                                    style={styles.resizeHandle}
+                                    onMouseDown={(e) => startResize(e, scene)}
+                                    title="Drag to resize this title's on-screen duration"
+                                />
+                            )}
+                            {isDragging && (
+                                <div style={styles.readout}>{(durationFrames / 30).toFixed(1)}s</div>
+                            )}
+                        </div>
+                    );
+                })}
+
+                {playheadVisible && <div style={{ ...styles.playhead, left: `${playheadPct}%` }} />}
+            </div>
+
+            {saveError && <div style={styles.error}>{saveError}</div>}
+
+            <div style={styles.hint}>
+                {selectedTitle
+                    ? `Selected — press ${MOD_KEY_LABEL}+E to edit, drag its right edge to resize.`
+                    : zoom > 1
+                    ? "Click a title to select it, or click anywhere to seek."
+                    : "Select a title to zoom in and resize its duration."}
+            </div>
+        </div>
+    );
+}
+
+function clamp(value: number, min: number, max: number) {
+    return Math.min(Math.max(value, min), max);
+}
+
+const styles: Record<string, React.CSSProperties> = {
+    wrap: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+    },
+    label: {
+        fontSize: typography.size.sm,
+        color: colors.textSecondary,
+    },
+    track: {
+        position: "relative",
+        height: 28,
+        borderRadius: radius.md,
+        overflow: "hidden",
+        border: `1px solid ${colors.border}`,
+        userSelect: "none",
+        cursor: "pointer",
+    },
+    segment: {
+        position: "absolute",
+        top: 0,
+        bottom: 0,
+        display: "flex",
+        alignItems: "center",
+        borderRight: "1px solid rgba(0,0,0,0.35)",
+        overflow: "visible",
+    },
+    // Mirrors BeatBar/ChapterStrip's selected styling.
+    segmentSelected: {
+        boxShadow: "inset 0 0 0 2px #ffffff, 0 0 8px rgba(255,255,255,0.5)",
+        zIndex: 1,
+    },
+    segmentLabel: {
+        padding: "0 6px",
+        fontSize: 10,
+        fontWeight: typography.weight.semibold,
+        color: "#fff",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        textShadow: "0 1px 2px rgba(0,0,0,0.5)",
+    },
+    playhead: {
+        position: "absolute",
+        top: 0,
+        bottom: 0,
+        width: 2,
+        background: colors.playhead,
+        pointerEvents: "none",
+        boxShadow: "0 0 4px rgba(255,90,60,0.8)",
+    },
+    resizeHandle: {
+        position: "absolute",
+        right: 0,
+        top: 0,
+        bottom: 0,
+        width: 8,
+        cursor: "ew-resize",
+        background: "rgba(0,0,0,0.25)",
+    },
+    readout: {
+        position: "absolute",
+        bottom: "100%",
+        right: 0,
+        marginBottom: 4,
+        padding: "2px 6px",
+        background: colors.background,
+        border: `1px solid ${colors.border}`,
+        borderRadius: radius.sm,
+        fontSize: typography.size.xs,
+        color: colors.textPrimary,
+        whiteSpace: "nowrap",
+        zIndex: 2,
+    },
+    error: {
+        fontSize: typography.size.sm,
+        color: colors.error,
+    },
+    hint: {
+        fontSize: typography.size.xs,
+        color: colors.textMuted,
+    },
+};

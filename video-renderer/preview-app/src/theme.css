@@ -1,0 +1,155 @@
+/* Global button styles (docs/specs/poiesis-product-theme-and-ui-design-system.md,
+   section 8) — implements className="secondary"/"secondary small", used
+   36 times across the app's .tsx files but previously matching NO css
+   rule anywhere in the project (confirmed by a full-repo search before
+   writing this file): a bare <button> rendered with unstyled browser
+   defaults, and className="secondary"/"secondary small" did nothing at
+   all. Values here are the same navy/gold brand-derived dark-palette hex
+   literals tokens.ts exports for TypeScript consumers — kept in sync
+   manually since this file can't import tokens.ts (module system), not
+   duplicated by accident. */
+
+button {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 8px 14px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: background-color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+}
+
+/* Primary — the bare, unclassed <button> (e.g. "Save changes", "Apply") */
+button:not(.secondary) {
+    background: #d4a24e;
+    color: #1c1206;
+}
+
+button:not(.secondary):hover:not(:disabled) {
+    background: #e0b262;
+}
+
+button:not(.secondary):active:not(:disabled) {
+    background: #c08f3d;
+}
+
+/* Secondary — className="secondary" (e.g. "Remove", "Close", "Cancel") */
+button.secondary {
+    background: #161f2e;
+    color: #eef0ea;
+    border-color: #2a3a52;
+}
+
+button.secondary:hover:not(:disabled) {
+    background: #1c2738;
+    border-color: #3d5170;
+}
+
+button.secondary:active:not(:disabled) {
+    background: #0d1420;
+}
+
+/* Modifier — className="secondary small" (icon-adjacent controls, zoom
+   buttons, per-field reset affordances) */
+button.small {
+    padding: 4px 10px;
+    font-size: 12px;
+}
+
+button:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+button:focus-visible {
+    outline: 2px solid #d4a24e;
+    outline-offset: 2px;
+}
+
+/* Live pipeline-run feedback (#68) — the phase dots and "Processing…"
+   label previously looked identical whether the pipeline was actively
+   working or had silently stalled/failed, since nothing on screen
+   changed state between log lines. A pulsing ring on the CURRENTLY
+   active phase's dot, and a breathing opacity on the running label, are
+   the two lightweight signals that "this is live," not a status readout
+   an observer has to actively re-check. warning (#e0a542), matching the
+   dot's own in-progress color already used for the static ring. */
+@keyframes pulse-ring {
+    0% {
+        box-shadow: 0 0 0 0 rgba(224, 165, 66, 0.55);
+    }
+    70% {
+        box-shadow: 0 0 0 6px rgba(224, 165, 66, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(224, 165, 66, 0);
+    }
+}
+
+.phase-dot-active {
+    animation: pulse-ring 1.6s ease-out infinite;
+}
+
+@keyframes breathe {
+    0%,
+    100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.55;
+    }
+}
+
+.processing-label {
+    animation: breathe 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .phase-dot-active,
+    .processing-label {
+        animation: none;
+    }
+}
+
+/* StoryboardPanel's one-card-at-a-time carousel (#storyboard-cards) — the
+   incoming card slides in from whichever side matches the navigation
+   direction (right when paging forward, left when paging back), rather
+   than the previous "every chapter's textarea visible at once" layout,
+   which read as a wall of text instead of a reviewable sequence. */
+@keyframes storyboard-slide-in-right {
+    from {
+        opacity: 0;
+        transform: translateX(24px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes storyboard-slide-in-left {
+    from {
+        opacity: 0;
+        transform: translateX(-24px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+.storyboard-card-forward {
+    animation: storyboard-slide-in-right 0.22s ease-out;
+}
+
+.storyboard-card-back {
+    animation: storyboard-slide-in-left 0.22s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .storyboard-card-forward,
+    .storyboard-card-back {
+        animation: none;
+    }
+}

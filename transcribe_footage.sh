@@ -78,27 +78,29 @@ for ((i=0; i<VIDEO_COUNT; i++)); do
     mkdir -p "$TEMP_DIR"
 
 
-    if whisper \
-        "$VIDEO_PATH" \
-        --model turbo \
+    if whisperkit-cli transcribe \
+        --audio-path "$VIDEO_PATH" \
+        --model "large-v3-v20240930_turbo" \
+        --model-prefix openai \
         --language en \
-        --output_dir "$TEMP_DIR" \
-        --output_format json
+        --word-timestamps \
+        --report \
+        --report-path "$TEMP_DIR"
     then
 
-        GENERATED_FILE=$(find "$TEMP_DIR" -name "*.json" | head -n 1)
+        GENERATED_FILE="$TEMP_DIR/$(basename "${VIDEO_PATH%.*}").json"
 
-        if [ -n "$GENERATED_FILE" ]; then
+        if [ -f "$GENERATED_FILE" ]; then
             mv "$GENERATED_FILE" "$OUTPUT_FILE"
             PROCESSED=$((PROCESSED + 1))
             echo "      completed"
         else
-            echo "      FAILED: no output produced"
+            echo "      FAILED: no JSON output produced"
             FAILED=$((FAILED + 1))
         fi
 
     else
-        echo "      FAILED: whisper error"
+        echo "      FAILED: whisperkit error"
         FAILED=$((FAILED + 1))
     fi
 

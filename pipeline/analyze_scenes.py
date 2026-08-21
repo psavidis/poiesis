@@ -1,14 +1,26 @@
 #!/usr/bin/env python3
 
+import argparse
 import json
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-PADDING_SECONDS = 0.5
+from generate_title_scenes import merge_title_scenes
+from generate_moments import merge_moment_scenes
+from generate_emphasis import merge_beat_scenes
 
 
-def load_json(path: Path):
+LEAD_IN_SECONDS = 0.15
+TAIL_SECONDS = 0.25
+
+LOW_LOGPROB_THRESHOLD = -1.0
+
+
+def load_manifest(episode):
+    path = episode / "processing" / "manifest.json"
+
     with path.open(
             "r",
             encoding="utf-8"
@@ -16,159 +28,304 @@ def load_json(path: Path):
         return json.load(f)
 
 
-def save_json(path: Path, data):
-    temp = path.with_suffix(".tmp.json")
+def load_transcript(episode, video_id):
+    path = (
+            episode
+            / "processing"
+            / "transcripts"
+            / f"{video_id}.json"
+    )
 
-    with temp.open(
-            "w",
+    if not path.exists():
+        return None
+
+    with path.open(
+            "r",
             encoding="utf-8"
     ) as f:
-        json.dump(
-            data,
-            f,
-            indent=2,
-            ensure_ascii=False
-        )
-
-    temp.replace(path)
+        return json.load(f)
 
 
-def get_last_speech_time(transcript):
+def trim_trailing_low_confidence_segments(segments):
+
+    trimmed = list(segments)
+
+    while trimmed:
+
+        avg_logprob = trimmed[-1].get("avg_logprob")
+
+        if avg_logprob is None or avg_logprob >= LOW_LOGPROB_THRESHOLD:
+            break
+
+        trimmed.pop()
+
+    return trimmed
+
+
+def analyze_speech_bounds(transcript, duration, fps):
+
+    if not transcript:
+        return 0, int(duration * fps)
+
+
     segments = transcript.get(
         "segments",
         []
     )
 
+    segments = trim_trailing_low_confidence_segments(segments)
+
     if not segments:
-        return None
+        return 0, int(duration * fps)
 
-    return max(
-        segment["end"]
-        for segment in segments
+
+    first_start = segments[0]["start"]
+
+    last_end = min(
+        segments[-1]["end"],
+        duration
     )
 
 
-def analyze_scene_plan(
-        episode_folder: Path
-):
-
-    processing = (
-            episode_folder
-            / "processing"
+    start_seconds = max(
+        0,
+        first_start - LEAD_IN_SECONDS
     )
 
-    scene_plan_path = (
-            processing
-            / "scene-plan.json"
+    end_seconds = min(
+        duration,
+        last_end + TAIL_SECONDS
     )
 
-    transcripts_dir = (
-            processing
-            / "transcripts"
+
+    return (
+        int(start_seconds * fps),
+        int(end_seconds * fps)
     )
 
-    if not scene_plan_path.exists():
-        raise RuntimeError(
-            f"Missing scene plan: {scene_plan_path}"
+
+def create_scene_plan(episode, manifest):
+
+    fps = manifest["fps"]
+
+    scenes = []
+
+    timeline_frame = 0
+
+
+    for video in manifest["videos"]:
+
+        transcript = load_transcript(
+            episode,
+            video["id"]
         )
 
-    scene_plan = load_json(
-        scene_plan_path
+
+        source_start, source_end = (
+            analyze_speech_bounds(
+                transcript,
+                video["duration"],
+                fps
+            )
+        )
+
+
+        duration = (
+                source_end
+                -
+                source_start
+        )
+
+
+        scene = {
+            "id": f"scene-{video['id']}",
+            "type": "presenter",
+            "videoId": video["id"],
+
+            "sourceStartFrame": source_start,
+            "sourceEndFrame": source_end,
+
+            "timelineStartFrame": timeline_frame,
+
+            "durationInFrames": duration,
+
+            "effects": {
+                "captions": True,
+                # Applied uniformly to every cut, like the brand palette —
+                # not an AI decision per clip. See Episode.tsx's
+                # CROSSFADE_TRANSITION_FRAMES for the actual duration.
+                # A specific cut can still be set to "none" by hand-editing
+                # scene-plan.json or via a natural-language edit instruction
+                # if a particular hard cut is wanted.
+                "transition": "crossfade"
+            }
+        }
+
+
+        scenes.append(scene)
+
+
+        timeline_frame += duration
+
+
+        print(
+            f"{video['id']}: "
+            f"{source_start} -> "
+            f"{source_end} frames"
+        )
+
+
+    return {
+        "version": 1,
+        "episode": manifest["episode"],
+        "fps": fps,
+        "scenes": scenes
+    }
+
+
+def run_scene_analysis(episode):
+
+    manifest = load_manifest(
+        episode
     )
 
-    fps = scene_plan["fps"]
 
-    updated = 0
-
-    for scene in scene_plan["scenes"]:
-
-        video_id = scene["videoId"]
-
-        transcript_file = (
-                transcripts_dir
-                / f"{video_id}.json"
-        )
-
-        if not transcript_file.exists():
-            print(
-                f"{video_id}: no transcript, skipped"
-            )
-            continue
-
-        transcript = load_json(
-            transcript_file
-        )
-
-        last_speech = get_last_speech_time(
-            transcript
-        )
-
-        if last_speech is None:
-            print(
-                f"{video_id}: empty transcript, skipped"
-            )
-            continue
-
-        new_duration = round(
-            (
-                    last_speech
-                    + PADDING_SECONDS
-            )
-            * fps
-        )
-
-        old_duration = scene[
-            "durationInFrames"
-        ]
-
-        if new_duration < old_duration:
-
-            print(
-                f"{video_id}: "
-                f"{old_duration} -> {new_duration} frames"
-            )
-
-            scene[
-                "sourceEndFrame"
-            ] = new_duration
-
-            scene[
-                "durationInFrames"
-            ] = new_duration
-
-            updated += 1
-
-        else:
-            print(
-                f"{video_id}: no trim needed"
-            )
-
-    save_json(
-        scene_plan_path,
-        scene_plan
+    scene_plan = create_scene_plan(
+        episode,
+        manifest
     )
+
+
+    title_scenes_path = (
+            episode
+            /
+            "processing"
+            /
+            "title_scenes.json"
+    )
+
+    if title_scenes_path.exists():
+
+        with title_scenes_path.open(
+                "r",
+                encoding="utf-8"
+        ) as f:
+            titles = json.load(f)["titles"]
+
+        episode_transcript_path = episode / "processing" / "episode_transcript.json"
+
+        with episode_transcript_path.open("r", encoding="utf-8") as f:
+            episode_transcript = json.load(f)
+
+        scene_plan = merge_title_scenes(
+            scene_plan,
+            titles,
+            episode_transcript,
+            manifest
+        )
+
+        print(
+            f"Re-merged {len(titles)} existing title scene(s)."
+        )
+
+
+    moments_path = (
+            episode
+            /
+            "processing"
+            /
+            "moments.json"
+    )
+
+    if moments_path.exists():
+
+        with moments_path.open(
+                "r",
+                encoding="utf-8"
+        ) as f:
+            moments = json.load(f).get("moments", [])
+
+        scene_plan = merge_moment_scenes(
+            scene_plan,
+            moments
+        )
+
+        print(
+            f"Re-merged {len(moments)} existing moment scene(s)."
+        )
+
+
+    beats_path = (
+            episode
+            /
+            "processing"
+            /
+            "emphasis.json"
+    )
+
+    if beats_path.exists():
+
+        with beats_path.open(
+                "r",
+                encoding="utf-8"
+        ) as f:
+            beats = json.load(f).get("beats", [])
+
+        scene_plan = merge_beat_scenes(
+            scene_plan,
+            beats
+        )
+
+        print(
+            f"Re-merged {len(beats)} existing beat scene(s)."
+        )
+
+
+    output = (
+            episode
+            /
+            "processing"
+            /
+            "scene-plan.json"
+    )
+
+
+    with output.open(
+            "w",
+            encoding="utf-8"
+    ) as f:
+        json.dump(
+            scene_plan,
+            f,
+            indent=2
+        )
+
 
     print()
     print(
-        f"Updated scenes: {updated}"
+        f"Updated scenes: {len(scene_plan['scenes'])}"
     )
+
+    return scene_plan
 
 
 def main():
 
-    if len(sys.argv) != 2:
-        print(
-            "Usage: analyze_scenes.py <episode-folder>"
-        )
-        sys.exit(1)
+    parser = argparse.ArgumentParser()
 
-    episode_folder = Path(
-        sys.argv[1]
+    parser.add_argument(
+        "episode_folder"
+    )
+
+    args = parser.parse_args()
+
+
+    episode = Path(
+        args.episode_folder
     ).resolve()
 
-    analyze_scene_plan(
-        episode_folder
-    )
+
+    run_scene_analysis(episode)
 
 
 if __name__ == "__main__":

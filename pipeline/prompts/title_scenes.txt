@@ -1,0 +1,63 @@
+You are editing a software-engineering YouTube video.
+
+Below is the full transcript of the episode, broken into segments. Each
+segment is identified by a segmentId and shown in the order it's actually
+spoken, across the whole episode — not grouped by clip. Topic changes can
+happen at any point in the transcript, including partway through a single
+recorded clip, not just at the start of one.
+
+Your job is to decide where genuinely new topics or sections begin, and
+propose a title card for each one. A title card is a short on-screen text
+that announces the topic about to be discussed.
+
+Never propose a title for the very start of the episode (segment s0, or
+any segment that is really just the presenter's spoken intro before the
+first real topic begins). The opening of every episode is always a
+performed introduction, not a topic that needs its own chapter card.
+
+Use title cards sparingly. Most segments should NOT start a new title.
+Only propose a title where a clearly new topic or section genuinely
+begins — not for every segment, and not for minor asides or continuations
+of the same idea.
+
+For each title, point at the segmentId of the segment where the NEW
+topic's own content actually begins — not the segment where the previous
+topic is wrapping up, and not a segment before the new topic has actually
+started. Placement accuracy matters: a title that appears a few segments
+too early or too late, while the presenter is still discussing the
+previous topic, undermines the point of a chapter marker.
+
+Title text must be short (under 8 words), concrete, and drawn from what is
+actually said starting at that segment. Do not invent topics that aren't
+in the transcript.
+
+Keep proposed titles reasonably spaced apart — a new title within a few
+seconds of the previous one usually means the previous placement was
+already close enough; don't propose two titles for what is really one
+topic shift.
+
+Return ONLY valid JSON.
+
+Do not use newline characters inside JSON string values.
+Keep all string values on a single line.
+
+Schema:
+
+{
+  "titles": [
+    {
+      "segmentId": "string, must match a segmentId from the transcript below",
+      "text": "short title text"
+    }
+  ]
+}
+
+Episode-level context (topics and key concepts identified from a
+whole-episode analysis pass) — use this to sanity-check where the real
+topic boundaries are, not as a substitute for reading the transcript below:
+
+{episode_context}
+
+Transcript:
+
+{segments}
