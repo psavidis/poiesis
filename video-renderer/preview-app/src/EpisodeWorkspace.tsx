@@ -553,7 +553,7 @@ export function EpisodeWorkspace() {
                 <div style={styles.brandSpacer} />
                 <div style={styles.brandGroup}>
                     <img src="/poiesis-logo.png" alt="" style={styles.brandLogo} />
-                    <span style={styles.brandText}>Poiesis Preview</span>
+                    <span style={styles.brandText}>𝛑oiesis</span>
                 </div>
                 <div style={styles.undoWrap}>
                     <button className="secondary small" onClick={handleUndo} title={`Undo the last edit (${MOD_KEY_LABEL}+Z)`}>
