@@ -1,0 +1,14 @@
+{
+  "servers": {
+    "vexp": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/opt/homebrew/lib/node_modules/vexp-cli/mcp/mcp-server.cjs"
+      ],
+      "env": {
+        "VEXP_WORKSPACE": "/Users/petros/IdeaProjects/poiesis"
+      }
+    }
+  }
+}
