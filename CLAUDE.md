@@ -2276,3 +2276,540 @@ Prefer:
 Use bullet points whenever possible.
 
 Do not provide a long narrative unless the change is unusually complex.
+
+--------------------
+
+# Autonomous GitHub Development Workflow
+
+## Purpose
+
+When working autonomously on Poiesis tickets, behave as a software engineer working normally on the repository.
+
+Each ticket must be treated as an independent unit of work with its own Git branch and GitHub Pull Request.
+
+The `main` branch must always remain the integration branch.
+
+Never implement ticket changes directly on `main`.
+
+---
+
+## Core Workflow
+
+For every ticket, follow this lifecycle:
+
+1. Start from the latest `main`.
+2. Create a dedicated branch for the ticket.
+3. Implement the ticket completely.
+4. Run the appropriate tests and validation.
+5. Review the complete Git diff.
+6. Commit the work.
+7. Push the branch to GitHub.
+8. Create a Pull Request for the ticket.
+9. Associate the Pull Request with the GitHub Issue.
+10. Review the implementation again using the PR diff.
+11. Make additional commits if problems are found.
+12. When the ticket is complete, squash-merge the Pull Request into `main`.
+13. Verify that `main` contains the expected result.
+14. Close the GitHub Issue if it was not automatically closed by the merge.
+15. Delete the remote feature branch.
+16. Return to `main`.
+17. Pull the latest `main`.
+18. Continue with the next ticket.
+
+Do not stop after completing one ticket. Continue through the assigned ticket queue.
+
+---
+
+# Branch Rules
+
+## Never work directly on `main`
+
+Before modifying files:
+
+```bash
+git status
+git branch --show-current
+```
+
+The working branch must be the ticket branch.
+
+If currently on `main`, update it first:
+
+```bash
+git checkout main
+git pull --ff-only origin main
+```
+
+Then create the ticket branch.
+
+---
+
+## Branch Naming
+
+Use:
+
+```text
+<type>/<issue-number>-<short-description>
+```
+
+Examples:
+
+```text
+feature/123-title-screen-duration
+feature/124-moments-bar-always-visible
+fix/125-invalid-chapter-count
+refactor/126-animation-timing
+```
+
+Prefer these types:
+
+* `feature/` — new functionality
+* `fix/` — bug fix
+* `refactor/` — refactoring
+* `test/` — test-only changes
+* `docs/` — documentation-only changes
+* `chore/` — maintenance
+
+The issue number must be included whenever possible.
+
+---
+
+# Starting a Ticket
+
+Before implementing a ticket:
+
+1. Read the complete GitHub Issue.
+2. Inspect related code.
+3. Inspect related tests.
+4. Inspect recent Git history when useful.
+5. Check whether other tickets have already changed the relevant area.
+6. Understand the current implementation rather than relying only on the ticket description.
+
+Do not blindly implement the ticket from its title.
+
+If the ticket references other issues, inspect those relationships before starting.
+
+---
+
+# Creating the Branch
+
+Always branch from the latest `main`.
+
+Example:
+
+```bash
+git checkout main
+git pull --ff-only origin main
+git checkout -b feature/123-short-description
+```
+
+Do not branch from an old feature branch.
+
+---
+
+# Implementation
+
+Implement the ticket according to the existing Poiesis architecture and conventions.
+
+Prefer:
+
+* existing abstractions
+* existing utilities
+* existing patterns
+* minimal changes
+* consistent naming
+* tests that verify behavior rather than implementation details
+
+Do not introduce unrelated refactoring.
+
+Do not modify unrelated files unless the implementation genuinely requires it.
+
+---
+
+# Testing
+
+Before creating the Pull Request:
+
+1. Run the most specific tests relevant to the change.
+2. Run broader tests when practical.
+3. Run type checking/linting/build validation when applicable.
+4. Fix failures before opening the PR.
+
+Do not consider a ticket complete merely because the code compiles.
+
+The implementation must satisfy the ticket's acceptance criteria.
+
+---
+
+# Commit Rules
+
+Commits should represent meaningful development steps.
+
+During implementation, normal commits are allowed.
+
+Do not obsess over producing one commit during development.
+
+The Pull Request will ultimately be squash-merged into `main`.
+
+Use clear commit messages.
+
+Examples:
+
+```text
+Add title screen duration calculation
+Fix title screen frame conversion
+Add tests for title screen timing
+```
+
+Avoid meaningless messages such as:
+
+```text
+changes
+fix
+stuff
+wip
+update
+```
+
+---
+
+# Pull Request
+
+When implementation and validation are complete, push the branch:
+
+```bash
+git push -u origin <branch>
+```
+
+Create a Pull Request targeting:
+
+```text
+main
+```
+
+The PR title should clearly describe the ticket.
+
+Example:
+
+```text
+Add automatic title screen duration
+```
+
+The PR description should contain:
+
+* what changed
+* why it changed
+* how it was implemented
+* tests/validation performed
+* the associated issue
+
+Use GitHub's issue-closing syntax where appropriate:
+
+```text
+Closes #123
+```
+
+This associates the PR with the issue and allows GitHub to close the issue when the PR is merged.
+
+---
+
+# Pull Request Self-Review
+
+Before merging, review the PR as if another engineer submitted it.
+
+Inspect:
+
+```bash
+git diff main...HEAD
+```
+
+Look specifically for:
+
+* accidental changes
+* debugging code
+* dead code
+* unnecessary complexity
+* incorrect assumptions
+* missing tests
+* regressions
+* inconsistent naming
+* unrelated modifications
+
+If problems are found, fix them and push the changes.
+
+Do not merge code that has not passed this self-review.
+
+---
+
+# Merge Policy
+
+A completed ticket should ultimately produce **one commit on `main`**.
+
+When the PR is ready:
+
+1. Ensure all changes are pushed.
+2. Ensure validation passes.
+3. Squash-merge the PR into `main`.
+
+Prefer GitHub's squash merge functionality.
+
+The resulting `main` history should contain one logical commit for the ticket.
+
+The final commit message should describe the completed ticket.
+
+Example:
+
+```text
+Add automatic title screen duration (#123)
+```
+
+Do not preserve a large collection of intermediate development commits on `main`.
+
+---
+
+# After Merge
+
+After the PR is merged:
+
+```bash
+git checkout main
+git pull --ff-only origin main
+```
+
+Verify that the expected changes are present.
+
+If GitHub has not automatically closed the issue, close it.
+
+Delete the feature branch after successful merge.
+
+Remote branch:
+
+```bash
+git push origin --delete <branch>
+```
+
+Local branch:
+
+```bash
+git branch -d <branch>
+```
+
+Do not delete the branch before confirming that the PR was successfully merged.
+
+---
+
+# Ticket Completion
+
+A ticket is complete only when all of the following are true:
+
+* [ ] Implementation is complete.
+* [ ] Acceptance criteria are satisfied.
+* [ ] Relevant tests pass.
+* [ ] No unintended changes remain.
+* [ ] Feature branch was pushed.
+* [ ] Pull Request was created.
+* [ ] Pull Request is associated with the ticket.
+* [ ] PR was self-reviewed.
+* [ ] PR was squash-merged into `main`.
+* [ ] `main` contains the completed change.
+* [ ] Ticket is closed.
+* [ ] Feature branch was deleted.
+* [ ] Working tree is clean.
+
+Only then should the ticket be considered finished.
+
+---
+
+# Working Tree Safety
+
+Before starting a ticket:
+
+```bash
+git status
+```
+
+The working tree should be clean.
+
+If uncommitted changes exist that were not created by the current ticket, do not overwrite or discard them.
+
+Determine whether they belong to previous work before proceeding.
+
+Never use destructive commands such as:
+
+```bash
+git reset --hard
+git clean -fd
+```
+
+to remove unknown user changes.
+
+Protect existing work.
+
+---
+
+# Handling Failures
+
+If tests fail:
+
+1. Investigate the failure.
+2. Determine whether it is caused by the current change.
+3. Fix the implementation when appropriate.
+4. Rerun the tests.
+5. Continue.
+
+If a build or command fails because of the environment, determine whether it can be resolved autonomously.
+
+Do not stop merely because the first attempt failed.
+
+---
+
+# Handling Ambiguity
+
+Do not ask the user for confirmation for ordinary engineering decisions.
+
+When requirements are ambiguous:
+
+1. Inspect the existing implementation.
+2. Inspect related tickets.
+3. Inspect existing tests.
+4. Follow established project conventions.
+5. Choose the smallest reasonable implementation.
+6. Document important assumptions in the PR description.
+
+Only stop and request user input when the decision genuinely cannot be made safely from the repository, issue, and existing conventions.
+
+---
+
+# Handling Blocked Tickets
+
+If a ticket cannot be completed because it depends on another unfinished ticket:
+
+1. Determine whether the dependency can reasonably be completed first.
+2. If yes, follow the appropriate ticket order.
+3. Otherwise leave the ticket untouched and continue with independent tickets.
+
+Never merge knowingly incomplete work merely to mark a ticket complete.
+
+---
+
+# Autonomous Operation
+
+When given a list of tickets, process them sequentially.
+
+For each ticket:
+
+```text
+READ
+ ↓
+UNDERSTAND
+ ↓
+BRANCH
+ ↓
+IMPLEMENT
+ ↓
+TEST
+ ↓
+REVIEW
+ ↓
+COMMIT
+ ↓
+PUSH
+ ↓
+OPEN PR
+ ↓
+SELF-REVIEW
+ ↓
+SQUASH MERGE
+ ↓
+VERIFY MAIN
+ ↓
+CLOSE ISSUE
+ ↓
+DELETE BRANCH
+ ↓
+NEXT TICKET
+```
+
+Do not wait for user confirmation between these stages.
+
+After completing one ticket, immediately begin the next ticket.
+
+---
+
+# Important Principle
+
+Work as if you are the developer responsible for the ticket.
+
+The expected result is not merely modified code.
+
+The expected result is:
+
+```text
+Issue
+  → feature branch
+  → implementation
+  → tests
+  → commits
+  → Pull Request
+  → self-review
+  → squash merge
+  → single commit on main
+  → closed issue
+  → deleted branch
+```
+
+The repository should look as though a human developer independently completed each ticket using the normal GitHub development workflow.
+
+# Development Modes
+
+Poiesis uses two development modes.
+
+## Normal Development Mode
+
+Unless explicitly instructed to work on a GitHub ticket, work normally.
+
+Normal development work does NOT require:
+
+- creating a GitHub issue
+- creating a ticket branch
+- opening a Pull Request
+- associating a PR with an issue
+- squash merging
+- closing an issue
+
+For small changes, experiments, debugging, refactoring, design work,
+or changes explicitly requested by the user without reference to a ticket,
+simply work in the current development branch following the normal Git workflow.
+
+Do not create unnecessary GitHub tickets or Pull Requests.
+
+## Ticket Development Mode
+
+When the user explicitly asks you to work on a GitHub ticket, issue,
+or ticket number, enter Ticket Development Mode.
+
+In Ticket Development Mode, follow the complete autonomous GitHub workflow
+defined below.
+
+This includes:
+
+1. Start from the latest `main`.
+2. Create a dedicated ticket branch.
+3. Implement the ticket.
+4. Test and validate it.
+5. Commit the work.
+6. Push the branch.
+7. Open a Pull Request.
+8. Associate the PR with the ticket.
+9. Self-review the PR.
+10. Fix any issues found.
+11. Squash-merge the PR into `main`.
+12. Verify `main`.
+13. Close the ticket.
+14. Delete the ticket branch.
+15. Continue with the next ticket if more tickets were assigned.
+
+Do NOT enter Ticket Development Mode merely because a GitHub issue exists.
+
+Only enter Ticket Development Mode when the user explicitly requests
+ticket-based work.
