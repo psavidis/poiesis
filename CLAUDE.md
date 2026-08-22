@@ -2048,10 +2048,40 @@ Before considering an issue complete:
 1. Run the tests relevant to the changed code.
 2. Run broader tests when the change can affect other parts of the system.
 3. Run linting, type checking, formatting, or build validation when applicable.
-4. For UI changes, verify the actual UI behavior.
+4. For UI changes, perform a blackbox UI test through the running app itself.
 5. For rendering changes, inspect the rendered output when practical.
 
 Do not assume that compilation or a successful render means the feature is correct.
+
+### Blackbox UI Testing Is Mandatory for UI Changes
+
+Passing tests and a clean typecheck do not prove a UI bug is fixed. Bugs in this
+codebase have repeatedly turned out to be one layer deeper than the first
+plausible cause — a fix that looks correct by reading the diff has still shipped
+broken more than once.
+
+For any change that touches the running UI (editor, Asset Library, panels,
+bars, the AI sidebar, anything the user clicks or watches render), drive the
+actual application through the browser the way the user would, before
+reporting the work as done:
+
+- Start the real dev servers (backend + frontend), not just the build.
+- Navigate the UI and reproduce the exact steps the user described — same
+  clicks, same tabs, same sequence — against real episode data when the issue
+  was reported against a real episode.
+- Reproduce the bug FIRST, so the "before" state is confirmed, not assumed.
+- Apply the fix, then repeat the same steps and confirm the "after" state
+  directly — inspect the rendered page, check the console/network for errors,
+  and (for a race condition, a stale-data bug, or a "live update" fix)
+  actually cause the underlying trigger (add/remove a file on disk, click
+  twice in quick succession, etc.), not just confirm the endpoint returns 200.
+- Do not stop at the first plausible-looking fix. If the blackbox test still
+  shows the reported symptom, the root cause has not been found yet — keep
+  investigating instead of trusting the diff.
+- Clean up any test data created against real episode files before finishing.
+
+A fix is not verified until it has been watched working in the actual running
+application, imitating the user, not inferred from the code.
 
 ## 7. Keep Changes Focused
 
