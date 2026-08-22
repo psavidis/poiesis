@@ -477,18 +477,38 @@ const AnimatedPresenterFrame = ({
                 That extra Sequence boundary sat right at this scene's real
                 start, exactly where the playhead lands on a seek/click into
                 this scene, and forced the browser to mount a fresh <audio>
-                element (and buffer it) at that precise moment — a likely
-                source of the brief silent gap reported in #115 when
-                selecting a clip on SceneBar. Silencing the borrowed lead-in
-                via `volume` instead achieves the identical audible result
-                (audio cuts in cleanly at the scene's true start, only the
-                video dissolves) with no extra mount point: this element has
-                the same single mount boundary as the video track above. */}
+                element (and buffer it) at that precise moment. Silencing
+                the borrowed lead-in via `volume` instead achieves the
+                identical audible result (audio cuts in cleanly at the
+                scene's true start, only the video dissolves) with no extra
+                mount point: this element has the same single mount
+                boundary as the video track above.
+
+                pauseWhenBuffering is explicit here (not the default) — see
+                #115's real root cause: Remotion's <Audio> still gets a
+                fresh internal Sequence/mount whenever `trimBefore` changes
+                (every scene boundary is exactly that), and unlike
+                OffthreadVideo above (which defaults pauseWhenBuffering to
+                true), <Audio> defaults it to FALSE — it does not hold up
+                playback while the newly-mounted <audio> element seeks
+                inside its (possibly not-yet-loaded) source file. That
+                asymmetry is exactly the bug: video was already correctly
+                waiting on itself; audio silently kept "playing" (i.e.
+                producing nothing) while it caught up, which reads as a
+                brief silent gap that self-recovers — precisely reproduced
+                by clicking a clip in SceneBar, since that always seeks to
+                a scene's exact boundary, unlike scrubbing the player
+                directly which usually lands mid-scene with nothing new to
+                mount. Matching OffthreadVideo's own default here makes the
+                whole player (video included) hold at the scene boundary
+                until this audio is actually ready, instead of racing on
+                without it. */}
             <Audio
                 src={staticFile(video.path)}
                 trimBefore={scene.sourceStartFrame - crossfadeInFrames}
                 trimAfter={scene.sourceEndFrame}
                 volume={(f) => presenterAudioVolume(f, crossfadeInFrames)}
+                pauseWhenBuffering
             />
         </AbsoluteFill>
     );
