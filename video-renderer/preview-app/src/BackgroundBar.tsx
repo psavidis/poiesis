@@ -27,14 +27,18 @@ export const IMAGE_MOTION_OPTIONS: { value: BackgroundImageMotion; label: string
 ];
 
 // How much the drift scales — a second, independent choice from
-// direction (see BackgroundImageMotionSpeed's own doc comment). "normal"
-// is the default; shown first/highlighted rather than "subtle" being the
-// implied default, since normal is what a fresh pick lands on if the
-// user doesn't touch this row at all.
+// direction (see BackgroundImageMotionSpeed's own doc comment). Five
+// numbered levels (#119, replacing the old subtle/normal/strong preset
+// names — level "1" here is what used to be "strong", since even that
+// read as barely-there motion). "3" is the default; shown in the middle
+// rather than "1" being the implied default, since "3" is what a fresh
+// pick lands on if the user doesn't touch this row at all.
 export const IMAGE_MOTION_SPEED_OPTIONS: { value: BackgroundImageMotionSpeed; label: string }[] = [
-    { value: "subtle", label: "Subtle" },
-    { value: "normal", label: "Normal" },
-    { value: "strong", label: "Strong" },
+    { value: "1", label: "1" },
+    { value: "2", label: "2" },
+    { value: "3", label: "3" },
+    { value: "4", label: "4" },
+    { value: "5", label: "5" },
 ];
 
 // One distinct color per background in the library, assigned by the
@@ -502,7 +506,7 @@ export function BackgroundBar({
                 <MotionEditor
                     anchor={motionEditorAnchor}
                     currentMotion={selectedSegment.imageMotion ?? "none"}
-                    currentSpeed={selectedSegment.imageMotionSpeed ?? "normal"}
+                    currentSpeed={selectedSegment.imageMotionSpeed ?? "3"}
                     disabled={updatingMotion}
                     onPick={doUpdateMotion}
                     onClose={() => setMotionEditorAnchor(null)}
