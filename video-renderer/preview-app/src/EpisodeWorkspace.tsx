@@ -7,6 +7,7 @@ import { ActiveSceneBar } from "./ActiveSceneBar";
 import { AdvancedPanel } from "./AdvancedPanel";
 import { AssetLibraryPanel } from "./AssetLibraryPanel";
 import { BackgroundBar } from "./BackgroundBar";
+import { BackgroundEditorPanel } from "./BackgroundEditorPanel";
 import { BeatBar } from "./BeatBar";
 import { BeatEditorPanel } from "./BeatEditorPanel";
 import { ChapterStrip } from "./ChapterStrip";
@@ -135,6 +136,7 @@ export function EpisodeWorkspace() {
         | { kind: "image"; sceneId: string }
         | { kind: "beat"; sceneId: string }
         | { kind: "presenter"; sceneId: string }
+        | { kind: "background"; segmentId: string }
         | null
     >(null);
 
@@ -242,6 +244,19 @@ export function EpisodeWorkspace() {
     const openBeatEditor = (sceneId: string, _anchor: { x: number; y: number }) => {
         setInlineEditTarget(null);
         setSelectedEditor({ kind: "beat", sceneId });
+    };
+
+    // Opens BackgroundEditorPanel (#91 follow-up) — replaces BackgroundBar's
+    // old MotionEditor floating popup with the same fixed playerWrap panel
+    // every other structured editor uses. Reached from BOTH BackgroundBar's
+    // own segment selection AND AssetLibraryPanel's Backgrounds tab
+    // selection (the issue's own explicit ask — a background picked either
+    // way opens the identical panel), keyed by segmentId since that's
+    // background_scenes.json's own stable identity, not the derived
+    // scene-background-{i} scene id.
+    const openBackgroundEditor = (segmentId: string) => {
+        setInlineEditTarget(null);
+        setSelectedEditor({ kind: "background", segmentId });
     };
 
     const openInlineCaptionEditor = (sceneId: string, anchor: { x: number; y: number }) => {
@@ -731,6 +746,7 @@ export function EpisodeWorkspace() {
                             backgrounds={episodeProps.backgrounds ?? []}
                             onBackgroundsChanged={handleBackgroundsChanged}
                             getCurrentFrame={getCurrentFrame}
+                            onBackgroundEditRequested={openBackgroundEditor}
                         />
                     )}
                     <EpisodeAnalysisPanel
@@ -953,6 +969,7 @@ export function EpisodeWorkspace() {
                     getCurrentFrame={getCurrentFrame}
                     activeSelectionBar={activeSelectionBar}
                     onActivateSelection={() => setActiveSelectionBar("background")}
+                    onEditRequested={openBackgroundEditor}
                 />
             </div>
 
@@ -1122,6 +1139,19 @@ export function EpisodeWorkspace() {
                     <BeatEditorPanel
                         episodePath={episodePath}
                         sceneId={selectedEditor.sceneId}
+                        refreshKey={refreshKey}
+                        onSaved={reloadScenePlan}
+                        onClose={() => setSelectedEditor(null)}
+                    />
+                </div>
+            )}
+
+            {selectedEditor?.kind === "background" && (
+                <div style={styles.playerWrap}>
+                    <BackgroundEditorPanel
+                        episodePath={episodePath}
+                        segmentId={selectedEditor.segmentId}
+                        backgrounds={episodeProps.backgrounds ?? []}
                         refreshKey={refreshKey}
                         onSaved={reloadScenePlan}
                         onClose={() => setSelectedEditor(null)}
