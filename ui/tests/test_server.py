@@ -1804,6 +1804,130 @@ def test_delete_background_returns_409_when_episode_is_locked(tmp_path):
     assert (background_dir / "sky.png").exists()
 
 
+def test_reindex_assets_returns_empty_when_no_graphics_folder(tmp_path):
+    episode = _make_episode(tmp_path)
+
+    response = client.post(
+        "/api/episode/assets/reindex",
+        params={"path": str(episode)},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["assets"] == []
+
+
+def test_reindex_assets_discovers_a_newly_added_file(tmp_path):
+    episode = _make_episode(tmp_path)
+    graphics_dir = episode / "graphics"
+    graphics_dir.mkdir()
+    (graphics_dir / "logo.png").write_bytes(b"fake-png-bytes")
+
+    response = client.post(
+        "/api/episode/assets/reindex",
+        params={"path": str(episode)},
+    )
+
+    assert response.status_code == 200
+    assets = response.json()["assets"]
+    assert len(assets) == 1
+    assert assets[0]["filename"] == "logo.png"
+    assert assets[0]["mediaType"] == "image"
+
+    on_disk = json.loads((episode / "processing" / "assets.json").read_text())
+    assert on_disk["assets"][0]["filename"] == "logo.png"
+
+
+def test_delete_asset_returns_404_without_assets_json(tmp_path):
+    episode = _make_episode(tmp_path)
+
+    response = client.delete(
+        "/api/episode/assets/img-001",
+        params={"path": str(episode)},
+    )
+
+    assert response.status_code == 404
+
+
+def test_delete_asset_returns_404_for_unknown_id(tmp_path):
+    episode = _make_episode(tmp_path)
+    graphics_dir = episode / "graphics"
+    graphics_dir.mkdir()
+    (graphics_dir / "logo.png").write_bytes(b"fake-png-bytes")
+    client.post("/api/episode/assets/reindex", params={"path": str(episode)})
+
+    response = client.delete(
+        "/api/episode/assets/img-999",
+        params={"path": str(episode)},
+    )
+
+    assert response.status_code == 404
+
+
+def test_delete_asset_removes_file_and_reindexes(tmp_path):
+    episode = _make_episode(tmp_path)
+    graphics_dir = episode / "graphics"
+    graphics_dir.mkdir()
+    (graphics_dir / "logo.png").write_bytes(b"fake-png-bytes")
+    reindex_response = client.post("/api/episode/assets/reindex", params={"path": str(episode)})
+    asset_id = reindex_response.json()["assets"][0]["id"]
+
+    response = client.delete(
+        f"/api/episode/assets/{asset_id}",
+        params={"path": str(episode)},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["deleted"] == asset_id
+    assert response.json()["assets"] == []
+    assert not (graphics_dir / "logo.png").exists()
+
+    on_disk = json.loads((episode / "processing" / "assets.json").read_text())
+    assert on_disk["assets"] == []
+
+
+def test_delete_asset_leaves_other_assets_untouched_and_ids_stable(tmp_path):
+    episode = _make_episode(tmp_path)
+    graphics_dir = episode / "graphics"
+    graphics_dir.mkdir()
+    (graphics_dir / "a.png").write_bytes(b"fake-png-bytes")
+    (graphics_dir / "b.png").write_bytes(b"fake-png-bytes-2")
+    reindex_response = client.post("/api/episode/assets/reindex", params={"path": str(episode)})
+    assets = reindex_response.json()["assets"]
+    a_id = next(a["id"] for a in assets if a["filename"] == "a.png")
+    b_id = next(a["id"] for a in assets if a["filename"] == "b.png")
+
+    response = client.delete(
+        f"/api/episode/assets/{a_id}",
+        params={"path": str(episode)},
+    )
+
+    remaining = response.json()["assets"]
+    assert len(remaining) == 1
+    # b's id must not shift after a is removed — a stale moments.json
+    # assetId referencing b's original id would otherwise silently start
+    # resolving to nothing (or, after further edits, a different file).
+    assert remaining[0]["id"] == b_id
+    assert (graphics_dir / "b.png").exists()
+
+
+def test_delete_asset_returns_409_when_episode_is_locked(tmp_path):
+    episode = _make_episode(tmp_path)
+    graphics_dir = episode / "graphics"
+    graphics_dir.mkdir()
+    (graphics_dir / "logo.png").write_bytes(b"fake-png-bytes")
+    reindex_response = client.post("/api/episode/assets/reindex", params={"path": str(episode)})
+    asset_id = reindex_response.json()["assets"][0]["id"]
+
+    with episode_lock(episode):
+        response = client.delete(
+            f"/api/episode/assets/{asset_id}",
+            params={"path": str(episode)},
+        )
+
+    assert response.status_code == 409
+    assert (graphics_dir / "logo.png").exists()
+
+
 def test_edit_scene_plan_returns_404_without_scene_plan(tmp_path):
     episode = _make_episode(tmp_path)
 

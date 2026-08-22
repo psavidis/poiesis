@@ -180,10 +180,15 @@ def test_index_assets_preserves_manually_edited_caption_on_rerun(tmp_path):
 
 
 def test_index_assets_caption_stays_attached_to_its_file_after_an_earlier_file_is_removed(tmp_path):
-    """Regression test for #80: captions must be matched by filename, not
-    positional id — removing "a.png" shifts what USED to be img-002's id
-    down to img-001, and a stale id-keyed lookup would incorrectly hand
-    b.png the caption a.png had, rather than b.png's own."""
+    """Regression test for #80/#93: captions AND ids must be matched by
+    filename, not position — removing "a.png" must not shift b.png's own
+    id (img-002) down to img-001, since that id is a live foreign key any
+    moment.json's assetId may already hold onto (see #93's delete-asset
+    feature, which would otherwise silently reattach an existing id, and
+    therefore an already-placed moment's rendered image, to a different
+    file on every delete of a non-last asset). A stale id-keyed caption
+    lookup would similarly hand b.png the caption a.png had, rather than
+    b.png's own."""
 
     episode = tmp_path / "episode"
     graphics = episode / "graphics"
@@ -207,8 +212,37 @@ def test_index_assets_caption_stays_attached_to_its_file_after_an_earlier_file_i
 
     assert len(assets) == 1
     assert assets[0]["filename"] == "b.png"
-    assert assets[0]["id"] == "img-001"
+    assert assets[0]["id"] == "img-002"
     assert assets[0]["caption"] == "b's own real caption"
+
+
+def test_index_assets_new_file_after_a_deletion_gets_a_fresh_unused_id(tmp_path):
+    """A file added AFTER an earlier one was deleted must not reuse the
+    deleted file's old id number — img-001 (a.png) stays retired once
+    a.png is gone, rather than being handed to the next new file, which
+    would otherwise collide with any stale moments.json assetId still
+    referencing "img-001" as a.png."""
+
+    episode = tmp_path / "episode"
+    graphics = episode / "graphics"
+    graphics.mkdir(parents=True)
+
+    (graphics / "a.png").write_bytes(b"fake")
+    (graphics / "b.png").write_bytes(b"fake")
+
+    first_pass = index_assets(episode)
+    by_filename = {a["filename"]: a for a in first_pass}
+    assert by_filename["a.png"]["id"] == "img-001"
+    assert by_filename["b.png"]["id"] == "img-002"
+
+    (graphics / "a.png").unlink()
+    (graphics / "c.png").write_bytes(b"fake")
+
+    second_pass = index_assets(episode)
+    by_filename = {a["filename"]: a for a in second_pass}
+
+    assert by_filename["b.png"]["id"] == "img-002"
+    assert by_filename["c.png"]["id"] == "img-003"
 
 
 def test_index_assets_stamps_default_display_for_full_screen_folder_assets(tmp_path):
