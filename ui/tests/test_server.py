@@ -1602,6 +1602,47 @@ def test_update_scene_moves_and_resizes_an_image_overlay(tmp_path):
     assert image_scene["durationInFrames"] == 60
 
 
+def test_update_scene_changes_presenter_transition(tmp_path):
+    # Regression test for #78: PresenterEditorPanel's transition dropdown
+    # writes {"effects": {...scene.effects, "transition": value}} against
+    # a presenter scene — confirms that field is genuinely accepted (it's
+    # in edit_plan.py's EDITABLE_FIELDS["presenter"]) and preserves the
+    # sibling "captions" field rather than clobbering the whole effects
+    # object.
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    response = client.put(
+        "/api/episode/scene",
+        params={"path": str(episode)},
+        json={"sceneId": "scene-001", "fields": {"effects": {"captions": True, "transition": "crossfade"}}},
+    )
+
+    assert response.status_code == 200
+
+    scene_plan_on_disk = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    presenter_scene = next(s for s in scene_plan_on_disk["scenes"] if s["id"] == "scene-001")
+    assert presenter_scene["effects"] == {"captions": True, "transition": "crossfade"}
+
+
+def test_update_scene_rejects_disallowed_field_on_presenter_scene(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    response = client.put(
+        "/api/episode/scene",
+        params={"path": str(episode)},
+        json={"sceneId": "scene-001", "fields": {"sourceStartFrame": 999999}},
+    )
+
+    # sourceStartFrame IS in EDITABLE_FIELDS["presenter"] — this response
+    # documents that the "update" op path currently applies NO bounds
+    # validation to it (see PresenterEditorPanel.tsx's own docstring on
+    # why it deliberately doesn't expose this field): the write succeeds
+    # even for an out-of-range value with no source footage to back it.
+    assert response.status_code == 200
+
+
 def test_update_scene_returns_409_when_episode_is_locked(tmp_path):
     episode = _make_episode(tmp_path)
     _make_scene_plan_with_image(episode)

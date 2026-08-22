@@ -25,6 +25,13 @@ interface Props {
     // actually clicked (see #34's InlineTextEditor) — not needed for the
     // seek itself, only for positioning that editor.
     onSelectTitle: (titleText: string, anchor: { x: number; y: number }) => void;
+    // Fired only when the user presses the edit shortcut (Cmd+E/Ctrl+E)
+    // while a PRESENTER (clip) segment is selected — NOT on click, same
+    // "select first, edit is a deliberate second step" rule every other
+    // bar in this app follows (#78: presenter segments previously had no
+    // click handler at all, so there was no way to select — let alone
+    // edit — a clip's own trim points or crossfade transition).
+    onOpenPresenterEditor: (sceneId: string) => void;
     // Set by EpisodeWorkspace right after a chat edit touches a presenter
     // or title scene on this bar (#54) — unlike ChapterStrip, scenes here
     // do carry their own id, so this is keyed by sceneId directly.
@@ -62,6 +69,7 @@ export function SceneBar({
     currentFrame,
     onSeek,
     onSelectTitle,
+    onOpenPresenterEditor,
     highlightedId,
     episodePath,
     onSaved,
@@ -73,13 +81,20 @@ export function SceneBar({
         timelineZoom;
 
     const [selectedTitle, setSelectedTitle] = useState<string | null>(null);
+    // The clicked-but-not-editing PRESENTER segment, by sceneId — mutually
+    // exclusive with selectedTitle (only one segment on this bar is ever
+    // selected at a time; clicking one type clears the other below).
+    const [selectedPresenterId, setSelectedPresenterId] = useState<string | null>(null);
     const selectedAnchorRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
     const trackRef = useRef<HTMLDivElement>(null);
 
     // See BeatBar's identical effect's own doc comment — clears this bar's
     // selection once a different bar takes over the shared selection.
     useEffect(() => {
-        if (activeSelectionBar !== "scene") setSelectedTitle(null);
+        if (activeSelectionBar !== "scene") {
+            setSelectedTitle(null);
+            setSelectedPresenterId(null);
+        }
     }, [activeSelectionBar]);
 
     // Drag-to-resize a selected title's on-screen duration (#83) — same
@@ -129,6 +144,28 @@ export function SceneBar({
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
     }, [selectedTitle, onSelectTitle]);
+
+    // Cmd+E/Ctrl+E on a selected PRESENTER segment opens the structured
+    // trim/transition editor (#78) — mirrors the title listener directly
+    // above, just targeting onOpenPresenterEditor instead of the inline
+    // text editor (a presenter scene has no single text field to edit
+    // inline, only sourceStartFrame/sourceEndFrame/effects, which need
+    // PresenterEditorPanel's own form).
+    useEffect(() => {
+        if (!selectedPresenterId) return;
+
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key.toLowerCase() !== "e" || !(e.metaKey || e.ctrlKey)) return;
+            const target = e.target as HTMLElement | null;
+            if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+
+            e.preventDefault();
+            onOpenPresenterEditor(selectedPresenterId);
+        };
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [selectedPresenterId, onOpenPresenterEditor]);
 
     const startResize = (e: React.MouseEvent, scene: TitleScene) => {
         e.preventDefault();
@@ -212,6 +249,7 @@ export function SceneBar({
     const onTrackClick = (e: React.MouseEvent<HTMLDivElement>) => {
         if (dragSegmentId) return;
         setSelectedTitle(null);
+        setSelectedPresenterId(null);
         const rect = e.currentTarget.getBoundingClientRect();
         const pct = clamp((e.clientX - rect.left) / rect.width, 0, 1);
         onSeek(Math.round(windowStartFrame + pct * windowFrames));
@@ -238,7 +276,9 @@ export function SceneBar({
 
                     const widthPct = Math.max(rawWidthPct, 0.4);
                     const label = isTitle ? scene.text : `clip ${scene.videoId}`;
-                    const isSelected = isTitle && selectedTitle === scene.text;
+                    const isSelected = isTitle
+                        ? selectedTitle === scene.text
+                        : selectedPresenterId === scene.id;
 
                     return (
                         <div
@@ -248,40 +288,47 @@ export function SceneBar({
                                 left: `${leftPct}%`,
                                 width: `${widthPct}%`,
                                 background: isTitle ? TITLE_COLOR : PRESENTER_COLOR,
-                                cursor: isTitle ? "pointer" : "default",
+                                cursor: "pointer",
                                 ...(isSelected ? styles.segmentSelected : {}),
                             }}
                             title={
                                 isSelected
-                                    ? `${label} — press ${MOD_KEY_LABEL}+E to edit, drag right edge to resize`
-                                    : isTitle
-                                    ? `${scene.id} — click to select, then ${MOD_KEY_LABEL}+E to edit: ${label}`
-                                    : `${scene.id} — ${label}`
+                                    ? isTitle
+                                        ? `${label} — press ${MOD_KEY_LABEL}+E to edit, drag right edge to resize`
+                                        : `${scene.id} — press ${MOD_KEY_LABEL}+E to edit this clip's trim/transition`
+                                    : `${scene.id} — click to select, then ${MOD_KEY_LABEL}+E to edit: ${label}`
                             }
-                            onClick={
-                                isTitle
-                                    ? (e) => {
-                                          if (isDragging) return;
-                                          e.stopPropagation();
-                                          selectedAnchorRef.current = { x: e.clientX, y: e.clientY };
-                                          onActivateSelection();
-                                          setSelectedTitle(scene.text);
-                                          onSeek(scene.timelineStartFrame);
-                                          // Auto-zooms in around the just-selected title so
-                                          // its resize handle is a comfortable drag target
-                                          // right away, instead of requiring a separate
-                                          // manual zoom step first (this session's ask).
-                                          zoomToAtLeast4x(scene.timelineStartFrame + scene.durationInFrames / 2);
-                                      }
-                                    : undefined
-                            }
+                            onClick={(e) => {
+                                if (isDragging) return;
+                                e.stopPropagation();
+                                selectedAnchorRef.current = { x: e.clientX, y: e.clientY };
+                                onActivateSelection();
+                                onSeek(scene.timelineStartFrame);
+                                if (isTitle) {
+                                    setSelectedTitle(scene.text);
+                                    setSelectedPresenterId(null);
+                                    // Auto-zooms in around the just-selected title so
+                                    // its resize handle is a comfortable drag target
+                                    // right away, instead of requiring a separate
+                                    // manual zoom step first (this session's ask).
+                                    zoomToAtLeast4x(scene.timelineStartFrame + scene.durationInFrames / 2);
+                                } else {
+                                    setSelectedPresenterId(scene.id);
+                                    setSelectedTitle(null);
+                                }
+                            }}
                         >
                             {widthPct > 3 && <span style={styles.segmentLabel}>{label}</span>}
-                            {/* Only offered once selected — matches BeatBar/MomentBar's own
-                                rule (#82): while free-navigating (this title not yet
-                                selected), the only available action is click-to-select, so
-                                the cursor/handle shouldn't imply a resize is available yet. */}
-                            {isSelected && (
+                            {/* Only offered once selected, and only for titles — matches
+                                BeatBar/MomentBar's own rule (#82): while free-navigating
+                                (this title not yet selected), the only available action is
+                                click-to-select, so the cursor/handle shouldn't imply a resize
+                                is available yet. A presenter clip's duration is derived from
+                                its own source trim, not an independently draggable on-screen
+                                span the way a title card's is — its own editable window
+                                (sourceStartFrame/sourceEndFrame) lives in PresenterEditorPanel
+                                instead (#78), not this inline drag handle. */}
+                            {isTitle && isSelected && (
                                 <div
                                     style={styles.resizeHandle}
                                     onMouseDown={(e) => startResize(e, scene)}
@@ -303,9 +350,11 @@ export function SceneBar({
             <div style={styles.hint}>
                 {selectedTitle
                     ? `Selected — press ${MOD_KEY_LABEL}+E to edit, drag its right edge to resize.`
+                    : selectedPresenterId
+                    ? `Selected — press ${MOD_KEY_LABEL}+E to edit this clip's trim/transition.`
                     : zoom > 1
-                    ? "Click a title to select it, or click anywhere to seek."
-                    : "Select a title to zoom in and resize its duration."}
+                    ? "Click a title or clip to select it, or click anywhere to seek."
+                    : "Select a title or clip — titles resize by dragging once zoomed in; clips open an editor for trim/transition."}
             </div>
         </div>
     );
