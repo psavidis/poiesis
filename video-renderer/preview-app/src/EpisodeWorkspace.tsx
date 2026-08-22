@@ -19,6 +19,7 @@ import { InlineTextEditor, type EditTarget } from "./InlineTextEditor";
 import { MomentBar } from "./MomentBar";
 import { MomentBoxOverlay } from "./MomentBoxOverlay";
 import { MomentEditorPanel } from "./MomentEditorPanel";
+import { PresenterEditorPanel } from "./PresenterEditorPanel";
 import { ProgressFlow } from "./ProgressFlow";
 import { RenderStatusBanner } from "./RenderStatusBanner";
 import { SceneBar } from "./SceneBar";
@@ -129,6 +130,7 @@ export function EpisodeWorkspace() {
         | { kind: "moment"; sceneId: string }
         | { kind: "image"; sceneId: string }
         | { kind: "beat"; sceneId: string }
+        | { kind: "presenter"; sceneId: string }
         | null
     >(null);
 
@@ -911,6 +913,10 @@ export function EpisodeWorkspace() {
                     currentFrame={currentFrame}
                     onSeek={seekToAbsoluteFrame}
                     onSelectTitle={openInlineTitleEditor}
+                    onOpenPresenterEditor={(sceneId) => {
+                        setInlineEditTarget(null);
+                        setSelectedEditor({ kind: "presenter", sceneId });
+                    }}
                     highlightedId={highlightedByType.presenterOrTitleId}
                     episodePath={episodePath}
                     onSaved={reloadScenePlan}
@@ -1067,6 +1073,18 @@ export function EpisodeWorkspace() {
                         episodePath={episodePath}
                         sceneId={selectedEditor.sceneId}
                         refreshKey={refreshKey}
+                        onSaved={reloadScenePlan}
+                        onClose={() => setSelectedEditor(null)}
+                    />
+                </div>
+            )}
+
+            {selectedEditor?.kind === "presenter" && (
+                <div style={styles.playerWrap}>
+                    <PresenterEditorPanel
+                        episodePath={episodePath}
+                        sceneId={selectedEditor.sceneId}
+                        scenePlan={episodeProps.scenePlan}
                         onSaved={reloadScenePlan}
                         onClose={() => setSelectedEditor(null)}
                     />
