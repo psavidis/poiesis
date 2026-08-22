@@ -73,6 +73,7 @@ def test_render_status_not_running_by_default(tmp_path):
         "running": False,
         "current": None,
         "total": None,
+        "kind": None,
         "format": None,
         "resolution": None,
     }
@@ -99,6 +100,7 @@ def test_render_status_reports_last_known_progress_while_locked(tmp_path, monkey
         "running": True,
         "current": 3,
         "total": 10,
+        "kind": None,
         "format": None,
         "resolution": None,
     }
@@ -114,7 +116,7 @@ def test_render_status_reports_format_and_resolution_set_up_front(tmp_path):
     # "Rendering..." with current/total still None.
     episode = _make_episode(tmp_path)
 
-    server._set_render_metadata(episode.resolve(), "davinci", "1920x1080")
+    server._set_render_metadata(episode.resolve(), "render", "davinci", "1920x1080")
 
     with episode_lock(episode):
         response = client.get("/api/episode/render-status", params={"path": str(episode)})
@@ -123,6 +125,7 @@ def test_render_status_reports_format_and_resolution_set_up_front(tmp_path):
         "running": True,
         "current": None,
         "total": None,
+        "kind": "render",
         "format": "davinci",
         "resolution": "1920x1080",
     }
@@ -130,16 +133,41 @@ def test_render_status_reports_format_and_resolution_set_up_front(tmp_path):
     server._clear_render_progress(episode.resolve())
 
 
+# #85: pipeline/stage runs now record metadata too (previously render-only)
+# — a client recovering a pipeline run after a refresh must be able to tell
+# it apart from a recovered render, since ProgressFlow only has UI for the
+# pipeline case (see that component's own recovery effect).
+def test_render_status_reports_kind_for_a_pipeline_run(tmp_path):
+    episode = _make_episode(tmp_path)
+
+    server._set_render_metadata(episode.resolve(), "pipeline", None, None)
+
+    with episode_lock(episode):
+        response = client.get("/api/episode/render-status", params={"path": str(episode)})
+
+    assert response.json() == {
+        "running": True,
+        "current": None,
+        "total": None,
+        "kind": "pipeline",
+        "format": None,
+        "resolution": None,
+    }
+
+    server._clear_render_progress(episode.resolve())
+
+
 def test_set_render_progress_preserves_previously_set_metadata(tmp_path):
     # _set_render_progress (called from _stream_command's __TOTAL__/
-    # __PROGRESS__ handling) must not clobber format/resolution that
+    # __PROGRESS__ handling) must not clobber kind/format/resolution that
     # _set_render_metadata already recorded for this same run.
     episode = tmp_path / "episode"
 
-    server._set_render_metadata(episode, "video", None)
+    server._set_render_metadata(episode, "render", "video", None)
     server._set_render_progress(episode, 5, 20)
 
     assert server._render_progress[str(episode)] == {
+        "kind": "render",
         "current": 5,
         "total": 20,
         "format": "video",
@@ -175,6 +203,22 @@ def test_render_cancel_calls_cancel_on_the_registered_handle(tmp_path):
     assert cancelled.get("called") is True
 
     server._clear_render_progress(episode.resolve())
+
+
+def test_machine_status_not_running_by_default():
+    response = client.get("/api/machine-status")
+
+    assert response.status_code == 200
+    assert response.json() == {"running": False}
+
+
+def test_machine_status_true_while_a_run_holds_the_machine_lock():
+    from episode_locks import machine_lock
+
+    with machine_lock():
+        response = client.get("/api/machine-status")
+
+    assert response.json() == {"running": True}
 
 
 def test_episode_artifact_rejects_unknown_filename(tmp_path):

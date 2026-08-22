@@ -12,7 +12,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from episode_locks import EpisodeBusyError, episode_lock, is_episode_locked
+from episode_locks import EpisodeBusyError, episode_lock, is_episode_locked, is_machine_locked, machine_lock
 from pipeline_stages import SECONDARY_STAGES, find_stage, stage_status
 from process_runner import stream_process
 from undo import restore_latest, wrap_with_checkpoint
@@ -161,20 +161,25 @@ def episode_status(path: str):
 
 @app.get("/api/episode/render-status")
 def render_status(path: str):
-    """Lets a client recover a render's live N-of-M progress AND what kind
-    of render it is (format/resolution) after losing its websocket
-    connection (e.g. a page refresh) instead of only ever seeing it
-    through the one connection that started the run — see
-    _render_progress's own comment. Polled once on the Advanced panel's
-    mount (and continuously by RenderStatusBanner from every other tab);
-    "running" reflects episode_locks.py's own lock state (a render could
-    theoretically be mid-flight with no progress recorded yet, in the
-    brief window before export_davinci.py's first __TOTAL__ line arrives —
-    current/total are None in that case, "running" is still true, and the
-    panel shows an indeterminate "Rendering..." state rather than a bar
-    with no numbers to show). format/resolution are set once, up front
-    (see ws_run_render's build_command), so they're available even in
-    that same pre-__TOTAL__ window."""
+    """Lets a client recover a run's live N-of-M progress AND what kind of
+    run it is (pipeline/stage/render, plus render's own format/resolution)
+    after losing its websocket connection (e.g. a page refresh) instead of
+    only ever seeing it through the one connection that started the run —
+    see _render_progress's own comment. Despite the name (kept for
+    backward compatibility — AdvancedPanel/RenderStatusBanner both already
+    call this), this now covers pipeline and stage runs too (#85), not
+    just renders: _render_progress/_render_handles were always keyed by
+    episode path regardless of run kind (see _run_websocket), only nothing
+    previously read them for the non-render case. Polled once on the
+    Advanced panel's mount (and continuously by RenderStatusBanner from
+    every other tab, and by ProgressFlow's own recovery effect); "running"
+    reflects episode_locks.py's own lock state (a run could theoretically
+    be mid-flight with no progress recorded yet, in the brief window
+    before the first __TOTAL__ line arrives for a render, or for a
+    pipeline/stage run which never emits one at all — current/total are
+    None in that case, "running" is still true). kind/format/resolution
+    are set once, up front (see each ws_run_* build_command), so they're
+    available even in that same pre-__TOTAL__ window."""
 
     episode = resolve_episode(path)
 
@@ -185,6 +190,7 @@ def render_status(path: str):
         "running": is_episode_locked(episode),
         "current": progress.get("current") if progress else None,
         "total": progress.get("total") if progress else None,
+        "kind": progress.get("kind") if progress else None,
         "format": progress.get("format") if progress else None,
         "resolution": progress.get("resolution") if progress else None,
     }
@@ -192,22 +198,25 @@ def render_status(path: str):
 
 @app.post("/api/episode/render-cancel")
 def render_cancel(path: str):
-    """Cancels a render that's still running but whose original websocket
-    connection is gone — e.g. the tab that clicked Render was refreshed,
-    so AdvancedPanel's own runHandleRef (and therefore its normal Cancel
-    button, which calls runHandleRef.current?.cancel() over that specific
-    websocket) no longer exists for this run. Looks up the ProcessHandle
+    """Cancels a pipeline/stage/render run that's still running but whose
+    original websocket connection is gone — e.g. the tab that started it
+    was refreshed, so the owning panel's own runHandleRef (and therefore
+    its normal Cancel button, which calls runHandleRef.current?.cancel()
+    over that specific websocket) no longer exists for this run. Despite
+    the name (kept for backward compatibility, same as render_status
+    above), this cancels any run kind (#85) — looks up the ProcessHandle
     _stream_command registered in _render_handles when the subprocess
     actually started (see _on_start in that function) and cancels it the
     same way ProcessHandle.cancel() always has — SIGTERM to the whole
-    process group, since a render spawns its own child processes (npx,
-    remotion) that a bare kill of just the top process would orphan.
+    process group, since a pipeline/render run spawns its own child
+    processes (npx, remotion, ffmpeg) that a bare kill of just the top
+    process would orphan.
 
     404 if nothing is currently running for this episode (nothing to
     cancel) rather than silently no-op-ing, so a client can tell the
     difference between "cancelled" and "there was nothing here" — a
-    refresh raced against the render finishing on its own is the normal
-    way this would happen, not a bug."""
+    refresh raced against the run finishing on its own is the normal way
+    this would happen, not a bug."""
 
     episode = resolve_episode(path)
 
@@ -215,11 +224,23 @@ def render_cancel(path: str):
         handle = _render_handles.get(str(episode))
 
     if handle is None:
-        raise HTTPException(status_code=404, detail="No render is currently running for this episode")
+        raise HTTPException(status_code=404, detail="No run is currently in progress for this episode")
 
     handle.cancel()
 
     return {"cancelled": True}
+
+
+@app.get("/api/machine-status")
+def machine_status():
+    """Whether a pipeline/stage/render run is currently in progress
+    ANYWHERE on this machine (#85) — distinct from render_status above,
+    which is scoped to one episode. Used to explain, up front, why
+    starting a run for episode B is about to be rejected while episode A's
+    run is still going, rather than only finding out via the generic
+    EpisodeBusyError message after clicking Start."""
+
+    return {"running": is_machine_locked()}
 
 
 @app.get("/api/episode/artifact")
@@ -1801,11 +1822,12 @@ def _set_render_progress(episode: Path, current: int | None, total: int | None):
         _render_progress[str(episode)] = {**existing, "current": current, "total": total}
 
 
-def _set_render_metadata(episode: Path, output_format: str, resolution: str | None):
+def _set_render_metadata(episode: Path, kind: str, output_format: str | None, resolution: str | None):
     with _render_progress_guard:
         existing = _render_progress.get(str(episode), {})
         _render_progress[str(episode)] = {
             **existing,
+            "kind": kind,
             "format": output_format,
             "resolution": resolution,
             "current": existing.get("current"),
@@ -1837,14 +1859,16 @@ async def _run_websocket(websocket: WebSocket, build_command):
     racing it or queueing behind a potentially multi-minute run with no
     explanation.
 
-    metadata (render runs only — ws_run_render's build_command returns a
-    3-tuple; ws_run_pipeline/ws_run_stage's 2-tuples get an implicit None)
-    is recorded into _render_progress only AFTER the lock is actually
-    acquired — recording it any earlier (e.g. inside build_command itself,
-    before episode_lock is even attempted) would let a SECOND request that
-    loses the lock race to overwrite the FIRST, still-running request's
-    displayed format/resolution with its own (rejected) values, since
-    EpisodeBusyError never runs _clear_render_progress to undo that."""
+    metadata (a {"kind": "pipeline"|"stage"|"render", "format": ...,
+    "resolution": ...} dict every build_command now returns, #85 —
+    previously render-only, with ws_run_pipeline/ws_run_stage's 2-tuples
+    getting an implicit None) is recorded into _render_progress only AFTER
+    the lock is actually acquired — recording it any earlier (e.g. inside
+    build_command itself, before episode_lock is even attempted) would let
+    a SECOND request that loses the lock race to overwrite the FIRST,
+    still-running request's displayed kind/format/resolution with its own
+    (rejected) values, since EpisodeBusyError never runs
+    _clear_render_progress to undo that."""
 
     await websocket.accept()
 
@@ -1859,9 +1883,19 @@ async def _run_websocket(websocket: WebSocket, build_command):
         metadata = rest[0] if rest else None
 
         try:
-            with episode_lock(episode, wait=False):
+            # episode_lock checked before machine_lock (#85) — the more
+            # common case in practice is a double-click or a second tab
+            # racing a run against the SAME episode, and episode_lock's
+            # own message ("already running for this episode: X") is more
+            # specific and more useful than machine_lock's generic
+            # machine-wide one; that ordering is worth preserving even
+            # though machine_lock is the newer, broader check. Acquiring
+            # machine_lock SECOND still closes the actual gap #85 asks
+            # for: a run for a DIFFERENT episode is rejected here too, not
+            # just a second run against the same one.
+            with episode_lock(episode, wait=False), machine_lock():
                 if metadata is not None:
-                    _set_render_metadata(episode, metadata["format"], metadata["resolution"])
+                    _set_render_metadata(episode, metadata["kind"], metadata["format"], metadata["resolution"])
                 try:
                     await _stream_command(websocket, command, episode)
                 finally:
@@ -1915,7 +1949,7 @@ async def ws_run_pipeline(websocket: WebSocket):
         if skip_captions:
             command.append("--skip-captions")
 
-        return episode, command
+        return episode, command, {"kind": "pipeline", "format": None, "resolution": None}
 
     await _run_websocket(websocket, build_command)
 
@@ -1934,7 +1968,11 @@ async def ws_run_stage(websocket: WebSocket):
             await websocket.send_json({"type": "error", "message": f"Unknown stage: {stage_id}"})
             return None
 
-        return episode, stage.build_command(episode, force=force)
+        return (
+            episode,
+            stage.build_command(episode, force=force),
+            {"kind": "stage", "format": None, "resolution": None},
+        )
 
     await _run_websocket(websocket, build_command)
 
@@ -1953,7 +1991,7 @@ async def ws_run_render(websocket: WebSocket):
             )
             return None
 
-        metadata = {"format": output_format, "resolution": resolution}
+        metadata = {"kind": "render", "format": output_format, "resolution": resolution}
 
         if output_format == "davinci":
             # Presenter/title/moment/beat render as transparent clips (same
@@ -2010,12 +2048,14 @@ async def _stream_command(websocket: WebSocket, command, episode: Path | None = 
     watches for a client "cancel" message so a long render/pipeline run can
     be stopped mid-flight.
 
-    episode, when given (render runs only — stage/QA runs pass None), is
-    used to mirror every total/progress message into _render_progress so a
-    DIFFERENT client (e.g. this same tab after a refresh, or a second tab)
-    can recover the current N-of-M via GET /api/episode/render-status
-    instead of only ever seeing progress live over this one websocket
-    connection — see that dict's own comment.
+    episode (the sole call site, _run_websocket, always passes the real
+    episode for every run kind — pipeline/stage/render, #85; the default
+    of None exists only for a caller outside that path) is used to mirror
+    every total/progress message into _render_progress so a DIFFERENT
+    client (e.g. this same tab after a refresh, or a second tab) can
+    recover the current N-of-M via GET /api/episode/render-status instead
+    of only ever seeing progress live over this one websocket connection —
+    see that dict's own comment.
 
     Critically, this function's own loop — and therefore the episode_lock
     this is called from inside (see _run_websocket) — stays alive for the
@@ -2056,12 +2096,14 @@ async def _stream_command(websocket: WebSocket, command, episode: Path | None = 
     def _on_start(handle):
         handle_holder.setdefault("handle", handle)
         # Registered so a request OTHER than this websocket (e.g.
-        # POST /api/episode/render-cancel after a page refresh, when
-        # AdvancedPanel's own runHandleRef for this run no longer exists)
+        # POST /api/episode/render-cancel after a page refresh, when the
+        # owning panel's own runHandleRef for this run no longer exists)
         # can still cancel the actual subprocess — see _render_handles'
-        # own comment. Only meaningful for render runs (episode is None
-        # for stage/QA runs, which already have a working cancel path via
-        # their own still-live websocket).
+        # own comment. episode is always non-None here in practice — the
+        # sole call site (_run_websocket) always passes the real episode
+        # for every run kind (pipeline/stage/render, #85) — but the
+        # None-check stays as this function's own contract for any future
+        # caller that might legitimately pass None.
         if episode is not None:
             _set_render_handle(episode, handle)
 

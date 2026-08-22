@@ -7,7 +7,11 @@ can silently clobber the other's.
 
 Scope is deliberately narrow: one lock per resolved episode path, held only
 for the duration of whichever operation is actually touching that episode's
-files. Two different episodes never contend with each other.
+files. Two different episodes never contend with each other over THIS
+lock — quick file edits on episode B are never blocked by a long-running
+pipeline/stage/render run on episode A. machine_lock below is a second,
+separate, deliberately coarser lock for exactly those long-running run
+kinds (#85), where two different episodes SHOULD contend.
 
 threading.Lock rather than asyncio.Lock: the quick edit endpoints
 (update_title_scenes/update_moments/edit_scene_plan) are plain `def` routes
@@ -30,6 +34,18 @@ from pathlib import Path
 
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
+
+# One machine-wide slot for the long-running pipeline/stage/render
+# subprocesses specifically (#85) — the per-episode lock above only ever
+# prevented two runs against the SAME episode from racing; nothing stopped
+# a pipeline run on episode A and a render on episode B from executing
+# concurrently, competing for the same CPU/GPU/ffmpeg resources. Deliberately
+# separate from _locks: the quick-edit endpoints (update_title_scenes etc.)
+# are fast, in-process file edits, not subprocess runs, and must NOT be
+# blocked by an unrelated episode's multi-minute pipeline run — only
+# machine_lock() call sites (the three ws_run_* subprocess paths) contend
+# for this one.
+_machine_lock = threading.Lock()
 
 
 def _lock_for(episode: Path) -> threading.Lock:
@@ -103,4 +119,52 @@ def episode_lock(episode: Path, *, wait: bool = True):
         return
 
     with lock:
+        yield
+
+
+def is_machine_locked() -> bool:
+    """Non-blocking peek at whether a pipeline/stage/render run is
+    currently in flight ANYWHERE on this machine — same acquire-then-
+    release pattern as is_episode_locked, same staleness caveat, used by a
+    status-only endpoint rather than a check-then-act call site."""
+
+    acquired = _machine_lock.acquire(blocking=False)
+
+    if acquired:
+        _machine_lock.release()
+
+    return not acquired
+
+
+@contextmanager
+def machine_lock(*, wait: bool = False):
+    """Acquires the machine-wide run slot for the duration of the `with`
+    block (#85). wait=False (the default) fails fast with EpisodeBusyError
+    instead of blocking — matches episode_lock's own wait=False behavior
+    for the same reason: silently queueing a second multi-minute run behind
+    a first, with no explanation, is worse than telling the caller
+    immediately that one is already running (elsewhere, in this case, not
+    necessarily this episode).
+
+    Callers acquire this AFTER the per-episode lock (see server.py's
+    _run_websocket) — the more common same-episode race gets the more
+    specific EpisodeBusyError message from episode_lock first; either way,
+    two different episodes now genuinely cannot run a pipeline/stage/
+    render simultaneously, on top of the existing per-episode exclusion
+    above."""
+
+    if not wait:
+        acquired = _machine_lock.acquire(blocking=False)
+
+        if not acquired:
+            raise EpisodeBusyError("Another pipeline/stage/render run is already in progress on this machine")
+
+        try:
+            yield
+        finally:
+            _machine_lock.release()
+
+        return
+
+    with _machine_lock:
         yield
