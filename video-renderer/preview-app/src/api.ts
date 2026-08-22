@@ -72,6 +72,12 @@ export interface RenderStatus {
     // Always null for pipeline/stage runs, which have no format/resolution.
     format: "video" | "davinci" | null;
     resolution: string | null;
+    // #134: the most recent run's actual console text for this episode —
+    // unlike every other field above, this survives the run FINISHING (see
+    // ui/server.py's _run_log), so a client recovers real output after a
+    // refresh whether the run is still going or already done. Empty until
+    // a run has ever produced output for this episode this server process.
+    log: string[];
 }
 
 // Recovers a render's live N-of-M progress (and what kind of render it is)

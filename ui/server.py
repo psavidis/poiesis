@@ -179,20 +179,35 @@ def render_status(path: str):
     pipeline/stage run which never emits one at all — current/total are
     None in that case, "running" is still true). kind/format/resolution
     are set once, up front (see each ws_run_* build_command), so they're
-    available even in that same pre-__TOTAL__ window."""
+    available even in that same pre-__TOTAL__ window.
+
+    "log" (#134) is the most recent run's actual console text — unlike
+    current/total/format/resolution above, it survives the run FINISHING
+    (see _run_log's own comment: only _run_websocket starting a NEW run
+    resets it), so a client can recover it after a refresh whether the run
+    it's looking at is still going or already done. "kind" now falls back
+    to _run_log's own copy once _render_progress has been cleared (a
+    FINISHED run) — format/resolution have no equivalent fallback and
+    revert to None once finished, since neither has a UI that needs them
+    for a run that's no longer in flight (see ProgressFlow/ExportPanel's
+    own recovery effects — only a still-running recovered render shows
+    them at all)."""
 
     episode = resolve_episode(path)
 
     with _render_progress_guard:
         progress = _render_progress.get(str(episode))
 
+    run_log = _get_run_log(episode)
+
     return {
         "running": is_episode_locked(episode),
         "current": progress.get("current") if progress else None,
         "total": progress.get("total") if progress else None,
-        "kind": progress.get("kind") if progress else None,
+        "kind": (progress.get("kind") if progress else None) or run_log["kind"],
         "format": progress.get("format") if progress else None,
         "resolution": progress.get("resolution") if progress else None,
+        "log": run_log["lines"],
     }
 
 
@@ -1810,6 +1825,48 @@ _render_progress_guard = threading.Lock()
 # episode_locks.py itself.
 _render_handles: dict[str, object] = {}
 
+# #134: the actual console text (plus which kind of run produced it) for
+# the most recent pipeline/stage/render run per episode — _render_progress
+# above only ever tracked numeric current/total, and is deleted outright by
+# _clear_render_progress the moment a run finishes (see that function), so a
+# client recovering via GET /api/episode/render-status after a refresh got
+# the phase dots back but never the log a live websocket connection would
+# have shown, and had no way at all to recover a FINISHED run's kind/log —
+# there was nothing left in _render_progress to read by then. kind is
+# duplicated here (rather than read from _render_progress) for exactly that
+# reason: this dict deliberately outlives the run, so it needs its own copy
+# to know what it's a log OF once _render_progress is gone. Deliberately
+# NOT cleared when a run finishes — only replaced when the NEXT run starts
+# for that episode (see _run_websocket) — so "the run finished successfully"
+# is exactly the case this is meant to cover. Same in-memory, same-process,
+# per-episode scope as _render_progress; lines are bounded to the same tail
+# length the frontend already applies to its own live log (ExportPanel's
+# MAX_LOG_LINES) so a long pipeline run can't grow this without bound.
+_run_log: dict[str, dict] = {}
+_RUN_LOG_MAX_LINES = 500
+
+
+def _reset_run_log(episode: Path, kind: str | None):
+    with _render_progress_guard:
+        _run_log[str(episode)] = {"kind": kind, "lines": []}
+
+
+def _append_run_log(episode: Path, line: str):
+    with _render_progress_guard:
+        entry = _run_log.setdefault(str(episode), {"kind": None, "lines": []})
+        lines = entry["lines"]
+        lines.append(line)
+        if len(lines) > _RUN_LOG_MAX_LINES:
+            del lines[: len(lines) - _RUN_LOG_MAX_LINES]
+
+
+def _get_run_log(episode: Path) -> dict:
+    with _render_progress_guard:
+        entry = _run_log.get(str(episode))
+        if entry is None:
+            return {"kind": None, "lines": []}
+        return {"kind": entry["kind"], "lines": list(entry["lines"])}
+
 
 def _set_render_progress(episode: Path, current: int | None, total: int | None):
     with _render_progress_guard:
@@ -1896,6 +1953,15 @@ async def _run_websocket(websocket: WebSocket, build_command):
             with episode_lock(episode, wait=False), machine_lock():
                 if metadata is not None:
                     _set_render_metadata(episode, metadata["kind"], metadata["format"], metadata["resolution"])
+                # #134: reset only once the lock is actually held (same
+                # reasoning as _set_render_metadata's own placement, see
+                # this docstring above) — a request that loses the
+                # episode_lock race must not wipe the log of the run that's
+                # actually in progress. Records kind here too (duplicating
+                # _set_render_metadata's own copy) since _run_log outlives
+                # _render_progress being cleared on completion — see
+                # _run_log's own comment for why that duplication exists.
+                _reset_run_log(episode, metadata["kind"] if metadata is not None else None)
                 try:
                     await _stream_command(websocket, command, episode)
                 finally:
@@ -2094,6 +2160,14 @@ async def _stream_command(websocket: WebSocket, command, episode: Path | None = 
         except Exception:
             socket_dead = True
 
+    # #134: mirrors the exact lines ProgressFlow.tsx/ExportPanel.tsx already
+    # build client-side from these same messages, so a log recovered via
+    # GET /api/episode/render-status (see _run_log's own comment) reads
+    # identically to one seen live. episode is always non-None in practice
+    # (see _on_start's own comment on the same contract) — the None-check
+    # exists only for the same theoretical future caller.
+    if episode is not None:
+        _append_run_log(episode, f"$ {' '.join(command)}")
     await _send({"type": "start", "command": " ".join(command)})
 
     loop = asyncio.get_running_loop()
@@ -2138,15 +2212,21 @@ async def _stream_command(websocket: WebSocket, command, episode: Path | None = 
 
             if line is None:
                 if "error" in error_holder:
+                    if episode is not None:
+                        _append_run_log(episode, f"\nERROR: {error_holder['error']}")
                     await _send({"type": "error", "message": error_holder["error"]})
                 return
 
             if line.startswith("__EXIT_CODE__"):
                 exit_code = int(line.removeprefix("__EXIT_CODE__"))
+                if episode is not None:
+                    _append_run_log(episode, f"\n(exit code {exit_code})")
                 await _send({"type": "done", "exitCode": exit_code})
                 continue
 
             if line.startswith("__CANCELLED__"):
+                if episode is not None:
+                    _append_run_log(episode, "\nCancelled.")
                 await _send({"type": "cancelled"})
                 continue
 
@@ -2179,6 +2259,8 @@ async def _stream_command(websocket: WebSocket, command, episode: Path | None = 
                 await _send({"type": "progress", "current": current, "total": total})
                 continue
 
+            if episode is not None:
+                _append_run_log(episode, line)
             await _send({"type": "log", "line": line})
     finally:
         cancel_task.cancel()
