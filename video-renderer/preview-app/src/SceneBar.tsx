@@ -4,11 +4,13 @@ import { colors, radius, typography } from "./tokens";
 import { getTitleScenes, saveTitleScenes } from "./api";
 import type { TimelineZoom } from "./useTimelineZoom";
 
-// Distinct from ChapterStrip's per-chapter color cycle (which groups scenes
-// by topic) — this strip shows the actual scene boundaries underneath that
-// grouping, so a fixed two-color-by-type scheme keeps the two strips
-// visually distinguishable at a glance.
-const PRESENTER_COLOR = colors.timelinePresenter;
+// Presenter clips cycle through a small palette of timelinePresenter shades
+// (#115) so adjacent clips are distinguishable from each other; titles stay
+// a single fixed color since they're rarer and already visually distinct
+// from presenter clips by hue. Still deliberately its own hue family from
+// ChapterStrip's chapterPalette (which groups scenes by topic, a different
+// grouping) so the two strips aren't mistaken for showing the same thing.
+const PRESENTER_COLOR_PALETTE = colors.presenterPalette;
 const TITLE_COLOR = colors.timelineTitle;
 
 // Display-only label for the edit shortcut's hint text — mirrors BeatBar's
@@ -87,6 +89,22 @@ export function SceneBar({
     const [selectedPresenterId, setSelectedPresenterId] = useState<string | null>(null);
     const selectedAnchorRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
     const trackRef = useRef<HTMLDivElement>(null);
+    // Tracks the track div's own on-screen width for the label-fit check
+    // below (#115) — reading trackRef.current.getBoundingClientRect()
+    // directly during render would return 0 on the very first render (the
+    // ref only attaches AFTER that render commits), hiding every label
+    // until some unrelated state change happened to force a re-render.
+    // ResizeObserver keeps this correct across window resizes too, not
+    // just the initial mount.
+    const [trackWidthPx, setTrackWidthPx] = useState(0);
+
+    useEffect(() => {
+        const el = trackRef.current;
+        if (!el) return;
+        const observer = new ResizeObserver(([entry]) => setTrackWidthPx(entry.contentRect.width));
+        observer.observe(el);
+        return () => observer.disconnect();
+    }, []);
 
     // See BeatBar's identical effect's own doc comment — clears this bar's
     // selection once a different bar takes over the shared selection.
@@ -246,6 +264,18 @@ export function SceneBar({
 
     const sorted = [...scenes].sort((a, b) => a.timelineStartFrame - b.timelineStartFrame);
 
+    // Running index across presenter scenes only (titles keep their own
+    // fixed TITLE_COLOR) — used to cycle PRESENTER_COLOR_PALETTE below so
+    // adjacent clips are visually distinguishable, computed once here
+    // rather than inline in the map since "adjacent" needs each presenter
+    // scene's position among *other presenter scenes*, not its position in
+    // the combined presenter+title `sorted` array.
+    let presenterCounter = 0;
+    const presenterIndexById = new Map<string, number>();
+    for (const scene of sorted) {
+        if (scene.type === "presenter") presenterIndexById.set(scene.id, presenterCounter++);
+    }
+
     const onTrackClick = (e: React.MouseEvent<HTMLDivElement>) => {
         if (dragSegmentId) return;
         setSelectedTitle(null);
@@ -279,6 +309,18 @@ export function SceneBar({
                     const isSelected = isTitle
                         ? selectedTitle === scene.text
                         : selectedPresenterId === scene.id;
+                    const presenterIndex = presenterIndexById.get(scene.id) ?? 0;
+                    // Roughly how many px this segment gets at the track's
+                    // current on-screen width — segmentLabel's own font/padding
+                    // (10px + 6px each side) need ~7px per character, so a
+                    // label that can't fit is hidden rather than left to
+                    // CSS text-overflow ellipsis, which for a short label like
+                    // "clip 007" renders as the barely-there "clip …" (#115 —
+                    // reads as a missing name, not a legitimately truncated
+                    // one). The full label is still always available via this
+                    // segment's title tooltip below.
+                    const segmentWidthPx = (widthPct / 100) * trackWidthPx;
+                    const labelFits = segmentWidthPx >= label.length * 7 + 12;
 
                     return (
                         <div
@@ -287,7 +329,9 @@ export function SceneBar({
                                 ...styles.segment,
                                 left: `${leftPct}%`,
                                 width: `${widthPct}%`,
-                                background: isTitle ? TITLE_COLOR : PRESENTER_COLOR,
+                                background: isTitle
+                                    ? TITLE_COLOR
+                                    : PRESENTER_COLOR_PALETTE[presenterIndex % PRESENTER_COLOR_PALETTE.length],
                                 cursor: "pointer",
                                 ...(isSelected ? styles.segmentSelected : {}),
                             }}
@@ -318,7 +362,7 @@ export function SceneBar({
                                 }
                             }}
                         >
-                            {widthPct > 3 && <span style={styles.segmentLabel}>{label}</span>}
+                            {labelFits && <span style={styles.segmentLabel}>{label}</span>}
                             {/* Only offered once selected, and only for titles — matches
                                 BeatBar/MomentBar's own rule (#82): while free-navigating
                                 (this title not yet selected), the only available action is

@@ -208,6 +208,19 @@ export const crossfadeInFramesForScene = (scene: PresenterScene, previousScene: 
     );
 };
 
+// The presenter scene's own <Audio volume> curve (#115) — silences the
+// borrowed video lead-in (frame < crossfadeInFrames) so audio still cuts in
+// cleanly at the scene's true start even though the <Audio> element itself
+// is now mounted crossfadeInFrames early, alongside the video, rather than
+// in its own inner Sequence offset to start later (that extra Sequence
+// boundary sat exactly at this scene's true start — where a seek/click
+// into the scene lands — and was a likely source of a brief silent gap
+// while the browser mounted+buffered a fresh <audio> element there).
+// frame is local to the enclosing Sequence (PresenterSequence), same as
+// AnimatedPresenterFrame's own rawFrame.
+export const presenterAudioVolume = (frame: number, crossfadeInFrames: number): number =>
+    frame < crossfadeInFrames ? 0 : 1;
+
 // BackgroundScene's own equivalent of the above — always crossfades (no
 // per-scene effects.transition opt-out the way presenter cuts have,
 // since a background changing IS itself always a "this replaced that"
@@ -458,19 +471,25 @@ const AnimatedPresenterFrame = ({
                     />
                 </div>
             </div>
-            {/* Nested in its own Sequence, offset past the borrowed video
-                lead-in, so audio still cuts cleanly at this scene's true
-                start rather than starting crossfadeInFrames early and
-                overlapping the outgoing scene's own tail narration — only
-                the video dissolves, matching how a hard-cut edit with a
-                video crossfade (but no audio crossfade) normally sounds. */}
-            <Sequence from={crossfadeInFrames} durationInFrames={scene.durationInFrames}>
-                <Audio
-                    src={staticFile(video.path)}
-                    trimBefore={scene.sourceStartFrame}
-                    trimAfter={scene.sourceEndFrame}
-                />
-            </Sequence>
+            {/* Mounted once, alongside the video, for this scene's entire
+                Sequence lifetime — NOT wrapped in its own inner Sequence
+                offset past the borrowed lead-in (the previous approach).
+                That extra Sequence boundary sat right at this scene's real
+                start, exactly where the playhead lands on a seek/click into
+                this scene, and forced the browser to mount a fresh <audio>
+                element (and buffer it) at that precise moment — a likely
+                source of the brief silent gap reported in #115 when
+                selecting a clip on SceneBar. Silencing the borrowed lead-in
+                via `volume` instead achieves the identical audible result
+                (audio cuts in cleanly at the scene's true start, only the
+                video dissolves) with no extra mount point: this element has
+                the same single mount boundary as the video track above. */}
+            <Audio
+                src={staticFile(video.path)}
+                trimBefore={scene.sourceStartFrame - crossfadeInFrames}
+                trimAfter={scene.sourceEndFrame}
+                volume={(f) => presenterAudioVolume(f, crossfadeInFrames)}
+            />
         </AbsoluteFill>
     );
 };

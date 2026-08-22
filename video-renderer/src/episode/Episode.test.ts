@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { CROSSFADE_TRANSITION_FRAMES, beatSideForSceneId, captionHiddenWindowsForScene, clampedMomentDuration, crossfadeInFramesForScene, layoutWindowsForScene } from "./Episode";
+import { CROSSFADE_TRANSITION_FRAMES, beatSideForSceneId, captionHiddenWindowsForScene, clampedMomentDuration, crossfadeInFramesForScene, layoutWindowsForScene, presenterAudioVolume } from "./Episode";
 import { TRANSITION_FRAMES } from "./timing";
 import type { MomentScene, PresenterScene } from "./types";
 
@@ -415,6 +415,23 @@ describe("crossfadeInFramesForScene", () => {
         const previous = presenterScene({ id: "scene-000", durationInFrames: 900 });
 
         expect(crossfadeInFramesForScene(scene, previous)).toBe(0);
+    });
+});
+
+describe("presenterAudioVolume", () => {
+    it("silences every frame before the scene's true start when crossfading in", () => {
+        expect(presenterAudioVolume(0, CROSSFADE_TRANSITION_FRAMES)).toBe(0);
+        expect(presenterAudioVolume(CROSSFADE_TRANSITION_FRAMES - 1, CROSSFADE_TRANSITION_FRAMES)).toBe(0);
+    });
+
+    it("is at full volume from the scene's true start onward", () => {
+        expect(presenterAudioVolume(CROSSFADE_TRANSITION_FRAMES, CROSSFADE_TRANSITION_FRAMES)).toBe(1);
+        expect(presenterAudioVolume(CROSSFADE_TRANSITION_FRAMES + 50, CROSSFADE_TRANSITION_FRAMES)).toBe(1);
+    });
+
+    it("is always full volume for a hard cut (crossfadeInFrames 0) — the common case", () => {
+        expect(presenterAudioVolume(0, 0)).toBe(1);
+        expect(presenterAudioVolume(10, 0)).toBe(1);
     });
 });
 
