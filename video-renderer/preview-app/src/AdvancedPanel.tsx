@@ -212,7 +212,20 @@ export function AdvancedPanel({
             .finally(() => setCancellingRecovered(false));
     };
 
-    const runStage = (stageId: string) => startRun("/ws/stage/run", { path: episodePath, stage: stageId }, stageId);
+    // force defaults to true (#81): once a stage has already produced its
+    // artifact, clicking its button — labeled "Re-run" precisely because
+    // stage.complete is true (see StageRow below) — must actually rerun
+    // it. Without force, every pipeline stage script exits early on its
+    // own "already proposed/indexed, skipping" check (e.g.
+    // generate_title_scenes.py's own `if output_file.exists() and not
+    // args.force`), so the click looked like it worked (a log line
+    // appeared, exit code 0) but silently did nothing. A "Run" click on a
+    // stage that has never completed has no existing output to skip in
+    // the first place, so passing force there is a no-op — always
+    // defaulting it true keeps this one code path correct for both
+    // labels instead of needing the caller to track which is which.
+    const runStage = (stageId: string) =>
+        startRun("/ws/stage/run", { path: episodePath, stage: stageId, force: true }, stageId);
 
     const runRender = () => {
         const params: Record<string, unknown> = { path: episodePath, format: renderFormat };
