@@ -1,4 +1,29 @@
-import type { EpisodeBaseProps } from "video-renderer-src/episode/types";
+import type { EpisodeBackground, EpisodeBaseProps } from "video-renderer-src/episode/types";
+
+// backgrounds.json's raw renderPath -> EpisodeBackground's own path field,
+// same renderPath/path field-name mapping every other asset type gets in
+// manifestToEpisodeBaseProps below. Exported separately (not just inlined
+// in that function's own backgrounds.map call) because AssetLibraryPanel's
+// reindex/delete calls return this SAME raw backgrounds.json shape
+// directly from the API — EpisodeWorkspace's handleBackgroundsChanged must
+// apply this identical mapping before merging the result back into
+// episodeProps.backgrounds, or every EpisodeBackground consumer downstream
+// (the Remotion <Player>'s own BackgroundLayer, AssetLibraryPanel's own
+// thumbnails) ends up with the raw, non-servable `path` instead — confirmed
+// live: every background thumbnail broken-image icon'd after a reindex
+// (#92 follow-up), since the initial load's correctly-mapped path got
+// overwritten by the raw one.
+export function mapBackground(background: any): EpisodeBackground {
+    return {
+        id: background.id,
+        filename: background.filename,
+        path: background.renderPath,
+        caption: background.caption,
+        mediaType: background.mediaType,
+        duration: background.duration,
+        fps: background.fps,
+    };
+}
 
 // Mirrors pipeline/prepare_footage.py's generate_episode_props_ts field
 // mapping (manifest.json's renderPath/keyedRenderPath -> EpisodeBaseProps'
@@ -42,14 +67,6 @@ export function manifestToEpisodeBaseProps(
             kind: codeAsset.kind,
             keyColor: codeAsset.keyColor,
         })),
-        backgrounds: backgrounds.map((background: any) => ({
-            id: background.id,
-            filename: background.filename,
-            path: background.renderPath,
-            caption: background.caption,
-            mediaType: background.mediaType,
-            duration: background.duration,
-            fps: background.fps,
-        })),
+        backgrounds: backgrounds.map(mapBackground),
     };
 }

@@ -47,8 +47,14 @@ interface Props {
     // the backgrounds list itself (it's threaded down from
     // episodeProps.backgrounds, shared with BackgroundBar/ChapterStrip),
     // so autodiscovery and delete both report their result up rather than
-    // keeping a second, locally-fetched copy.
-    onBackgroundsChanged: (backgrounds: EpisodeBackground[]) => void;
+    // keeping a second, locally-fetched copy. The list passed here is the
+    // RAW backgrounds.json shape from reindexBackgrounds/deleteBackground's
+    // API response (renderPath + repo-relative path both present), NOT the
+    // already-mapped EpisodeBackground shape the `backgrounds` prop above
+    // carries — EpisodeWorkspace's own handleBackgroundsChanged is
+    // responsible for mapping it through the same renderPath->path
+    // transform manifestToEpisodeBaseProps applies on initial load.
+    onBackgroundsChanged: (backgrounds: any[]) => void;
     // Live read of the player's actual current frame, used at insert time
     // — `frameupdate`-derived state only updates on the next event and
     // can lag the true playhead by a couple of frames, which showed up as
