@@ -11,3 +11,4 @@ __pycache__/
 # progress work).
 .remotion/
 /video-renderer/public/
+/.vexp/
