@@ -63,6 +63,35 @@ interface Props {
     getCurrentFrame: () => number;
 }
 
+// A video element with no `poster` and no explicit seek paints nothing at
+// all until played — `preload="metadata"` alone still leaves currentTime
+// at 0, which most browsers render as a blank/black frame rather than the
+// clip's real opening frame, so every video thumbnail in this panel
+// (background/image/code-recording cards) showed as a black box until the
+// user actually played it (confirmed live: every .mp4/.mov background card
+// stayed black even though the underlying file loaded and played back
+// fine once inserted). Seeking a hair past frame 0 on 'loadeddata' forces
+// the browser to actually decode and paint that frame as a static poster,
+// the same trick a real <video poster> attribute would otherwise need a
+// separately-generated image file for — no server-side thumbnail
+// generation exists anywhere in this pipeline, so this stays purely
+// client-side rather than adding one.
+function VideoThumbnail({ src, style }: { src: string; style: React.CSSProperties }) {
+    return (
+        <video
+            src={src}
+            muted
+            playsInline
+            preload="metadata"
+            style={style}
+            onLoadedData={(e) => {
+                const video = e.currentTarget;
+                if (video.currentTime === 0) video.currentTime = 0.1;
+            }}
+        />
+    );
+}
+
 // A standing, always-browsable library of the episode's indexed images/
 // code files (docs: "make it transparent what the pipeline draws assets
 // from, and let the user pick instead of just accepting the AI's choice")
@@ -524,12 +553,7 @@ export function AssetLibraryPanel({
                                         >
                                             {isCurrent && <span style={styles.currentBadge}>Currently used</span>}
                                             {asset.mediaType === "video" ? (
-                                                <video
-                                                    src={`/${asset.renderPath}`}
-                                                    muted
-                                                    playsInline
-                                                    style={styles.thumb}
-                                                />
+                                                <VideoThumbnail src={`/${asset.renderPath}`} style={styles.thumb} />
                                             ) : (
                                                 <img src={`/${asset.renderPath}`} alt="" style={styles.thumb} />
                                             )}
@@ -604,7 +628,7 @@ export function AssetLibraryPanel({
                                         >
                                             {isCurrent && <span style={styles.currentBadge}>Currently used</span>}
                                             {asset.kind === "recording" ? (
-                                                <video src={`/${asset.renderPath}`} muted playsInline style={styles.thumb} />
+                                                <VideoThumbnail src={`/${asset.renderPath}`} style={styles.thumb} />
                                             ) : asset.kind === "screenshot" ? (
                                                 <img src={`/${asset.renderPath}`} alt="" style={styles.thumb} />
                                             ) : null}
@@ -693,7 +717,7 @@ export function AssetLibraryPanel({
                                             title={bg.filename}
                                         >
                                             {bg.mediaType === "video" ? (
-                                                <video src={`/${bg.path}`} muted playsInline style={styles.thumb} />
+                                                <VideoThumbnail src={`/${bg.path}`} style={styles.thumb} />
                                             ) : (
                                                 <img src={`/${bg.path}`} alt="" style={styles.thumb} />
                                             )}
