@@ -52,8 +52,39 @@ function useQueryParams() {
 // sync only by a visibilitychange listener re-fetching on focus) — now
 // there's exactly one `moments` array, owned by whichever
 // MomentEditorPanel is currently open.
+// localStorage key the AI sidebar's collapsed/expanded state is
+// remembered under (#87) — same "poiesis.<key>" convention
+// EpisodePicker's own LAST_EPISODE_PATH_KEY uses. Read once at module
+// scope (not per-render) since it never changes underneath a running tab.
+const SIDEBAR_COLLAPSED_KEY = "poiesis.sidebarCollapsed";
+
+function readSidebarCollapsed(): boolean {
+    try {
+        return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
+    } catch {
+        // Private browsing / storage disabled — default to expanded
+        // (today's only behavior) rather than throwing.
+        return false;
+    }
+}
+
 export function EpisodeWorkspace() {
     const { episodePath } = useQueryParams();
+
+    // The AI sidebar's own collapsed/expanded state (#87) — the sidebar
+    // is used only a minority of the time, so it defaults open on first
+    // visit (matching the app's existing behavior) but remembers whatever
+    // the user last chose, the same way EpisodePicker remembers the last
+    // episode path.
+    const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
+
+    useEffect(() => {
+        try {
+            localStorage.setItem(SIDEBAR_COLLAPSED_KEY, sidebarCollapsed ? "1" : "0");
+        } catch {
+            // Ignore — see readSidebarCollapsed's own try/catch.
+        }
+    }, [sidebarCollapsed]);
 
     const [episodeProps, setEpisodeProps] = useState<EpisodeProps | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -676,14 +707,48 @@ export function EpisodeWorkspace() {
     // should still render even before the plan finishes loading, so the
     // input isn't unavailable during that window — episodePath alone is
     // enough for EditPlanChat's own effects to be safe.
+    //
+    // Minimizable (#87): the sidebar sits unused most of the time, so it
+    // can be collapsed down to a slim always-visible rail — a single
+    // click (its own toggle button, or the whole rail when collapsed)
+    // switches states; the editor column beside it (styles.container,
+    // flex: 1 with its own maxWidth/margin: auto) automatically reclaims
+    // the freed width once SIDEBAR_WIDTH shrinks to
+    // SIDEBAR_COLLAPSED_WIDTH, with no separate "expanded editor" layout
+    // to maintain.
     const sidebar = episodePath ? (
-        <div style={styles.sidebar}>
-            <EditPlanChat
-                episodePath={episodePath}
-                onApplied={handleChatApplied}
-                selectedSceneId={selectedSceneIdForChat}
-                scenePlan={episodeProps?.scenePlan}
-            />
+        <div style={sidebarCollapsed ? styles.sidebarCollapsed : styles.sidebar}>
+            {sidebarCollapsed ? (
+                <button
+                    type="button"
+                    className="sidebar-expand-button"
+                    style={styles.sidebarExpandButton}
+                    onClick={() => setSidebarCollapsed(false)}
+                    title="Open AI sidebar"
+                    aria-label="Open AI sidebar"
+                >
+                    <span className="sidebar-expand-icon" style={styles.sidebarExpandIcon}>💬</span>
+                    <span style={styles.sidebarExpandLabel}>Ask AI</span>
+                </button>
+            ) : (
+                <>
+                    <button
+                        type="button"
+                        style={styles.sidebarCollapseButton}
+                        onClick={() => setSidebarCollapsed(true)}
+                        title="Minimize AI sidebar"
+                        aria-label="Minimize AI sidebar"
+                    >
+                        ‹
+                    </button>
+                    <EditPlanChat
+                        episodePath={episodePath}
+                        onApplied={handleChatApplied}
+                        selectedSceneId={selectedSceneIdForChat}
+                        scenePlan={episodeProps?.scenePlan}
+                    />
+                </>
+            )}
         </div>
     ) : null;
 
@@ -1028,6 +1093,13 @@ const WORKSPACE_MAX_WIDTH = 1280;
 // drag-to-resize state for a first version (#65).
 const SIDEBAR_WIDTH = 340;
 
+// The minimized rail's width (#87) — wide enough for the icon + "Ask AI"
+// label to sit comfortably without wrapping, narrow enough that
+// collapsing it visibly frees up real space for the editor column beside
+// it (container's own flex: 1 + maxWidth/margin: auto reclaims exactly
+// this difference automatically).
+const SIDEBAR_COLLAPSED_WIDTH = 56;
+
 const styles: Record<string, React.CSSProperties> = {
     // Top-level app shell: a fixed-width, always-visible AI chat sidebar on
     // the left (#65 — Canva-style left panel, not a footer strip) plus the
@@ -1064,6 +1136,94 @@ const styles: Record<string, React.CSSProperties> = {
         // box) below the actual viewport with no way to scroll back to it,
         // since overflow is hidden here by design (see above).
         boxSizing: "border-box",
+        // sidebarCollapseButton below is absolutely positioned — the
+        // existing position: "sticky" above already establishes a valid
+        // containing block for it (sticky counts the same as relative/
+        // absolute/fixed for this purpose), so no separate position
+        // change is needed here.
+        //
+        // width transitions smoothly between SIDEBAR_WIDTH and
+        // SIDEBAR_COLLAPSED_WIDTH (#87) — the editor column beside it
+        // visibly grows/shrinks in step rather than snapping instantly.
+        transition: "width 0.2s ease",
+    },
+    // Same box, minimized (#87) — a slim always-visible rail rather than
+    // fully hiding the sidebar, so "AI is still here, just tucked away" is
+    // always legible at a glance (CLAUDE.md's own "do not hide empty/
+    // secondary state" principle, applied to a UI affordance rather than
+    // data).
+    sidebarCollapsed: {
+        width: SIDEBAR_COLLAPSED_WIDTH,
+        flexShrink: 0,
+        display: "flex",
+        flexDirection: "column",
+        padding: 0,
+        borderRight: `1px solid ${colors.border}`,
+        background: colors.surface,
+        position: "sticky",
+        top: 0,
+        alignSelf: "flex-start",
+        height: "100vh",
+        overflow: "hidden",
+        boxSizing: "border-box",
+        transition: "width 0.2s ease",
+    },
+    // The entire collapsed rail is one big click target (not just a small
+    // icon) — mirrors the ticket's own "clicking it to maximize" wording,
+    // and makes the affordance easy to hit without precision aiming.
+    sidebarExpandButton: {
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 10,
+        width: "100%",
+        height: "100%",
+        padding: 0,
+        background: "none",
+        border: "none",
+        cursor: "pointer",
+        color: colors.textSecondary,
+        // The hover/focus hint animation the ticket asks for — a gentle
+        // sideways nudge (not a bounce/pulse, which CLAUDE.md's own "avoid
+        // AI slop" section calls out as excessive motion) signaling "this
+        // opens toward the right" on the one interaction that actually
+        // matters here.
+        transition: "color 0.15s ease",
+    },
+    sidebarExpandIcon: {
+        fontSize: 20,
+        lineHeight: 1,
+        transition: "transform 0.15s ease",
+    },
+    // Vertical label (writing-mode, not truncated horizontal text) — reads
+    // top-to-bottom down the narrow rail rather than being clipped or
+    // forcing the rail wider than SIDEBAR_COLLAPSED_WIDTH.
+    sidebarExpandLabel: {
+        fontSize: typography.size.xs,
+        fontWeight: typography.weight.semibold,
+        letterSpacing: 0.6,
+        textTransform: "uppercase",
+        writingMode: "vertical-rl",
+        transform: "rotate(180deg)",
+    },
+    sidebarCollapseButton: {
+        position: "absolute",
+        top: 12,
+        right: 10,
+        width: 22,
+        height: 22,
+        padding: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: colors.surfaceElevated,
+        border: `1px solid ${colors.border}`,
+        borderRadius: radius.sm,
+        color: colors.textSecondary,
+        cursor: "pointer",
+        fontSize: typography.size.md,
+        lineHeight: 1,
     },
     container: {
         fontFamily: typography.fontFamily,
