@@ -60,7 +60,6 @@ export function BackgroundEditorPanel({ episodePath, segmentId, backgrounds, ref
 
     const entry = scenes[index];
     const background = backgrounds.find((b) => b.id === entry.backgroundId);
-    const isImage = background?.mediaType === "image";
     const motion = entry.imageMotion ?? "none";
     const speed = entry.imageMotionSpeed ?? "3";
 
@@ -108,50 +107,44 @@ export function BackgroundEditorPanel({ episodePath, segmentId, backgrounds, ref
                 </button>
             </div>
 
-            {!isImage ? (
-                <p style={styles.hint}>Video backgrounds already have their own motion — nothing to configure here.</p>
-            ) : (
-                <>
-                    <div style={styles.fieldRow}>
-                        <label style={styles.presentationLabel}>Motion</label>
-                        <select
-                            value={motion}
-                            onChange={(e) => {
-                                const nextMotion = e.target.value;
-                                update(
-                                    nextMotion === "none"
-                                        ? { imageMotion: undefined, imageMotionSpeed: undefined }
-                                        : { imageMotion: nextMotion, imageMotionSpeed: entry.imageMotionSpeed ?? "3" }
-                                );
-                            }}
-                            style={{ ...styles.input, flex: 1 }}
-                        >
-                            <option value="none">No motion</option>
-                            {IMAGE_MOTION_OPTIONS.filter((o) => o.value !== "none").map((option) => (
-                                <option key={option.value} value={option.value}>
-                                    {option.label}
-                                </option>
-                            ))}
-                        </select>
-                    </div>
+            <div style={styles.fieldRow}>
+                <label style={styles.presentationLabel}>Motion</label>
+                <select
+                    value={motion}
+                    onChange={(e) => {
+                        const nextMotion = e.target.value;
+                        update(
+                            nextMotion === "none"
+                                ? { imageMotion: undefined, imageMotionSpeed: undefined }
+                                : { imageMotion: nextMotion, imageMotionSpeed: entry.imageMotionSpeed ?? "3" }
+                        );
+                    }}
+                    style={{ ...styles.input, flex: 1 }}
+                >
+                    <option value="none">No motion</option>
+                    {IMAGE_MOTION_OPTIONS.filter((o) => o.value !== "none").map((option) => (
+                        <option key={option.value} value={option.value}>
+                            {option.label}
+                        </option>
+                    ))}
+                </select>
+            </div>
 
-                    {motion !== "none" && (
-                        <div style={styles.fieldRow}>
-                            <label style={styles.presentationLabel}>Speed</label>
-                            <select
-                                value={speed}
-                                onChange={(e) => update({ imageMotionSpeed: e.target.value })}
-                                style={{ ...styles.input, flex: 1 }}
-                            >
-                                {IMAGE_MOTION_SPEED_OPTIONS.map((option) => (
-                                    <option key={option.value} value={option.value}>
-                                        {option.label}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
-                    )}
-                </>
+            {motion !== "none" && (
+                <div style={styles.fieldRow}>
+                    <label style={styles.presentationLabel}>Speed</label>
+                    <select
+                        value={speed}
+                        onChange={(e) => update({ imageMotionSpeed: e.target.value })}
+                        style={{ ...styles.input, flex: 1 }}
+                    >
+                        {IMAGE_MOTION_SPEED_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                                {option.label}
+                            </option>
+                        ))}
+                    </select>
+                </div>
             )}
 
             <div style={styles.actions}>
