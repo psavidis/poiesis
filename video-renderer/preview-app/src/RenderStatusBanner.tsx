@@ -4,28 +4,28 @@ import { colors, radius, typography } from "./tokens";
 
 interface Props {
     episodePath: string;
-    // Whether the Advanced tab (where the full progress bar / cancel
-    // control live) is currently open — the banner hides itself there to
-    // avoid showing the same "N of M clips" information twice on screen
-    // at once.
-    advancedTabOpen: boolean;
-    onOpenAdvanced: () => void;
+    // Whether the Export tab (where the full progress bar / cancel
+    // control live — moved there from Advanced, #83) is currently open —
+    // the banner hides itself there to avoid showing the same "N of M
+    // clips" information twice on screen at once.
+    exportTabOpen: boolean;
+    onOpenExport: () => void;
 }
 
 // A persistent, always-visible strip shown above the tab strip whenever a
 // DaVinci render is running for this episode — regardless of which tab is
 // currently open. Without this, render progress was only visible inside
-// the Advanced tab (see AdvancedPanel.tsx's own progress bar), so a render
+// the Export tab (see ExportPanel.tsx's own progress bar), so a render
 // kicked off and then left running while the user browsed Storyboard/Asset
 // library/Episode analysis gave no indication anything was still going —
 // exactly the gap this component closes.
 //
-// Independent from AdvancedPanel's own websocket-driven progress state —
+// Independent from ExportPanel's own websocket-driven progress state —
 // this is a second, simple poller of the same read-only
-// GET /api/episode/render-status endpoint AdvancedPanel already uses for
+// GET /api/episode/render-status endpoint ExportPanel already uses for
 // its own post-refresh recovery (see that file's own recovery effect).
 // Two independent pollers of one cheap, idempotent GET is a smaller,
-// safer change than lifting AdvancedPanel's whole websocket/run-state
+// safer change than lifting ExportPanel's whole websocket/run-state
 // management up into EpisodeWorkspace just so one banner can read it.
 interface RenderStatusSnapshot {
     current: number | null;
@@ -40,7 +40,7 @@ function formatLabel(format: "video" | "davinci" | null, resolution: string | nu
     return [kind, resolution ? `(${resolution})` : null].filter(Boolean).join(" ");
 }
 
-export function RenderStatusBanner({ episodePath, advancedTabOpen, onOpenAdvanced }: Props) {
+export function RenderStatusBanner({ episodePath, exportTabOpen, onOpenExport }: Props) {
     const [status, setStatus] = useState<RenderStatusSnapshot | null>(null);
 
     useEffect(() => {
@@ -74,19 +74,19 @@ export function RenderStatusBanner({ episodePath, advancedTabOpen, onOpenAdvance
         };
     }, [episodePath]);
 
-    if (!status || advancedTabOpen) return null;
+    if (!status || exportTabOpen) return null;
 
     const { current, total, format, resolution } = status;
     const pct = total && total > 0 && current !== null ? Math.min(100, Math.round((current / total) * 100)) : null;
     const kindLabel = formatLabel(format, resolution);
-    // See AdvancedPanel.tsx's own ProgressBar for why this isn't always
+    // See ExportPanel.tsx's own ProgressBar for why this isn't always
     // "clips" — DaVinci exports report per rendered clip, the plain MP4
     // path reports per frame.
     const unit = format === "video" ? "frame" : "clip";
     const unitLabel = total === 1 ? unit : `${unit}s`;
 
     return (
-        <button style={styles.banner} onClick={onOpenAdvanced}>
+        <button style={styles.banner} onClick={onOpenExport}>
             <span className="phase-dot-active" style={styles.dot} />
             <span className="processing-label" style={styles.label}>
                 {current !== null && total !== null ? `Rendering — ${current} of ${total} ${unitLabel}` : "Rendering…"}

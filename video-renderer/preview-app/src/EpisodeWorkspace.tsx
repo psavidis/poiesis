@@ -14,6 +14,7 @@ import { ChapterStrip } from "./ChapterStrip";
 import { EditPlanChat } from "./EditPlanChat";
 import { EpisodeAnalysisPanel } from "./EpisodeAnalysisPanel";
 import { manifestToEpisodeBaseProps, mapBackground } from "./episodeProps";
+import { ExportPanel } from "./ExportPanel";
 import { ImageBar } from "./ImageBar";
 import { ImageEditorPanel } from "./ImageEditorPanel";
 import { InlineTextEditor, type EditTarget } from "./InlineTextEditor";
@@ -175,7 +176,7 @@ export function EpisodeWorkspace() {
     // exactly one tab strip, one shared body box, one thing open at a
     // time — closer to a standard tabbed inspector than 4 unrelated
     // accordions.
-    const [activeTab, setActiveTab] = useState<"advanced" | "storyboard" | "assets" | "analysis" | null>(null);
+    const [activeTab, setActiveTab] = useState<"advanced" | "export" | "storyboard" | "assets" | "analysis" | null>(null);
     // Storyboard/Episode analysis tabs hide themselves entirely when their
     // backing data doesn't exist yet (previously each panel's own `return
     // null`) — both components report this up via onHasContentChange
@@ -675,10 +676,13 @@ export function EpisodeWorkspace() {
             </div>
             <ProgressFlow episodePath={episodePath} skipCaptions={!includeCaptions} onStatusChange={setEpisodeStatus} />
 
+            {/* Render lives in the Export tab now (#83), not Advanced — the
+                banner opens whichever tab actually shows a render's
+                progress. */}
             <RenderStatusBanner
                 episodePath={episodePath}
-                advancedTabOpen={activeTab === "advanced"}
-                onOpenAdvanced={() => setActiveTab("advanced")}
+                exportTabOpen={activeTab === "export"}
+                onOpenExport={() => setActiveTab("export")}
             />
 
             <div style={styles.tabStrip}>
@@ -688,6 +692,13 @@ export function EpisodeWorkspace() {
                     onClick={() => setActiveTab((t) => (t === "advanced" ? null : "advanced"))}
                 >
                     Advanced
+                </button>
+                <button
+                    className={activeTab === "export" ? undefined : "secondary"}
+                    style={styles.tabStripButton}
+                    onClick={() => setActiveTab((t) => (t === "export" ? null : "export"))}
+                >
+                    Export
                 </button>
                 {hasStoryboard && (
                     <button
@@ -727,9 +738,14 @@ export function EpisodeWorkspace() {
                         episodePath={episodePath}
                         status={episodeStatus}
                         onStatusChange={setEpisodeStatus}
+                        isActive={activeTab === "advanced"}
+                    />
+                    <ExportPanel
+                        episodePath={episodePath}
+                        status={episodeStatus}
                         includeCaptions={includeCaptions}
                         onIncludeCaptionsChange={setIncludeCaptions}
-                        isActive={activeTab === "advanced"}
+                        isActive={activeTab === "export"}
                     />
                     <StoryboardPanel
                         episodePath={episodePath}
@@ -1063,7 +1079,7 @@ export function EpisodeWorkspace() {
                     style={styles.checkboxRow}
                     title={
                         captionsInfo && captionsInfo.count === 0
-                            ? 'No captions exist for this episode yet — tick "Include captions" in Advanced and re-run "Generate captions" first.'
+                            ? 'No captions exist for this episode yet — tick "Include captions" in Export and re-run "Generate captions" first.'
                             : undefined
                     }
                 >
