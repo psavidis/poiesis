@@ -27,8 +27,7 @@
       "fullVisualMaxRatioToSideMoments": 0.25
     },
     "titles": {
-      "minSpacingSeconds": 20,
-      "durationFrames": 60
+      "minSpacingSeconds": 20
     },
     "emphasis": {
       "minSecondsBetweenBeats": 4.0,
