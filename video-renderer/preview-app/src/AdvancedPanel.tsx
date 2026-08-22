@@ -40,6 +40,14 @@ export function AdvancedPanel({
     const [logLines, setLogLines] = useState<string[]>([]);
     const [logVisible, setLogVisible] = useState(false);
     const [logExpanded, setLogExpanded] = useState(false);
+    // Copy-to-clipboard feedback for the Output panel (#84) — true right
+    // after a successful copy, showing a checkmark/"Copied" in place of
+    // the copy icon; reset back to copyable the moment logLines changes
+    // again (see the effect below), so a stale "Copied" never lingers
+    // once the actual content it referred to is no longer what's on
+    // screen — matters most for a still-running pipeline, whose output
+    // keeps growing line by line.
+    const [copied, setCopied] = useState(false);
     const [progressTotal, setProgressTotal] = useState<number | null>(null);
     const [progressCurrent, setProgressCurrent] = useState(0);
     // True when the progress bar is showing state RECOVERED via
@@ -151,6 +159,26 @@ export function AdvancedPanel({
             next.push(line);
             return next;
         });
+    };
+
+    // Reverts the copy button back to its copyable state as soon as the
+    // output actually changes (#84's own requirement) — a still-running
+    // pipeline appends new lines every few moments, so "Copied" must not
+    // keep showing once what's on screen is no longer what got copied.
+    useEffect(() => {
+        setCopied(false);
+    }, [logLines]);
+
+    const copyLogToClipboard = async () => {
+        try {
+            await navigator.clipboard.writeText(logLines.join("\n"));
+            setCopied(true);
+        } catch {
+            // Clipboard permission denied, insecure context, etc. — the
+            // button stays in its normal copyable state rather than
+            // falsely claiming success; nothing else to surface here for
+            // what's a low-stakes convenience action.
+        }
     };
 
     const refreshStatus = () => {
@@ -348,7 +376,22 @@ export function AdvancedPanel({
                         </button>
                     )}
 
-                    {!recoveredRender && logExpanded && <pre style={styles.logPanel}>{logLines.join("\n")}</pre>}
+                    {!recoveredRender && logExpanded && (
+                        <div style={styles.logPanelWrap}>
+                            <button
+                                type="button"
+                                className="secondary small"
+                                style={styles.copyLogButton}
+                                onClick={copyLogToClipboard}
+                                disabled={logLines.length === 0}
+                                title="Copy output to clipboard"
+                                aria-label="Copy output to clipboard"
+                            >
+                                {copied ? "✓ Copied" : "Copy"}
+                            </button>
+                            <pre style={styles.logPanel}>{logLines.join("\n")}</pre>
+                        </div>
+                    )}
                 </div>
             )}
         </div>
@@ -518,10 +561,26 @@ const styles: Record<string, React.CSSProperties> = {
         border: `1px solid ${colors.border}`,
         borderRadius: radius.md,
         padding: 10,
+        // Room for copyLogButton (top-right, absolutely positioned) so it
+        // never overlaps the first line of real output.
+        paddingTop: 34,
         fontSize: typography.size.sm,
         fontFamily: "monospace",
         color: colors.codeText,
         whiteSpace: "pre-wrap",
         margin: 0,
+    },
+    // Anchors copyLogButton to logPanel's own top-right corner (#84's "a
+    // copy option is displayed at the output area top-right corner") —
+    // a plain wrapper div, not logPanel itself, since logPanel is a <pre>
+    // and needs to stay a pure text container.
+    logPanelWrap: {
+        position: "relative",
+    },
+    copyLogButton: {
+        position: "absolute",
+        top: 6,
+        right: 6,
+        zIndex: 1,
     },
 };
