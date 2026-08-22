@@ -80,17 +80,27 @@ interface Props {
     currentFrame: number;
     fps: number;
     onSeek: (absoluteFrame: number) => void;
+    // Live playhead read (bypasses the currentFrame prop's render-cycle lag
+    // — see EpisodeWorkspace's own getCurrentFrame doc comment) for Cmd+I's
+    // insert-at-playhead (#86), the same reason BackgroundBar's Cmd+B reads
+    // getCurrentFrame() rather than its currentFrame prop: reading the
+    // stale prop right after a chapter-select click (which itself just
+    // called onSeek) can snap to the WRONG nearest boundary — the one
+    // before the click, not the one just seeked to.
+    getCurrentFrame: () => number;
     // Opens the inline text editor for a chapter's underlying TitleScene
     // (see #34) — chapters ARE title scenes (chaptersFromTitles derives
     // one chapter per TitleScene, see above). Same anchor-aware signature
     // as SceneBar/MomentBar's onSelect* callbacks. Optional so ChapterStrip
     // still works standalone without every caller needing to pass a no-op.
     onSelectTitle?: (titleText: string, anchor: { x: number; y: number }) => void;
-    // Opens the inline text editor for the lead-in chapter (#83) — it has
-    // no existing TitleScene to key onSelectTitle's text-match off of, so
-    // this is a distinct callback taking the segmentId a brand-new title
-    // should be created at instead.
-    onCreateLeadInTitle?: (segmentId: string, anchor: { x: number; y: number }) => void;
+    // Opens the inline text editor to CREATE a brand-new title/chapter at a
+    // given segmentId, rather than editing an existing one — used both by
+    // clicking the lead-in chapter (#83, which has no existing TitleScene
+    // to key onSelectTitle's text-match off of) and by Cmd+I (#86) at the
+    // playhead, which inserts a new chapter boundary anywhere in the
+    // episode, not only before the first title card.
+    onCreateTitleAt?: (segmentId: string, anchor: { x: number; y: number }) => void;
     // Set by EpisodeWorkspace right after a chat edit touches a title
     // scene (#54) — keyed by title text (a chapter's own identity here,
     // since chapters aren't derived with their own scene id), not sceneId.
@@ -133,8 +143,9 @@ export function ChapterStrip({
     currentFrame,
     fps,
     onSeek,
+    getCurrentFrame,
     onSelectTitle,
-    onCreateLeadInTitle,
+    onCreateTitleAt,
     highlightedTitleText,
     episodePath,
     onSaved,
@@ -253,7 +264,7 @@ export function ChapterStrip({
     // place the title at frame 0 of, correctly turning "no title" into a
     // real one at the start) to seed a brand-new title_scenes.json entry.
     useEffect(() => {
-        if (!leadInSelected || !onCreateLeadInTitle) return;
+        if (!leadInSelected || !onCreateTitleAt) return;
 
         const onKeyDown = (e: KeyboardEvent) => {
             if (e.key.toLowerCase() !== "e" || !(e.metaKey || e.ctrlKey)) return;
@@ -262,12 +273,70 @@ export function ChapterStrip({
             if (boundaryPositions.length === 0) return;
 
             e.preventDefault();
-            onCreateLeadInTitle(boundaryPositions[0].segmentId, selectedAnchorRef.current);
+            onCreateTitleAt(boundaryPositions[0].segmentId, selectedAnchorRef.current);
         };
 
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
-    }, [leadInSelected, onCreateLeadInTitle, boundaryPositions]);
+    }, [leadInSelected, onCreateTitleAt, boundaryPositions]);
+
+    // A playhead frame this close to an existing title's own boundary is
+    // treated as "already a chapter here" by Cmd+I below — matches the
+    // backend's own MIN_PIECE_FRAMES_SECONDS (generate_title_scenes.py),
+    // which snaps a split landing this close to a boundary onto it rather
+    // than leaving a sliver piece.
+    const MIN_CHAPTER_SPACING_FRAMES = fps;
+
+    // Cmd+I (Mac) / Ctrl+I (elsewhere) inserts a brand-new chapter boundary
+    // at the playhead (#86) — global like MomentBar/BackgroundBar's own
+    // Cmd+I/Cmd+B, doesn't require a chapter to be selected first (inserting
+    // is independent of selection). Checked against the RAW playhead frame
+    // first — a title's own timelineStartFrame is NOT generally one of
+    // boundaryPositions's resolvable transcript-segment positions (the
+    // title card's own on-screen duration shifts everything after it, see
+    // merge_title_scenes), so snapping to the nearest transcript segment
+    // before comparing against existing titles could land tens of frames
+    // away from a title that already sits almost exactly at the playhead —
+    // confirmed live: the nearest transcript segment to a real title's own
+    // start landed 90 frames (3s) away, well outside any reasonable
+    // "already a title here" tolerance. Only once past that check does the
+    // playhead snap to the nearest resolvable segment position, to seed a
+    // real title_scenes.json entry. Reads getCurrentFrame() rather than the
+    // currentFrame prop — see the prop's own doc comment: clicking a
+    // chapter to select it also seeks there, and currentFrame hasn't caught
+    // up to that seek yet on the very next keystroke.
+    useEffect(() => {
+        if (!onCreateTitleAt) return;
+
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key.toLowerCase() !== "i" || !(e.metaKey || e.ctrlKey)) return;
+            const target = e.target as HTMLElement | null;
+            if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+            if (boundaryPositions.length === 0 || !trackRef.current) return;
+
+            const frame = getCurrentFrame();
+
+            const tooCloseToExistingTitle = titles.some(
+                (t) => Math.abs(t.timelineStartFrame - frame) < MIN_CHAPTER_SPACING_FRAMES
+            );
+            if (tooCloseToExistingTitle) return;
+
+            const nearest = boundaryPositions.reduce((closest, p) =>
+                Math.abs(p.timelineFrame - frame) < Math.abs(closest.timelineFrame - frame) ? p : closest
+            );
+
+            e.preventDefault();
+            const rect = trackRef.current.getBoundingClientRect();
+            const anchorX = rect.left + (nearest.timelineFrame / totalFrames) * rect.width;
+            setSelectedTitle(null);
+            setLeadInSelected(false);
+            onCreateTitleAt(nearest.segmentId, { x: anchorX, y: rect.bottom });
+        };
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [onCreateTitleAt, boundaryPositions, getCurrentFrame, totalFrames, titles]);
 
     // Delete/Backspace on a selected title shows the inline confirm —
     // mirrors MomentBar's own delete effect. Unlike Cmd+E (which only
@@ -460,7 +529,7 @@ export function ChapterStrip({
                     const color = chapter.title === null ? colors.borderStrong : CHAPTER_COLORS[i % CHAPTER_COLORS.length];
 
                     const isLeadIn = chapter.title === null;
-                    const selectable = isLeadIn ? !!onCreateLeadInTitle : !!onSelectTitle;
+                    const selectable = isLeadIn ? !!onCreateTitleAt : !!onSelectTitle;
                     const isSelected = isLeadIn ? leadInSelected : selectedTitle === chapter.title;
                     const draggable = titleIndex !== -1;
 
@@ -546,7 +615,9 @@ export function ChapterStrip({
                     ? `Selected — press ${MOD_KEY_LABEL}+E to give this lead-in a title card.`
                     : `Click anywhere to jump the player there${
                           onSelectTitle ? `, or click a chapter to select it, then ${MOD_KEY_LABEL}+E to edit` : ""
-                      }. Drag a chapter's left edge to move its boundary.`}
+                      }. Drag a chapter's left edge to move its boundary.${
+                          onCreateTitleAt ? ` Press ${MOD_KEY_LABEL}+I to insert a new chapter at the playhead.` : ""
+                      }`}
             </div>
         </div>
     );
