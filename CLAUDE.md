@@ -2610,6 +2610,16 @@ Verify that the expected changes are present.
 
 If GitHub has not automatically closed the issue, close it.
 
+Add the `verification:pending` label to the issue, so the user can filter
+for tickets that are implemented and merged but not yet manually verified
+by them (create the label first if it does not already exist in the repo).
+Only add this label to tickets actually completed in the current session —
+never add it to a ticket that was already done before this session started.
+
+```bash
+gh issue edit <issue-number> --add-label "verification:pending"
+```
+
 Delete the feature branch after successful merge.
 
 Remote branch:
@@ -2643,6 +2653,7 @@ A ticket is complete only when all of the following are true:
 * [ ] PR was squash-merged into `main`.
 * [ ] `main` contains the completed change.
 * [ ] Ticket is closed.
+* [ ] Ticket was labeled `verification:pending`.
 * [ ] Feature branch was deleted.
 * [ ] Working tree is clean.
 
