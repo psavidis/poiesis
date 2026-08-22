@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import type { BackgroundImageMotion, BackgroundImageMotionSpeed, EpisodeBackground, ScenePlan } from "video-renderer-src/episode/types";
+import type { EpisodeBackground, ScenePlan } from "video-renderer-src/episode/types";
 import { contentTypeAndPresentationFor } from "./MomentEditorPanel";
 import { momentIndexFromSceneId, normalizeMoment } from "./momentDuration";
 import { deleteAsset, deleteBackground, deleteCodeAsset, getMoments, reindexAssets, reindexBackgrounds, reindexCodeAssets, saveMoments } from "./api";
 import { insertBackgroundAtFrame } from "./backgroundInsert";
-import { IMAGE_MOTION_OPTIONS, IMAGE_MOTION_SPEED_OPTIONS } from "./BackgroundBar";
 import { colors, radius, typography } from "./tokens";
 
 interface ImageAsset {
@@ -61,6 +60,14 @@ interface Props {
     // backgrounds inserted "at 0:00" landing a few frames late (see
     // EpisodeWorkspace.tsx).
     getCurrentFrame: () => number;
+    // Opens BackgroundEditorPanel (#91 follow-up) for a segmentId — called
+    // right after inserting an image background, so motion is chosen in
+    // the persistent bottom panel instead of the old inline expanding row
+    // that read as cramped/clipped between neighbouring cards (the
+    // original #91 complaint). A video background has no motion to
+    // configure, so it's still inserted directly with no panel opened
+    // afterward.
+    onBackgroundEditRequested: (segmentId: string) => void;
 }
 
 // A video element with no `poster` and no explicit seek paints nothing at
@@ -135,6 +142,7 @@ export function AssetLibraryPanel({
     backgrounds: backgroundLibrary,
     onBackgroundsChanged,
     getCurrentFrame,
+    onBackgroundEditRequested,
 }: Props) {
     const [images, setImages] = useState<ImageAsset[]>([]);
     const [codeAssets, setCodeAssets] = useState<CodeAsset[]>([]);
@@ -151,13 +159,6 @@ export function AssetLibraryPanel({
     const [applyingId, setApplyingId] = useState<string | null>(null);
     const [hint, setHint] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
-    // Which background card's direction row is expanded, and within
-    // that, which direction's speed row — same nested reveal as
-    // BackgroundBar's own Cmd+B picker (see IMAGE_MOTION_OPTIONS/
-    // IMAGE_MOTION_SPEED_OPTIONS, imported from there rather than a
-    // second copy). Only relevant on the Backgrounds tab.
-    const [expandedBackgroundId, setExpandedBackgroundId] = useState<string | null>(null);
-    const [expandedBackgroundMotion, setExpandedBackgroundMotion] = useState<BackgroundImageMotion | null>(null);
     const [insertingBackgroundId, setInsertingBackgroundId] = useState<string | null>(null);
     // Which background card's delete confirm is showing — mirrors
     // ImageBar's own pendingDeleteId pattern.
@@ -359,23 +360,22 @@ export function AssetLibraryPanel({
     // helper (and therefore identical semantics — works at any playhead
     // position, splitting an already-covered span there) as
     // BackgroundBar's own Cmd+B, so inserting from this panel behaves
-    // exactly the same as inserting from the timeline bar.
-    const insertBackground = async (
-        backgroundId: string,
-        imageMotion?: BackgroundImageMotion,
-        imageMotionSpeed?: BackgroundImageMotionSpeed
-    ) => {
+    // exactly the same as inserting from the timeline bar. Always inserts
+    // with no motion (#91 follow-up) — motion is chosen afterward in the
+    // persistent BackgroundEditorPanel this opens on success for an image
+    // background, not up front as part of the insert click.
+    const insertBackground = async (backgroundId: string) => {
         setInsertingBackgroundId(backgroundId);
         setError(null);
         setHint(null);
 
-        const result = await insertBackgroundAtFrame(episodePath, getCurrentFrame(), backgroundId, imageMotion, imageMotionSpeed);
+        const result = await insertBackgroundAtFrame(episodePath, getCurrentFrame(), backgroundId);
 
         if (result.ok) {
             onSaved();
-            setExpandedBackgroundId(null);
-            setExpandedBackgroundMotion(null);
             setHint("Inserted — it runs from the current playhead position until the next background or the episode's end.");
+            const background = backgroundLibrary.find((b) => b.id === backgroundId);
+            if (background?.mediaType === "image") onBackgroundEditRequested(result.segmentId);
         } else {
             setError(result.error);
         }
@@ -402,10 +402,6 @@ export function AssetLibraryPanel({
             lastBackgroundsJsonRef.current = JSON.stringify(backgrounds);
             onBackgroundsChanged(backgrounds);
             setPendingDeleteBackgroundId(null);
-            if (expandedBackgroundId === backgroundId) {
-                setExpandedBackgroundId(null);
-                setExpandedBackgroundMotion(null);
-            }
         } catch (e) {
             setError(String(e));
         } finally {
@@ -681,8 +677,6 @@ export function AssetLibraryPanel({
                                 </p>
                             )}
                             {backgroundLibrary.map((bg) => {
-                                const isImage = bg.mediaType === "image";
-                                const isExpanded = expandedBackgroundId === bg.id;
                                 const isInserting = insertingBackgroundId === bg.id;
                                 const isPendingDelete = pendingDeleteBackgroundId === bg.id;
                                 const isDeleting = deletingBackgroundId === bg.id;
@@ -706,14 +700,7 @@ export function AssetLibraryPanel({
                                             type="button"
                                             style={styles.cardInnerButton}
                                             disabled={isInserting}
-                                            onClick={() => {
-                                                if (!isImage) {
-                                                    insertBackground(bg.id);
-                                                    return;
-                                                }
-                                                setExpandedBackgroundId(isExpanded ? null : bg.id);
-                                                setExpandedBackgroundMotion(null);
-                                            }}
+                                            onClick={() => insertBackground(bg.id)}
                                             title={bg.filename}
                                         >
                                             {bg.mediaType === "video" ? (
@@ -744,62 +731,6 @@ export function AssetLibraryPanel({
                                                         Cancel
                                                     </button>
                                                 </div>
-                                            </div>
-                                        )}
-                                        {isExpanded && (
-                                            <div style={styles.motionRow}>
-                                                {IMAGE_MOTION_OPTIONS.map((option) => {
-                                                    if (option.value === "none") {
-                                                        return (
-                                                            <button
-                                                                key={option.value}
-                                                                type="button"
-                                                                className="secondary small"
-                                                                style={styles.motionOption}
-                                                                disabled={isInserting}
-                                                                onClick={() => insertBackground(bg.id, "none")}
-                                                            >
-                                                                {option.label}
-                                                            </button>
-                                                        );
-                                                    }
-
-                                                    const isSpeedExpanded = expandedBackgroundMotion === option.value;
-
-                                                    return (
-                                                        <div key={option.value}>
-                                                            <button
-                                                                type="button"
-                                                                className="secondary small"
-                                                                style={styles.motionOption}
-                                                                disabled={isInserting}
-                                                                onClick={() =>
-                                                                    setExpandedBackgroundMotion(isSpeedExpanded ? null : option.value)
-                                                                }
-                                                            >
-                                                                {option.label}
-                                                            </button>
-                                                            {isSpeedExpanded && (
-                                                                <div style={styles.speedRow}>
-                                                                    {IMAGE_MOTION_SPEED_OPTIONS.map((speedOption) => (
-                                                                        <button
-                                                                            key={speedOption.value}
-                                                                            type="button"
-                                                                            className="secondary small"
-                                                                            style={styles.speedOption}
-                                                                            disabled={isInserting}
-                                                                            onClick={() =>
-                                                                                insertBackground(bg.id, option.value, speedOption.value)
-                                                                            }
-                                                                        >
-                                                                            {speedOption.label}
-                                                                        </button>
-                                                                    ))}
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    );
-                                                })}
                                             </div>
                                         )}
                                     </div>
@@ -997,40 +928,5 @@ const styles: Record<string, React.CSSProperties> = {
         color: colors.textPrimary,
         fontFamily: "inherit",
         fontWeight: typography.weight.regular,
-    },
-    motionRow: {
-        display: "flex",
-        flexDirection: "column",
-        gap: 4,
-        marginTop: 6,
-        paddingTop: 6,
-        borderTop: `1px solid ${colors.border}`,
-    },
-    motionOption: {
-        textAlign: "left",
-        fontSize: typography.size.xs,
-        width: "100%",
-    },
-    // Stacked vertically, not a row (#91) — this card sits in a narrow grid
-    // column (grid's own minmax(140px, 1fr), see styles.grid), nowhere near
-    // wide enough for 3 side-by-side buttons; laid out as a row here, the
-    // third ("Strong") rendered past the card's own right edge, invisible
-    // behind whatever grid cell happened to sit next to it. Vertical stacking
-    // matches motionRow just above it (the direction options), so both
-    // nested reveal levels read as the same pattern and neither depends on
-    // the card being wide enough to hold a row.
-    speedRow: {
-        display: "flex",
-        flexDirection: "column",
-        gap: 4,
-        marginTop: 4,
-        marginLeft: 8,
-        paddingLeft: 6,
-        borderLeft: `2px solid ${colors.border}`,
-    },
-    speedOption: {
-        textAlign: "left",
-        fontSize: typography.size.xs,
-        width: "100%",
     },
 };
