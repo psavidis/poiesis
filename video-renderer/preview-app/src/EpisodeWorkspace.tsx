@@ -12,7 +12,7 @@ import { BeatEditorPanel } from "./BeatEditorPanel";
 import { ChapterStrip } from "./ChapterStrip";
 import { EditPlanChat } from "./EditPlanChat";
 import { EpisodeAnalysisPanel } from "./EpisodeAnalysisPanel";
-import { manifestToEpisodeBaseProps } from "./episodeProps";
+import { manifestToEpisodeBaseProps, mapBackground } from "./episodeProps";
 import { ImageBar } from "./ImageBar";
 import { ImageEditorPanel } from "./ImageEditorPanel";
 import { InlineTextEditor, type EditTarget } from "./InlineTextEditor";
@@ -422,8 +422,20 @@ export function EpisodeWorkspace() {
     // background pickers all reflect the change immediately without a
     // full episodeProps refetch (reloadScenePlan only re-reads
     // scene-plan.json, not backgrounds.json).
-    const handleBackgroundsChanged = (backgrounds: EpisodeProps["backgrounds"]) => {
-        setEpisodeProps((prev) => (prev ? { ...prev, backgrounds } : prev));
+    //
+    // `backgrounds` here is the RAW backgrounds.json shape straight from
+    // reindexBackgrounds/deleteBackground's API response (renderPath +
+    // repo-relative path both present), not the already-mapped
+    // EpisodeBackground shape the initial load produces via
+    // manifestToEpisodeBaseProps — must go through the same mapBackground
+    // mapping before merging into episodeProps.backgrounds, or every
+    // consumer (the Remotion <Player>'s BackgroundLayer, this panel's own
+    // thumbnails) ends up reading the non-servable raw `path` instead of
+    // `renderPath` (confirmed live: every background thumbnail
+    // broken-image icon'd after a reindex, #92 follow-up).
+    const handleBackgroundsChanged = (backgrounds: any[]) => {
+        const mapped = backgrounds.map(mapBackground);
+        setEpisodeProps((prev) => (prev ? { ...prev, backgrounds: mapped } : prev));
     };
 
     // #54 — reloads the plan (same as any other applied edit) and records
