@@ -4,6 +4,13 @@ Poiesis (ποίησις) is an AI-powered content creation pipeline that transfo
 
 Built as an autonomous, agent-driven system, Poiesis orchestrates the entire production workflow—from ingesting recordings and generating transcripts to scripting, editing, rendering, and preparing content for publication. Its goal is to eliminate repetitive manual work while keeping creators in control of the creative process.
 
+# Tickets Awaiting Verification
+
+Claude labels every ticket it completes `verification:pending` once merged and closed, so it's
+easy to find what still needs a manual check:
+
+[Closed tickets awaiting verification](https://github.com/psavidis/poiesis/issues?q=is%3Aissue%20state%3Aclosed%20label%3Averification%3Apending)
+
 # Vision
 
 Creating high-quality videos should be a creative task, not an editing marathon. Poiesis automates the production pipeline so creators can focus on ideas instead of repetitive workflows.
