@@ -76,6 +76,7 @@ def test_render_status_not_running_by_default(tmp_path):
         "kind": None,
         "format": None,
         "resolution": None,
+        "log": [],
     }
 
 
@@ -103,6 +104,7 @@ def test_render_status_reports_last_known_progress_while_locked(tmp_path, monkey
         "kind": None,
         "format": None,
         "resolution": None,
+        "log": [],
     }
 
     server._clear_render_progress(episode.resolve())
@@ -128,6 +130,7 @@ def test_render_status_reports_format_and_resolution_set_up_front(tmp_path):
         "kind": "render",
         "format": "davinci",
         "resolution": "1920x1080",
+        "log": [],
     }
 
     server._clear_render_progress(episode.resolve())
@@ -152,9 +155,72 @@ def test_render_status_reports_kind_for_a_pipeline_run(tmp_path):
         "kind": "pipeline",
         "format": None,
         "resolution": None,
+        "log": [],
     }
 
     server._clear_render_progress(episode.resolve())
+
+
+# #134: the run log survives the run finishing — unlike _render_progress,
+# it must NOT be wiped by _clear_render_progress, since a finished run's
+# output is exactly what a client recovering after a refresh needs to see.
+# "kind" must survive too — it's what ProgressFlow/ExportPanel each gate
+# their own recovery on (s.kind === "pipeline"/"render"), and
+# _render_progress (where kind is ALSO recorded, via _set_render_metadata)
+# is cleared on completion same as everything else in it, so render_status
+# must fall back to _run_log's own copy once that happens.
+def test_render_status_reports_log_and_kind_after_the_run_has_finished(tmp_path):
+    episode = _make_episode(tmp_path)
+
+    server._reset_run_log(episode.resolve(), "pipeline")
+    server._append_run_log(episode.resolve(), "$ create_episode.sh My Episode")
+    server._append_run_log(episode.resolve(), "some output line")
+
+    # Simulates the run actually finishing: the lock is released and
+    # _render_progress/_render_handles are cleared, same as _run_websocket's
+    # own finally block.
+    server._clear_render_progress(episode.resolve())
+
+    response = client.get("/api/episode/render-status", params={"path": str(episode)})
+
+    assert response.json() == {
+        "running": False,
+        "current": None,
+        "total": None,
+        "kind": "pipeline",
+        "format": None,
+        "resolution": None,
+        "log": ["$ create_episode.sh My Episode", "some output line"],
+    }
+
+    server._reset_run_log(episode.resolve(), None)
+
+
+def test_reset_run_log_clears_a_previous_runs_output_and_kind(tmp_path):
+    episode = tmp_path / "episode"
+
+    server._reset_run_log(episode, "render")
+    server._append_run_log(episode, "old run's output")
+    server._reset_run_log(episode, None)
+
+    assert server._get_run_log(episode) == {"kind": None, "lines": []}
+
+
+def test_append_run_log_bounds_the_stored_line_count(tmp_path):
+    episode = tmp_path / "episode"
+    server._reset_run_log(episode, "stage")
+
+    for i in range(server._RUN_LOG_MAX_LINES + 50):
+        server._append_run_log(episode, f"line {i}")
+
+    run_log = server._get_run_log(episode)
+    lines = run_log["lines"]
+    assert run_log["kind"] == "stage"
+    assert len(lines) == server._RUN_LOG_MAX_LINES
+    assert lines[0] == "line 50"
+    assert lines[-1] == f"line {server._RUN_LOG_MAX_LINES + 49}"
+
+    server._reset_run_log(episode, None)
 
 
 def test_set_render_progress_preserves_previously_set_metadata(tmp_path):

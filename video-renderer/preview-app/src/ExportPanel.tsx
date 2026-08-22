@@ -165,6 +165,28 @@ export function ExportPanel({ episodePath, status, includeCaptions, onIncludeCap
         runningKindRef.current = runningKind;
     }, [runningKind]);
 
+    // #134: recovers a FINISHED render's console output once on mount/
+    // episode change — distinct from the recovery-poll effect below, which
+    // only surfaces state (progress bar, Cancel) for a render that's still
+    // actually live elsewhere. A render that already finished has no
+    // "running" signal to poll for, but its log is still sitting in
+    // _run_log server-side (see ui/server.py) and would otherwise be lost
+    // the moment this panel mounts fresh with empty logLines.
+    useEffect(() => {
+        setLogLines([]);
+        getRenderStatus(episodePath)
+            .then((s) => {
+                if (s.kind === "render" && s.log.length > 0) {
+                    setLogLines(s.log);
+                    setLogVisible(true);
+                }
+            })
+            .catch(() => {
+                // No prior render for this episode this server process, or
+                // the request failed — nothing to recover either way.
+            });
+    }, [episodePath]);
+
     // Same recovery-poll pattern as AdvancedPanel's own render-recovery
     // effect (#85) — kept independent (not shared/lifted) since this is a
     // genuinely separate panel now.
@@ -203,6 +225,7 @@ export function ExportPanel({ episodePath, status, includeCaptions, onIncludeCap
                     setProgressTotal(s.total);
                     setRecoveredFormat(s.format);
                     setRecoveredResolution(s.resolution);
+                    if (s.log.length > 0) setLogLines(s.log);
 
                     pollTimer = setTimeout(poll, 4000);
                 })
@@ -456,18 +479,15 @@ export function ExportPanel({ episodePath, status, includeCaptions, onIncludeCap
 
                     {recoveredRender && (
                         <span style={styles.progressLabel}>
-                            Reconnected after a refresh — live output isn't available for a run this tab didn't
-                            start, but Cancel still works.
+                            Reconnected after a refresh — Cancel still works.
                         </span>
                     )}
 
-                    {!recoveredRender && (
-                        <button className="secondary" onClick={() => setLogExpanded((v) => !v)} style={styles.logToggle}>
-                            {logExpanded ? "Hide details" : "Show details"}
-                        </button>
-                    )}
+                    <button className="secondary" onClick={() => setLogExpanded((v) => !v)} style={styles.logToggle}>
+                        {logExpanded ? "Hide details" : "Show details"}
+                    </button>
 
-                    {!recoveredRender && logExpanded && (
+                    {logExpanded && (
                         <div style={styles.logPanelWrap}>
                             <button
                                 type="button"

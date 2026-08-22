@@ -139,6 +139,28 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [episodePath]);
 
+    // #134: recovers a FINISHED pipeline run's console output once on
+    // mount/episode change — distinct from the recovery-poll effect below,
+    // which only surfaces state (banner, Cancel) for a run that's still
+    // actually live elsewhere. A run that already finished has no "running"
+    // signal to poll for, but its log is still sitting in _run_log server-
+    // side (see ui/server.py) and is otherwise lost the moment this
+    // component mounts fresh with an empty `log` state.
+    useEffect(() => {
+        setLog("");
+        getRenderStatus(episodePath)
+            .then((s) => {
+                if (s.kind === "pipeline" && s.log.length > 0) {
+                    setLog(s.log.join("\n") + "\n");
+                    setLogVisible(true);
+                }
+            })
+            .catch(() => {
+                // No prior run for this episode this server process, or the
+                // request failed — nothing to recover either way.
+            });
+    }, [episodePath]);
+
     useEffect(() => {
         if (!running) return;
         const interval = setInterval(refreshStatus, POLL_INTERVAL_MS);
@@ -174,6 +196,14 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
                 .then((s) => {
                     if (cancelled) return;
 
+                    // #134: a FINISHED run still has a kind/log worth
+                    // showing (recovered's whole point), but "running"
+                    // false means there's no live process to recover a
+                    // Cancel button for — only surface the recovered
+                    // banner/log while a run for THIS episode is still
+                    // actually in flight elsewhere. A finished run's log
+                    // is instead picked up once, below, independent of
+                    // this polling loop.
                     if (!s.running || s.kind !== "pipeline") {
                         setRecovered((wasRecovered) => {
                             if (wasRecovered) {
@@ -187,6 +217,7 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
 
                     setRecovered(true);
                     setLogVisible(true);
+                    if (s.log.length > 0) setLog(s.log.join("\n") + "\n");
                     pollTimer = setTimeout(poll, 4000);
                 })
                 .catch(() => {
@@ -403,16 +434,16 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
 
             {error && <div style={styles.error}>{error}</div>}
 
-            {/* Recovered runs have no log to show — this tab never had the
-                live websocket connection that streamed it, and no log text
-                is persisted server-side (only numeric progress is, and
-                pipeline/stage runs don't even emit that — see
-                _render_progress's own comment). The phase dots above still
-                give real, artifact-backed progress; this just explains why
-                the usual Output panel isn't there. */}
+            {/* #134: recovered output is now populated from the server's
+                own _run_log (see the recovery effects above), so this note
+                only appears in the brief real edge case where a run was
+                JUST recovered and hasn't produced any lines yet — not the
+                general "recovered runs never have output" case this used
+                to describe. The phase dots above still give real,
+                artifact-backed progress either way. */}
             {recovered && !log && (
                 <div style={styles.recoveredNote}>
-                    Output isn't available for a run recovered after a refresh — the phase indicators above still
+                    Waiting for output from the run that's already in progress — the phase indicators above still
                     reflect real progress.
                 </div>
             )}
