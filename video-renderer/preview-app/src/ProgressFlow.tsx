@@ -129,14 +129,20 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
 
         runHandleRef.current = runOverWebSocket(
             "/ws/pipeline/run",
-            // force whenever this is a genuine RE-run (every stage already
-            // has output) — otherwise every stage's own existence check
-            // (Stage.is_complete) makes it skip immediately, which is
-            // exactly why "Re-run pipeline" previously did nothing at all:
-            // this param was never sent, so the button's two labels
-            // ("Start" vs "Re-run pipeline") described two identical
-            // requests under the hood.
-            { path: episodePath, skipCaptions, force: forceRerun || allDone },
+            // force is driven ONLY by the explicit "Force regenerate all
+            // stages" checkbox (forceRerun) — an earlier version also
+            // forced whenever every stage already had output (`|| allDone`),
+            // so clicking "Re-run pipeline" on a fully-complete episode
+            // silently force-regenerated everything (including a full
+            // re-transcription) with no separate confirmation, regardless
+            // of the checkbox. Confirmed live: this destroyed several
+            // clips' original transcripts on a real episode before the
+            // user could react. Without force, a fully-complete episode's
+            // "Re-run pipeline" is now a correct no-op (every stage's own
+            // Stage.is_complete check skips it) rather than a silent
+            // full regenerate — the user must explicitly tick the
+            // checkbox to force anything.
+            { path: episodePath, skipCaptions, force: forceRerun },
             (msg: RunMessage) => {
                 if (msg.type === "start") {
                     setLog((prev) => prev + `$ ${msg.command}\n`);
