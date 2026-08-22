@@ -153,3 +153,26 @@ button:focus-visible {
         animation: none;
     }
 }
+
+/* The AI sidebar's minimized rail (#87) — className="sidebar-expand-button"
+   on EpisodeWorkspace's own inline-styled button. A gentle rightward nudge
+   of the icon on hover/focus is the "this is clickable" hint the ticket
+   asks for, kept subtle (a few px, not a bounce/pulse) per CLAUDE.md's own
+   "avoid excessive motion" guidance — and the label brightens from
+   textSecondary to textPrimary alongside it. */
+.sidebar-expand-button:hover:not(:disabled),
+.sidebar-expand-button:focus-visible:not(:disabled) {
+    color: #eef0ea;
+}
+
+.sidebar-expand-button:hover:not(:disabled) .sidebar-expand-icon,
+.sidebar-expand-button:focus-visible:not(:disabled) .sidebar-expand-icon {
+    transform: translateX(3px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .sidebar-expand-button:hover:not(:disabled) .sidebar-expand-icon,
+    .sidebar-expand-button:focus-visible:not(:disabled) .sidebar-expand-icon {
+        transform: none;
+    }
+}
