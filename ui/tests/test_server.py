@@ -1928,6 +1928,130 @@ def test_delete_asset_returns_409_when_episode_is_locked(tmp_path):
     assert (graphics_dir / "logo.png").exists()
 
 
+def test_reindex_code_assets_returns_empty_when_no_code_folder(tmp_path):
+    episode = _make_episode(tmp_path)
+
+    response = client.post(
+        "/api/episode/code-assets/reindex",
+        params={"path": str(episode)},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["codeAssets"] == []
+
+
+def test_reindex_code_assets_discovers_a_newly_added_file(tmp_path):
+    episode = _make_episode(tmp_path)
+    code_dir = episode / "code"
+    code_dir.mkdir()
+    (code_dir / "example.py").write_text("x = 1\n")
+
+    response = client.post(
+        "/api/episode/code-assets/reindex",
+        params={"path": str(episode)},
+    )
+
+    assert response.status_code == 200
+    code_assets = response.json()["codeAssets"]
+    assert len(code_assets) == 1
+    assert code_assets[0]["filename"] == "example.py"
+    assert code_assets[0]["language"] == "python"
+
+    on_disk = json.loads((episode / "processing" / "code_assets.json").read_text())
+    assert on_disk["codeAssets"][0]["filename"] == "example.py"
+
+
+def test_delete_code_asset_returns_404_without_code_assets_json(tmp_path):
+    episode = _make_episode(tmp_path)
+
+    response = client.delete(
+        "/api/episode/code-assets/code-001",
+        params={"path": str(episode)},
+    )
+
+    assert response.status_code == 404
+
+
+def test_delete_code_asset_returns_404_for_unknown_id(tmp_path):
+    episode = _make_episode(tmp_path)
+    code_dir = episode / "code"
+    code_dir.mkdir()
+    (code_dir / "example.py").write_text("x = 1\n")
+    client.post("/api/episode/code-assets/reindex", params={"path": str(episode)})
+
+    response = client.delete(
+        "/api/episode/code-assets/code-999",
+        params={"path": str(episode)},
+    )
+
+    assert response.status_code == 404
+
+
+def test_delete_code_asset_removes_file_and_reindexes(tmp_path):
+    episode = _make_episode(tmp_path)
+    code_dir = episode / "code"
+    code_dir.mkdir()
+    (code_dir / "example.py").write_text("x = 1\n")
+    reindex_response = client.post("/api/episode/code-assets/reindex", params={"path": str(episode)})
+    code_asset_id = reindex_response.json()["codeAssets"][0]["id"]
+
+    response = client.delete(
+        f"/api/episode/code-assets/{code_asset_id}",
+        params={"path": str(episode)},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["deleted"] == code_asset_id
+    assert response.json()["codeAssets"] == []
+    assert not (code_dir / "example.py").exists()
+
+    on_disk = json.loads((episode / "processing" / "code_assets.json").read_text())
+    assert on_disk["codeAssets"] == []
+
+
+def test_delete_code_asset_leaves_other_code_assets_untouched_and_ids_stable(tmp_path):
+    episode = _make_episode(tmp_path)
+    code_dir = episode / "code"
+    code_dir.mkdir()
+    (code_dir / "a.py").write_text("x = 1\n")
+    (code_dir / "b.py").write_text("y = 2\n")
+    reindex_response = client.post("/api/episode/code-assets/reindex", params={"path": str(episode)})
+    code_assets = reindex_response.json()["codeAssets"]
+    a_id = next(a["id"] for a in code_assets if a["filename"] == "a.py")
+    b_id = next(a["id"] for a in code_assets if a["filename"] == "b.py")
+
+    response = client.delete(
+        f"/api/episode/code-assets/{a_id}",
+        params={"path": str(episode)},
+    )
+
+    remaining = response.json()["codeAssets"]
+    assert len(remaining) == 1
+    # b's id must not shift after a is removed — a stale moments.json
+    # codeAssetId referencing b's original id would otherwise silently
+    # start resolving to a different file.
+    assert remaining[0]["id"] == b_id
+    assert (code_dir / "b.py").exists()
+
+
+def test_delete_code_asset_returns_409_when_episode_is_locked(tmp_path):
+    episode = _make_episode(tmp_path)
+    code_dir = episode / "code"
+    code_dir.mkdir()
+    (code_dir / "example.py").write_text("x = 1\n")
+    reindex_response = client.post("/api/episode/code-assets/reindex", params={"path": str(episode)})
+    code_asset_id = reindex_response.json()["codeAssets"][0]["id"]
+
+    with episode_lock(episode):
+        response = client.delete(
+            f"/api/episode/code-assets/{code_asset_id}",
+            params={"path": str(episode)},
+        )
+
+    assert response.status_code == 409
+    assert (code_dir / "example.py").exists()
+
+
 def test_edit_scene_plan_returns_404_without_scene_plan(tmp_path):
     episode = _make_episode(tmp_path)
 

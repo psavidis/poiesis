@@ -155,28 +155,55 @@ def index_code(episode: Path):
     output_path = processing / "code_assets.json"
 
     existing_descriptions = {}
+    # Keyed by filename, not recomputed positionally — a code asset's id
+    # used to be purely positional (see the enumerate() loop below), so
+    # deleting or adding any OTHER file shifted every later id and
+    # silently reattached an existing id (and thus, via moments.json's own
+    # codeAssetId, a moment's rendered code) to a different file (see
+    # #80's real-world case for the equivalent backgrounds bug, and #94's
+    # own delete feature, which would trigger this on every delete of a
+    # non-last file). Same "keyed by filename, never by position" fix
+    # already applied to backgrounds/images (index_backgrounds.py,
+    # index_assets.py) — reused here for the id itself, not just the
+    # description.
+    existing_ids_by_filename = {}
 
     if output_path.exists():
 
         existing = load_json(output_path)
 
-        # Keyed by filename, not id — see index_assets.py's own
-        # existing_captions comment (#80) for why: an asset's id is purely
-        # positional, so adding/removing any other file in the folder
-        # shifts every later id and would silently reattach a stale
-        # manually-edited description to the wrong file otherwise.
-        existing_descriptions = {
-            asset["filename"]: asset["description"]
-            for asset in existing.get("codeAssets", [])
-        }
+        # Keyed by filename, not id — see existing_ids_by_filename above
+        # for why (see #80's real-world case: removing one file shifted
+        # every later id by one, and the previous asset's description
+        # followed the id, not the file).
+        for asset in existing.get("codeAssets", []):
+            existing_descriptions[asset["filename"]] = asset["description"]
+            existing_ids_by_filename[asset["filename"]] = asset["id"]
 
     files = list_code_files(code_dir)
 
     code_assets = []
 
-    for index, file in enumerate(files, start=1):
+    # Seeded from the highest number already in use (not always 0), so a
+    # freshly added file gets a number that's never been used before
+    # rather than reusing one an existing (possibly reordered) file still
+    # holds.
+    used_numbers = [
+        int(match.group(1))
+        for existing_id in existing_ids_by_filename.values()
+        if (match := re.match(r"^code-(\d+)$", existing_id))
+    ]
+    next_index = max(used_numbers, default=0) + 1
 
-        asset_id = f"code-{index:03d}"
+    for file in files:
+
+        existing_id = existing_ids_by_filename.get(file.name)
+
+        if existing_id and re.match(r"^code-\d+$", existing_id):
+            asset_id = existing_id
+        else:
+            asset_id = f"code-{next_index:03d}"
+            next_index += 1
 
         description = existing_descriptions.get(
             file.name,
