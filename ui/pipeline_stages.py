@@ -19,11 +19,28 @@ PYTHON = sys.executable
 
 
 class Stage:
-    def __init__(self, id, label, command, artifact):
+    def __init__(self, id, label, command, artifact, supports_force=True):
         self.id = id
         self.label = label
         self.command = command
         self.artifact = artifact
+        # Whether the underlying script accepts --force at all (#81). Most
+        # scripts skip regenerating their output when it already exists
+        # UNLESS --force is passed (e.g. generate_title_scenes.py's own
+        # `if output_file.exists() and not args.force: skip`) — for those,
+        # --force is exactly what makes the UI's "Re-run" button actually
+        # rerun the stage instead of silently no-op'ing (exit code 0, "X
+        # already proposed. Skipping."). A handful of scripts
+        # (index_assets.py, index_backgrounds.py, index_code.py,
+        # analyze_scenes.py, generate_scene_plan_ts.py, qa_check.py,
+        # validate_transcripts.py) have no such skip check at all — they
+        # always regenerate their output unconditionally — and never
+        # defined a --force argparse flag in the first place, so passing
+        # --force to them would fail with argparse's "unrecognized
+        # arguments" rather than doing anything useful. Defaults to True
+        # (the common case) — set False only for stages confirmed to have
+        # no --force flag.
+        self.supports_force = supports_force
 
     def artifact_path(self, episode: Path) -> Path:
         return episode / "processing" / self.artifact
@@ -33,7 +50,7 @@ class Stage:
 
     def build_command(self, episode: Path, force: bool = False):
         command = [str(part) for part in self.command(episode)]
-        if force and "--force" not in command:
+        if force and self.supports_force and "--force" not in command:
             command.append("--force")
         return command
 
@@ -56,6 +73,7 @@ PIPELINE_STAGES = [
         "Validate transcripts",
         lambda ep: [PYTHON, PIPELINE_DIR / "validate_transcripts.py", ep],
         "transcript_validation.json",
+        supports_force=False,
     ),
     Stage(
         "normalize_transcripts",
@@ -80,24 +98,28 @@ PIPELINE_STAGES = [
         "Analyze scenes (silence trim)",
         lambda ep: [PYTHON, PIPELINE_DIR / "analyze_scenes.py", ep],
         "scene-plan.json",
+        supports_force=False,
     ),
     Stage(
         "index_assets",
         "Index graphics assets",
         lambda ep: [PYTHON, PIPELINE_DIR / "index_assets.py", ep],
         "assets.json",
+        supports_force=False,
     ),
     Stage(
         "index_code",
         "Index code assets",
         lambda ep: [PYTHON, PIPELINE_DIR / "index_code.py", ep],
         "code_assets.json",
+        supports_force=False,
     ),
     Stage(
         "index_backgrounds",
         "Index backgrounds",
         lambda ep: [PYTHON, PIPELINE_DIR / "index_backgrounds.py", ep],
         "backgrounds.json",
+        supports_force=False,
     ),
     Stage(
         "generate_cut_candidates",
@@ -140,6 +162,7 @@ PIPELINE_STAGES = [
         "Generate Remotion codegen",
         lambda ep: [PYTHON, PIPELINE_DIR / "generate_scene_plan_ts.py", ep],
         None,
+        supports_force=False,
     ),
     Stage(
         "generate_episode_assets",
@@ -162,6 +185,7 @@ SECONDARY_STAGES = [
         "QA check",
         lambda ep: [PYTHON, PIPELINE_DIR / "qa_check.py", ep],
         "qa-report.json",
+        supports_force=False,
     ),
 ]
 
