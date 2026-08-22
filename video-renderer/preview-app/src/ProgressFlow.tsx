@@ -78,8 +78,12 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
     // Kept independent of `running` — the log used to unmount the instant
     // a run stopped, whether it succeeded, failed, or was cancelled, so a
     // real failure vanished with no trace right when the user most needed
-    // to see it (#68). Defaults to shown once a run has produced any
-    // output; the user can still collapse it.
+    // to see it (#68). start() below forces this true for a run the user
+    // just clicked "Start" on. Both recovery effects (a run recovered on
+    // page load, live or already finished — see their own comments)
+    // deliberately leave this at its false default instead — a first page
+    // load shouldn't dump the console open, only offer "Show output" once
+    // `log` is non-empty; the user expands/collapses it at will from there.
     const [logVisible, setLogVisible] = useState(false);
     // Explicit opt-in, not just inferred from "every stage already has
     // output" — a user re-running only some stages (e.g. after a manual
@@ -145,14 +149,19 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
     // actually live elsewhere. A run that already finished has no "running"
     // signal to poll for, but its log is still sitting in _run_log server-
     // side (see ui/server.py) and is otherwise lost the moment this
-    // component mounts fresh with an empty `log` state.
+    // component mounts fresh with an empty `log` state. Starts collapsed
+    // (not setLogVisible(true)) — a first page load shouldn't dump a
+    // finished run's full console text on screen; the "Show output" button
+    // still appears (gated on `log` being non-empty) so the user can expand
+    // it on demand. Contrast with `start()` below, which DOES force it
+    // visible — that's a run the user is actively watching right now, not
+    // one being recovered from a page load.
     useEffect(() => {
         setLog("");
         getRenderStatus(episodePath)
             .then((s) => {
                 if (s.kind === "pipeline" && s.log.length > 0) {
                     setLog(s.log.join("\n") + "\n");
-                    setLogVisible(true);
                 }
             })
             .catch(() => {
@@ -215,8 +224,17 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
                         return;
                     }
 
+                    // Output starts collapsed on recovery, same as the
+                    // finished-run effect above — a page load (this tab
+                    // never started the run) shouldn't dump the console
+                    // open by default, only offer "Show output". Setting
+                    // `recovered` itself (not `setLogVisible(true)`) is
+                    // what makes the "Show output" button appear at all,
+                    // once `log` is non-empty (see the button's own
+                    // `log &&` guard below) — this must NOT force it open
+                    // on every poll tick, or the user's own "Hide output"
+                    // click would be undone 4s later.
                     setRecovered(true);
-                    setLogVisible(true);
                     if (s.log.length > 0) setLog(s.log.join("\n") + "\n");
                     pollTimer = setTimeout(poll, 4000);
                 })
