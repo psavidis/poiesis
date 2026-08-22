@@ -260,7 +260,12 @@ def create_manifest(
         previous_keying_by_id = {
             video["id"]: {
                 key: video[key]
-                for key in ("keyedPath", "keyedRenderPath")
+                for key in (
+                    "keyedPath",
+                    "keyedRenderPath",
+                    "keyedAudioPath",
+                    "keyedAudioRenderPath",
+                )
                 if key in video
             }
             for video in previous_manifest.get("videos", [])
@@ -386,6 +391,11 @@ def generate_episode_props_ts(
         if video.get("keyedRenderPath"):
             video_lines.append(
                 f'      keyedPath: "{video["keyedRenderPath"]}",'
+            )
+
+        if video.get("keyedAudioRenderPath"):
+            video_lines.append(
+                f'      keyedAudioPath: "{video["keyedAudioRenderPath"]}",'
             )
 
         video_lines.extend(
