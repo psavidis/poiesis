@@ -61,11 +61,15 @@ const SIDEBAR_COLLAPSED_KEY = "poiesis.sidebarCollapsed";
 
 function readSidebarCollapsed(): boolean {
     try {
-        return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
+        // #87's own expected behavior: "the sidebar is minimized on the
+        // left" by default — only an explicit prior "0" (the user opened
+        // it and that choice was remembered) keeps it expanded. Absent/
+        // any other value (never set, or storage cleared) means collapsed.
+        return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) !== "0";
     } catch {
-        // Private browsing / storage disabled — default to expanded
-        // (today's only behavior) rather than throwing.
-        return false;
+        // Private browsing / storage disabled — default to collapsed,
+        // same as the normal no-prior-preference case above.
+        return true;
     }
 }
 
@@ -73,10 +77,10 @@ export function EpisodeWorkspace() {
     const { episodePath } = useQueryParams();
 
     // The AI sidebar's own collapsed/expanded state (#87) — the sidebar
-    // is used only a minority of the time, so it defaults open on first
-    // visit (matching the app's existing behavior) but remembers whatever
-    // the user last chose, the same way EpisodePicker remembers the last
-    // episode path.
+    // is used only a minority of the time, so it defaults COLLAPSED on
+    // first visit (the issue's own expected behavior: "The sidebar is
+    // minimized on the left"), but remembers whatever the user last
+    // chose, the same way EpisodePicker remembers the last episode path.
     const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
 
     useEffect(() => {
