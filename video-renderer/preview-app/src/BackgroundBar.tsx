@@ -296,11 +296,13 @@ export function BackgroundBar({
     // resolution snaps two nearby frames to the same segmentId).
     // Always inserts with no motion (#91 follow-up) — motion is chosen
     // afterward in the persistent BackgroundEditorPanel this opens on
-    // success for an image background, not up front as part of the Cmd+B
-    // pick (the picker previously nested a nearly-hidden direction/speed
-    // reveal into itself, the exact "motion options in a follow-up popup"
-    // the issue asked to remove — mirrors AssetLibraryPanel's own
-    // insertBackground, which already made this same change).
+    // success, not up front as part of the Cmd+B pick (the picker
+    // previously nested a nearly-hidden direction/speed reveal into
+    // itself, the exact "motion options in a follow-up popup" the issue
+    // asked to remove — mirrors AssetLibraryPanel's own insertBackground,
+    // which already made this same change). Opens the panel for either
+    // mediaType now that motion applies to video backgrounds too, not
+    // just images.
     const doInsert = async (backgroundId: string) => {
         setInserting(true);
         setSaveError(null);
@@ -310,8 +312,7 @@ export function BackgroundBar({
         if (result.ok) {
             onSaved();
             setInsertPickerAnchor(null);
-            const background = backgrounds.find((b) => b.id === backgroundId);
-            if (background?.mediaType === "image") onEditRequested(result.segmentId);
+            onEditRequested(result.segmentId);
         } else {
             setSaveError(result.error);
         }
@@ -389,9 +390,7 @@ export function BackgroundBar({
                             }}
                             title={
                                 isSelected
-                                    ? background?.mediaType === "image"
-                                        ? `${label} — see the panel below to change its motion, Delete/Backspace to remove`
-                                        : `${label} — press Delete/Backspace to remove`
+                                    ? `${label} — see the panel below to change its motion, Delete/Backspace to remove`
                                     : isReal
                                     ? `Click to select: ${label}`
                                     : `No background — press ${MOD_KEY_LABEL}+B here to insert one`
@@ -489,8 +488,8 @@ export function BackgroundBar({
 // (#91 follow-up: motion previously nested a direction/speed reveal
 // straight into this popup, exactly the "options appear on a follow-up
 // popup" behavior the issue asked to remove). Picking any background,
-// image or video, just inserts it with no motion; an image background's
-// motion is chosen afterward in the persistent BackgroundEditorPanel
+// image or video, just inserts it with no motion; motion (for either
+// mediaType) is chosen afterward in the persistent BackgroundEditorPanel
 // (see doInsert's own comment) — this popup's only job is "which
 // background."
 function BackgroundPicker({

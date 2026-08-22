@@ -76,7 +76,12 @@ export function imageMotionScale(
 // the loop math below handles a span shorter OR longer than one
 // playthrough transparently); a static image fills the frame with an
 // optional slow zoom drift (see imageMotionScale) instead of the plain,
-// motionless <Img> this used before BackgroundImageMotion existed.
+// motionless <Img> this used before BackgroundImageMotion existed. The
+// same drift now also applies to a looping video background — the two
+// are independent (video keeps looping/crossfading exactly as before,
+// the drift is just an outer scale wrapper around it), not mutually
+// exclusive the way "video already has its own motion" originally
+// implied.
 export const BackgroundLayer = ({
     path,
     mediaType,
@@ -100,10 +105,10 @@ export const BackgroundLayer = ({
     // one background hands off to a different one.
     crossfadeInFrames?: number;
     // The BackgroundScene's own real span length (NOT including the
-    // borrowed crossfade lead-in above) — only meaningful for mediaType
-    // "image", to scale the zoom motion to exactly this span regardless
-    // of how long it ends up being. Required whenever imageMotion is set
-    // to anything other than "none"/absent.
+    // borrowed crossfade lead-in above) — scales the zoom motion to
+    // exactly this span regardless of how long it ends up being, for
+    // either mediaType. Required whenever imageMotion is set to anything
+    // other than "none"/absent.
     durationInFrames?: number;
     imageMotion?: BackgroundImageMotion;
     imageMotionSpeed?: BackgroundImageMotionSpeed;
@@ -137,9 +142,24 @@ export const BackgroundLayer = ({
         );
     }
 
+    // Same slow zoom drift as a static image, applied as an outer wrapper
+    // around LoopingBackgroundVideo rather than inside it — the drift is
+    // scaled to the SPAN's own durationInFrames (imageMotionScale's normal
+    // contract), completely independent of the video's own internal loop
+    // length/seam-crossfade math, which keeps running on its own separate
+    // per-loop-iteration frame count untouched. A no-motion video (the
+    // default, and the only option before this) gets scale(1) here, a
+    // no-op — see the "video already has its own motion" framing this
+    // field's doc comment used to have, now just "video already loops on
+    // its own; whether it ALSO drifts is this same independent choice
+    // images already had."
+    const scale = imageMotionScale(imageMotion, imageMotionSpeed, frame, durationInFrames ?? 0);
+
     return (
-        <AbsoluteFill style={{ opacity }}>
-            <LoopingBackgroundVideo path={path} sourceDurationInFrames={sourceDurationInFrames ?? 1} />
+        <AbsoluteFill style={{ opacity, overflow: "hidden" }}>
+            <AbsoluteFill style={{ transform: `scale(${scale})` }}>
+                <LoopingBackgroundVideo path={path} sourceDurationInFrames={sourceDurationInFrames ?? 1} />
+            </AbsoluteFill>
         </AbsoluteFill>
     );
 };

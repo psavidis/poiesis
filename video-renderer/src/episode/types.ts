@@ -134,19 +134,19 @@ export interface TitleScene {
 // BackgroundScene covering it, meaning "no override — presenter's own
 // natural footage" (unchanged rendering, per the feature's own design
 // decision), not a synthetic "none" entry.
-// A slow drift applied to a STATIC IMAGE background over its own span's
-// full duration — "does not distract" is a hard design constraint here
-// (see the feature's own ask), so this is a small, fixed set of presets
-// (see BackgroundImageMotionSpeed), never a free-form slider. Only
-// meaningful when the referenced EpisodeBackground has mediaType "image"
-// — a video background already has its own motion and this field is
-// ignored for it. "none" (absent/undefined also means this) is a flat,
-// static image with no motion at all, unchanged from before this field
-// existed. "zoom-in"/"zoom-out" run linearly across the whole span;
-// "palindrome" zooms in across the first half and back out across the
-// second half, so one full cycle always exactly matches the span's own
-// length regardless of how long it ends up being (see
-// BackgroundLayer.tsx).
+// A slow drift applied to a background over its own span's full
+// duration — "does not distract" is a hard design constraint here (see
+// the feature's own ask), so this is a small, fixed set of presets (see
+// BackgroundImageMotionSpeed), never a free-form slider. Applies to
+// EITHER mediaType: for an image, it's the only motion the background
+// ever has; for a video, it's independent of (and layered on top of)
+// the video's own looping playback — the two aren't mutually exclusive.
+// "none" (absent/undefined also means this) is no drift at all,
+// unchanged from before this field existed. "zoom-in"/"zoom-out" run
+// linearly across the whole span; "palindrome" zooms in across the
+// first half and back out across the second half, so one full cycle
+// always exactly matches the span's own length regardless of how long
+// it ends up being (see BackgroundLayer.tsx).
 export type BackgroundImageMotion = "none" | "zoom-in" | "zoom-out" | "palindrome";
 
 // How much the image scales across its drift — a preset, not a tunable

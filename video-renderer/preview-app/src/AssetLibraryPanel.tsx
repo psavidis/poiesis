@@ -362,8 +362,8 @@ export function AssetLibraryPanel({
     // BackgroundBar's own Cmd+B, so inserting from this panel behaves
     // exactly the same as inserting from the timeline bar. Always inserts
     // with no motion (#91 follow-up) — motion is chosen afterward in the
-    // persistent BackgroundEditorPanel this opens on success for an image
-    // background, not up front as part of the insert click.
+    // persistent BackgroundEditorPanel this opens on success, for either
+    // mediaType now that motion applies to video backgrounds too.
     const insertBackground = async (backgroundId: string) => {
         setInsertingBackgroundId(backgroundId);
         setError(null);
@@ -374,8 +374,7 @@ export function AssetLibraryPanel({
         if (result.ok) {
             onSaved();
             setHint("Inserted — it runs from the current playhead position until the next background or the episode's end.");
-            const background = backgroundLibrary.find((b) => b.id === backgroundId);
-            if (background?.mediaType === "image") onBackgroundEditRequested(result.segmentId);
+            onBackgroundEditRequested(result.segmentId);
         } else {
             setError(result.error);
         }
