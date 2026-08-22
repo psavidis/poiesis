@@ -590,9 +590,43 @@ export function EpisodeWorkspace() {
         return { track, overlays };
     }, [episodeProps, currentFrame]);
 
+    // Seeking while playing (every timeline-bar click goes through this)
+    // can leave audio briefly silent, specifically on a scene boundary —
+    // clicking a clip on SceneBar always lands on one — even with
+    // Episode.tsx's own pauseWhenBuffering fix (#115/#117): Remotion's
+    // <Audio> gets a fresh internal seek whenever a scene's `trimBefore`
+    // changes, and unlike <OffthreadVideo> (which has a real "wait for the
+    // actual first frame" mechanism via requestVideoFrameCallback),
+    // Remotion's own bufferUntilFirstFrame is hard-coded to skip audio
+    // entirely (mediaType !== 'video' bails immediately) — there is no
+    // signal anywhere that tells playback to wait for an audio seek to
+    // settle. video.currentTime resumes are unaffected by this since a
+    // muted <video> isn't gated by the browser the same way; the browser
+    // just quietly finishes the audio seek some milliseconds later with no
+    // error, while Player has already resumed advancing frames.
+    //
+    // The Player's OWN built-in scrubber (PlayerSeekBar.js) never shows
+    // this, and the difference isn't some readiness check it performs —
+    // it's `onPointerDown` (pause + seek) and `onPointerUp` (resume) being
+    // two separate DOM events with real elapsed time between them (however
+    // long the user's mouse-down-to-up drag takes), which happens to give
+    // the audio seek time to finish. A programmatic seek+immediate-resume,
+    // which is what every timeline bar's one-shot click naturally is, has
+    // no equivalent gap. This mimics that same "pause, seek, then resume
+    // only after a beat" shape instead of inventing a new readiness signal
+    // Remotion itself doesn't provide for audio.
     const seekToAbsoluteFrame = (absoluteFrame: number) => {
-        if (!playerRef.current) return;
-        playerRef.current.seekTo(absoluteFrame);
+        const player = playerRef.current;
+        if (!player) return;
+
+        if (!player.isPlaying()) {
+            player.seekTo(absoluteFrame);
+            return;
+        }
+
+        player.pause();
+        player.seekTo(absoluteFrame);
+        window.setTimeout(() => player.play(), 200);
     };
 
     // The progress flow and Advanced panel render regardless of whether
