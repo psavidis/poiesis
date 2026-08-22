@@ -642,9 +642,17 @@ const styles: Record<string, React.CSSProperties> = {
         fontSize: typography.size.xs,
         width: "100%",
     },
+    // Stacked vertically, not a row (#91) — this card sits in a narrow grid
+    // column (grid's own minmax(140px, 1fr), see styles.grid), nowhere near
+    // wide enough for 3 side-by-side buttons; laid out as a row here, the
+    // third ("Strong") rendered past the card's own right edge, invisible
+    // behind whatever grid cell happened to sit next to it. Vertical stacking
+    // matches motionRow just above it (the direction options), so both
+    // nested reveal levels read as the same pattern and neither depends on
+    // the card being wide enough to hold a row.
     speedRow: {
         display: "flex",
-        flexDirection: "row",
+        flexDirection: "column",
         gap: 4,
         marginTop: 4,
         marginLeft: 8,
@@ -652,8 +660,8 @@ const styles: Record<string, React.CSSProperties> = {
         borderLeft: `2px solid ${colors.border}`,
     },
     speedOption: {
-        textAlign: "center",
+        textAlign: "left",
         fontSize: typography.size.xs,
-        flex: 1,
+        width: "100%",
     },
 };
