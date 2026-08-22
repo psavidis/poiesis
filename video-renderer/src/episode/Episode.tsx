@@ -502,9 +502,19 @@ const AnimatedPresenterFrame = ({
                 mount. Matching OffthreadVideo's own default here makes the
                 whole player (video included) hold at the scene boundary
                 until this audio is actually ready, instead of racing on
-                without it. */}
+                without it.
+
+                src falls back to the raw file the same way OffthreadVideo's
+                does above, but prefers keyedAudioPath — the raw
+                original_footage file's moov atom trails the media data
+                (unprocessed camera output), which Chrome's native <audio>
+                can fail to seek into on a fresh mount and never recover
+                from (NotSupportedError), most reliably on short presenter
+                scenes whose <Audio> barely mounts before tearing down
+                again (#128). keyedAudioPath is a faststart remux made for
+                exactly this. */}
             <Audio
-                src={staticFile(video.path)}
+                src={staticFile(video.keyedAudioPath ?? video.path)}
                 trimBefore={scene.sourceStartFrame - crossfadeInFrames}
                 trimAfter={scene.sourceEndFrame}
                 volume={(f) => presenterAudioVolume(f, crossfadeInFrames)}

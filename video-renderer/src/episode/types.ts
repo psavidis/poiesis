@@ -3,6 +3,13 @@ export interface EpisodeVideo {
     filename: string;
     path: string;
     keyedPath?: string;
+    // Browser-safe (faststart, opus) audio-only remux of this clip,
+    // produced alongside keyedPath — the raw original_footage file's moov
+    // atom trails the media data (typical unprocessed camera output), which
+    // Chrome's native <audio> element can fail to seek into on a fresh
+    // mount, most reliably on short presenter scenes (#128). Falls back to
+    // `path` when absent, same pattern as keyedPath falling back for video.
+    keyedAudioPath?: string;
     duration: number;
     fps: number;
     width: number;

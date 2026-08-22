@@ -142,6 +142,43 @@ def key_clip(source: Path, output: Path, crop: str | None):
     temp_output.replace(output)
 
 
+def remux_audio(source: Path, output: Path):
+    """Browser-safe audio-only remux of a raw camera clip (#128). The
+    original_footage .mov files have their moov atom trailing the media
+    data (typical unprocessed camera output) — Chrome's native <audio>
+    element can fail to seek into that on a fresh mount and never recover
+    (NotSupportedError), most reliably on short presenter scenes whose
+    <Audio> barely mounts before tearing down again. Opus/webm is small,
+    seekable, and matches the container the keyed video already uses."""
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    temp_output = output.with_suffix(".tmp.webm")
+
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-i", str(source),
+            "-vn",
+            "-c:a", "libopus",
+            str(temp_output),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        if temp_output.exists():
+            temp_output.unlink()
+
+        raise RuntimeError(
+            f"ffmpeg audio remux failed for {source}: {result.stderr[-2000:]}"
+        )
+
+    temp_output.replace(output)
+
+
 def key_footage(episode: Path, force: bool, renderer_folder: Path | None = None):
 
     if renderer_folder is None:
@@ -160,30 +197,40 @@ def key_footage(episode: Path, force: bool, renderer_folder: Path | None = None)
         video_id = video["id"]
         source = episode / video["path"]
         output = keyed_dir / f"{video_id}.webm"
+        audio_output = keyed_dir / f"{video_id}.audio.webm"
 
         if not source.exists():
             print(f"[{video_id}] missing source: {source}")
             failed += 1
             continue
 
-        if output.exists() and not force:
+        needs_video = force or not output.exists()
+        needs_audio = force or not audio_output.exists()
+
+        if not needs_video and not needs_audio:
             print(f"[{video_id}] {video['filename']}")
             print("      skipped (already exists)")
             skipped += 1
             continue
 
         print(f"[{video_id}] {video['filename']}")
-        print("      detecting crop...")
-
-        crop = detect_crop(source)
-
-        if crop:
-            print(f"      crop: {crop}")
-
-        print("      keying...")
 
         try:
-            key_clip(source, output, crop)
+            if needs_video:
+                print("      detecting crop...")
+
+                crop = detect_crop(source)
+
+                if crop:
+                    print(f"      crop: {crop}")
+
+                print("      keying...")
+                key_clip(source, output, crop)
+
+            if needs_audio:
+                print("      remuxing audio...")
+                remux_audio(source, audio_output)
+
             processed += 1
             print("      completed")
 
@@ -196,6 +243,7 @@ def key_footage(episode: Path, force: bool, renderer_folder: Path | None = None)
     for video in manifest["videos"]:
 
         output = keyed_dir / f"{video['id']}.webm"
+        audio_output = keyed_dir / f"{video['id']}.audio.webm"
 
         if output.exists():
 
@@ -209,6 +257,20 @@ def key_footage(episode: Path, force: bool, renderer_folder: Path | None = None)
                 / "processing"
                 / "keyed"
                 / f"{video['id']}.webm"
+            )
+
+        if audio_output.exists():
+
+            video["keyedAudioPath"] = str(
+                Path("processing") / "keyed" / f"{video['id']}.audio.webm"
+            )
+
+            video["keyedAudioRenderPath"] = str(
+                Path("episodes")
+                / episode.name
+                / "processing"
+                / "keyed"
+                / f"{video['id']}.audio.webm"
             )
 
     write_json_atomic(episode / "processing" / "manifest.json", manifest)

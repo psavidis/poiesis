@@ -107,6 +107,51 @@ def test_generate_episode_props_ts_includes_keyed_path_when_present(tmp_path):
     assert 'keyedPath: "episodes/ep/processing/keyed/001.webm"' in output
 
 
+def test_generate_episode_props_ts_includes_keyed_audio_path_when_present(tmp_path):
+    manifest = _manifest(
+        [
+            {
+                "id": "001",
+                "filename": "a.mov",
+                "renderPath": "episodes/ep/original_footage/a.mov",
+                "keyedAudioRenderPath": "episodes/ep/processing/keyed/001.audio.webm",
+                "duration": 5.0,
+                "fps": 60.0,
+                "width": 1920,
+                "height": 1080,
+            }
+        ]
+    )
+
+    generate_episode_props_ts(manifest, tmp_path)
+
+    output = (tmp_path / "generated" / "episode" / "episode-props.ts").read_text()
+
+    assert 'keyedAudioPath: "episodes/ep/processing/keyed/001.audio.webm"' in output
+
+
+def test_generate_episode_props_ts_omits_keyed_audio_path_when_absent(tmp_path):
+    manifest = _manifest(
+        [
+            {
+                "id": "001",
+                "filename": "a.mov",
+                "renderPath": "episodes/ep/original_footage/a.mov",
+                "duration": 5.0,
+                "fps": 60.0,
+                "width": 1920,
+                "height": 1080,
+            }
+        ]
+    )
+
+    generate_episode_props_ts(manifest, tmp_path)
+
+    output = (tmp_path / "generated" / "episode" / "episode-props.ts").read_text()
+
+    assert "keyedAudioPath" not in output
+
+
 def test_load_backgrounds_for_codegen_returns_empty_when_file_absent(tmp_path):
     assert load_backgrounds_for_codegen(tmp_path) == []
 
@@ -176,6 +221,8 @@ def test_create_manifest_preserves_keyed_path_from_previous_manifest(tmp_path):
                 "id": "001",
                 "keyedPath": "processing/keyed/001.webm",
                 "keyedRenderPath": "episodes/episode/processing/keyed/001.webm",
+                "keyedAudioPath": "processing/keyed/001.audio.webm",
+                "keyedAudioRenderPath": "episodes/episode/processing/keyed/001.audio.webm",
             }
         ]
     }
@@ -193,6 +240,11 @@ def test_create_manifest_preserves_keyed_path_from_previous_manifest(tmp_path):
         manifest["videos"][0]["keyedRenderPath"]
         == "episodes/episode/processing/keyed/001.webm"
     )
+    assert manifest["videos"][0]["keyedAudioPath"] == "processing/keyed/001.audio.webm"
+    assert (
+        manifest["videos"][0]["keyedAudioRenderPath"]
+        == "episodes/episode/processing/keyed/001.audio.webm"
+    )
 
 
 def test_create_manifest_no_previous_manifest_omits_keyed_path(tmp_path):
@@ -208,6 +260,7 @@ def test_create_manifest_no_previous_manifest_omits_keyed_path(tmp_path):
         manifest = create_manifest(episode, [video_path], config)
 
     assert "keyedPath" not in manifest["videos"][0]
+    assert "keyedAudioPath" not in manifest["videos"][0]
 
 
 def test_footage_sort_key_bare_chapter_sorts_before_its_numbered_parts():

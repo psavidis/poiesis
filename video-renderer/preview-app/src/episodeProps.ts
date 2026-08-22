@@ -44,6 +44,7 @@ export function manifestToEpisodeBaseProps(
             filename: video.filename,
             path: video.renderPath,
             keyedPath: video.keyedRenderPath,
+            keyedAudioPath: video.keyedAudioRenderPath,
             duration: video.duration,
             fps: video.fps,
             width: video.width,
