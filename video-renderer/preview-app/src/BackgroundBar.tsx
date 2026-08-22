@@ -413,32 +413,28 @@ export function BackgroundBar({
                                           // second explicit step.
                                           const segmentId = nearestSegmentIdForFrame(segment.startFrame);
                                           if (segmentId) onEditRequested(segmentId);
-                                          // Seeks to the CLICKED position, not the
-                                          // segment's own start — unlike every
-                                          // other bar's segments (moments/beats/
-                                          // images, all short), a background span
-                                          // routinely covers most or all of the
-                                          // episode, so "jump to this segment's
-                                          // start" reads as "clicking anywhere
-                                          // resets the playhead to the beginning"
-                                          // and silently defeated Cmd+B's own
-                                          // "insert at the playhead" contract
-                                          // (confirmed live: a click meant to
-                                          // position the playhead partway through
-                                          // a long background actually snapped it
-                                          // back to frame 0, so the very next
-                                          // Cmd+B resolved to the SAME segmentId
-                                          // as the existing entry and silently
-                                          // overwrote it instead of splitting).
-                                          const rect = trackRef.current?.getBoundingClientRect();
-                                          const clickedFrame = rect
-                                              ? Math.round(
-                                                    windowStartFrame +
-                                                        clamp((e.clientX - rect.left) / rect.width, 0, 1) * windowFrames
-                                                )
-                                              : segment.startFrame;
-                                          onSeek(clickedFrame);
-                                          zoomToAtLeast4x(clickedFrame);
+                                          // Seeks to the segment's own start frame
+                                          // (#123) — same "selecting jumps
+                                          // to the beginning" behavior every other
+                                          // bar's segments already have
+                                          // (SceneBar/MomentBar/BeatBar/ImageBar all
+                                          // seek to their own segment.startFrame on
+                                          // select). Previously seeked to the
+                                          // CLICKED position instead specifically so
+                                          // a follow-up Cmd+B wouldn't land back on
+                                          // this same segment's own start — that
+                                          // reasoning no longer applies now that
+                                          // Cmd+B always inserts with no motion and
+                                          // opens the persistent editor panel
+                                          // afterward (see doInsert's own comment):
+                                          // positioning the playhead for a NEW
+                                          // insert is a separate action (the
+                                          // scrubber, or clicking empty track space)
+                                          // from selecting an EXISTING segment, the
+                                          // same distinction every other bar already
+                                          // makes.
+                                          onSeek(segment.startFrame);
+                                          zoomToAtLeast4x(segment.startFrame);
                                       }
                                     : undefined
                             }
