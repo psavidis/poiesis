@@ -180,11 +180,13 @@ export function EpisodeWorkspace() {
         setInlineEditTarget({ kind: "title", titleText });
     };
 
-    // Lead-in chapter's own entry point (#83) — distinct from
-    // openInlineTitleEditor since there's no existing title to match by
-    // text yet; InlineTextEditor's "new-title" branch creates the entry
-    // on save instead.
-    const openInlineLeadInTitleEditor = (segmentId: string, anchor: { x: number; y: number }) => {
+    // Creates a brand-new title/chapter at a given segmentId — distinct
+    // from openInlineTitleEditor since there's no existing title to match
+    // by text yet; InlineTextEditor's "new-title" branch creates the entry
+    // on save instead. Used both for the lead-in chapter (#83, which has
+    // no TitleScene of its own) and ChapterStrip's Cmd+I insert-at-playhead
+    // (#86), which can target any resolvable segment position.
+    const openInlineNewTitleEditor = (segmentId: string, anchor: { x: number; y: number }) => {
         setSelectedEditor(null);
         setInlineEditAnchor(anchor);
         setInlineEditTarget({ kind: "new-title", newTitleSegmentId: segmentId });
@@ -765,8 +767,9 @@ export function EpisodeWorkspace() {
                     currentFrame={currentFrame}
                     fps={episodeProps.fps}
                     onSeek={seekToAbsoluteFrame}
+                    getCurrentFrame={getCurrentFrame}
                     onSelectTitle={openInlineTitleEditor}
-                    onCreateLeadInTitle={openInlineLeadInTitleEditor}
+                    onCreateTitleAt={openInlineNewTitleEditor}
                     highlightedTitleText={highlightedByType.titleText}
                     episodePath={episodePath}
                     onSaved={reloadScenePlan}
