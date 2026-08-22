@@ -14,6 +14,7 @@ from edit_plan import (
     resolve_full_screen_image_creation,
     resolve_full_screen_text_creation,
     resolve_image_creation,
+    resolve_manual_beat_creation,
     resolve_manual_moment_creation,
     validate_operations,
 )
@@ -988,6 +989,65 @@ def test_resolve_manual_moment_creation_rejects_overlap_with_an_existing_moment(
     scene_plan["scenes"].append(_moment("scene-moment-0", "scene-001", 0, 150, "already here"))
 
     assert resolve_manual_moment_creation("scene-001", 0, "text", scene_plan) is None
+
+
+# resolve_manual_beat_creation — human-initiated (Cmd+I), not AI-proposed,
+# beat insertion. Mirrors resolve_manual_moment_creation's own tests
+# exactly: no transcript/grounding involved, only placement/duration/
+# overlap, since the human authors kind/text afterward through
+# BeatEditorPanel.
+def test_resolve_manual_beat_creation_creates_a_content_empty_word_pop():
+    scene_plan = _presenter_only_scene_plan()
+
+    beat = resolve_manual_beat_creation("scene-001", 60, scene_plan)
+
+    assert beat["sceneId"] == "scene-001"
+    assert beat["kind"] == "word-pop"
+    assert beat["text"] == ""
+    assert beat["icon"] is None
+    assert beat["offsetInParentFrames"] == 60
+
+
+def test_resolve_manual_beat_creation_uses_the_style_default_duration():
+    scene_plan = _presenter_only_scene_plan()
+    style = load_style()
+
+    beat = resolve_manual_beat_creation("scene-001", 0, scene_plan, style=style)
+
+    assert beat["durationInFrames"] == style["emphasis"]["defaultDurationFrames"]
+
+
+def test_resolve_manual_beat_creation_rejects_a_non_presenter_scene():
+    scene_plan = {"fps": 30, "scenes": [_title("scene-title-0", "Hello", 0)]}
+
+    assert resolve_manual_beat_creation("scene-title-0", 0, scene_plan) is None
+
+
+def test_resolve_manual_beat_creation_rejects_an_unknown_scene_id():
+    scene_plan = _presenter_only_scene_plan()
+
+    assert resolve_manual_beat_creation("scene-does-not-exist", 0, scene_plan) is None
+
+
+def test_resolve_manual_beat_creation_clamps_duration_to_remaining_room():
+    scene_plan = _presenter_only_scene_plan(duration=70)
+
+    beat = resolve_manual_beat_creation("scene-001", 60, scene_plan)
+
+    assert beat["durationInFrames"] == 10
+
+
+def test_resolve_manual_beat_creation_rejects_placement_with_no_room_left():
+    scene_plan = _presenter_only_scene_plan(duration=60)
+
+    assert resolve_manual_beat_creation("scene-001", 60, scene_plan) is None
+
+
+def test_resolve_manual_beat_creation_rejects_overlap_with_an_existing_moment():
+    scene_plan = _presenter_only_scene_plan()
+    scene_plan["scenes"].append(_moment("scene-moment-0", "scene-001", 0, 150, "already here"))
+
+    assert resolve_manual_beat_creation("scene-001", 0, scene_plan) is None
 
 
 # resolve_image_creation — AI creation of inset image scenes via chat

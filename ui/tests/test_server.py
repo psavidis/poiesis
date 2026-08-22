@@ -1361,6 +1361,105 @@ def test_update_beats_reset_to_automatic_clears_a_prior_override(tmp_path):
     assert beats_on_disk["beats"][0]["overriddenFields"] == []
 
 
+def test_insert_beat_appends_and_returns_the_new_scene_id(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    response = client.post(
+        "/api/episode/beats/insert",
+        params={"path": str(episode)},
+        json={"sceneId": "scene-001", "offsetInParentFrames": 10},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["sceneId"] == "scene-beat-0"
+    assert body["beats"][0]["kind"] == "word-pop"
+    assert body["beats"][0]["text"] == ""
+    assert body["beats"][0]["offsetInParentFrames"] == 10
+
+    beats_on_disk = json.loads((episode / "processing" / "emphasis.json").read_text())
+    assert beats_on_disk["beats"][0]["kind"] == "word-pop"
+
+    scene_plan_on_disk = json.loads((episode / "processing" / "scene-plan.json").read_text())
+    beat_scenes = [s for s in scene_plan_on_disk["scenes"] if s["type"] == "beat"]
+    assert len(beat_scenes) == 1
+    assert beat_scenes[0]["id"] == "scene-beat-0"
+
+
+def test_insert_beat_appends_after_existing_beats(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+    (episode / "processing" / "emphasis.json").write_text(
+        json.dumps({"beats": [_beat_payload(offsetInParentFrames=0, durationInFrames=10)]})
+    )
+
+    response = client.post(
+        "/api/episode/beats/insert",
+        params={"path": str(episode)},
+        json={"sceneId": "scene-001", "offsetInParentFrames": 50},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["sceneId"] == "scene-beat-1"
+    assert len(body["beats"]) == 2
+
+
+def test_insert_beat_rejects_overlap_with_an_existing_moment(tmp_path):
+    episode = _make_episode(tmp_path)
+    scene_plan = _make_scene_plan(episode)
+    # resolve_manual_beat_creation's overlap check (overlaps_existing_overlay)
+    # reads the CURRENT scene-plan.json's already-merged moment/image
+    # scenes, not moments.json directly — mirrors the equivalent moment
+    # insert test.
+    scene_plan["scenes"].append(
+        {
+            "id": "scene-moment-0",
+            "type": "moment",
+            "treatment": "bottom-callout",
+            "text": "already here",
+            "parentSceneId": "scene-001",
+            "offsetInParentFrames": 0,
+            "durationInFrames": 100,
+        }
+    )
+    (episode / "processing" / "scene-plan.json").write_text(json.dumps(scene_plan))
+
+    response = client.post(
+        "/api/episode/beats/insert",
+        params={"path": str(episode)},
+        json={"sceneId": "scene-001", "offsetInParentFrames": 10},
+    )
+
+    assert response.status_code == 400
+
+
+def test_insert_beat_rejects_a_title_parent(tmp_path):
+    episode = _make_episode(tmp_path)
+    _make_scene_plan(episode)
+
+    response = client.post(
+        "/api/episode/beats/insert",
+        params={"path": str(episode)},
+        json={"sceneId": "does-not-exist", "offsetInParentFrames": 0},
+    )
+
+    assert response.status_code == 400
+
+
+def test_insert_beat_returns_404_without_scene_plan(tmp_path):
+    episode = _make_episode(tmp_path)
+
+    response = client.post(
+        "/api/episode/beats/insert",
+        params={"path": str(episode)},
+        json={"sceneId": "scene-001", "offsetInParentFrames": 0},
+    )
+
+    assert response.status_code == 404
+
+
 def _cut_payload(scene_id="scene-001", cut_start=30, cut_end=50, status="pending", overriddenFields=None):
     return {
         "sceneId": scene_id,

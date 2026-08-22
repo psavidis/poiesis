@@ -8,6 +8,14 @@ import { getChapterBoundaryPositions, getTitleScenes, saveTitleScenes, type Chap
 // a one-line platform sniff, not worth a shared module for).
 const MOD_KEY_LABEL = navigator.platform.toLowerCase().includes("mac") ? "Cmd" : "Ctrl";
 
+// Bars with their OWN global Cmd+I listener (MomentBar/BeatBar) — kept as
+// a set, not a single hardcoded string, so ChapterStrip's own Cmd+I below
+// correctly yields to every one of them, not just whichever bar existed
+// when this gate was first written (#86 follow-up: adding BeatBar's Cmd+I
+// without updating this set left it invisible to ChapterStrip, which kept
+// firing its OWN chapter-insert editor on top of BeatBar's insert).
+const BARS_WITH_OWN_INSERT = new Set(["moment", "beat"]);
+
 interface Chapter {
     title: string | null; // null = the lead-in before the first title card — NOT a real
                            // TitleScene, so it must stay unselectable/uneditable (see `selectable` below)
@@ -288,9 +296,17 @@ export function ChapterStrip({
     const MIN_CHAPTER_SPACING_FRAMES = fps;
 
     // Cmd+I (Mac) / Ctrl+I (elsewhere) inserts a brand-new chapter boundary
-    // at the playhead (#86) — global like MomentBar/BackgroundBar's own
-    // Cmd+I/Cmd+B, doesn't require a chapter to be selected first (inserting
-    // is independent of selection). Checked against the RAW playhead frame
+    // at the playhead (#86) — global like MomentBar/BeatBar's own Cmd+I or
+    // BackgroundBar's Cmd+B, doesn't require a chapter to be selected first
+    // (inserting is independent of selection). Gated on activeSelectionBar
+    // not being one of BARS_WITH_OWN_INSERT (#86 follow-up) — those bars
+    // have their own global Cmd+I listener, and without this gate every one
+    // of them fired alongside this one on every Cmd+I press, opening the
+    // chapter-insert editor AND that bar's own insert UI at once. This is
+    // the default winner (fires whenever none of those bars is the active
+    // selection, matching this shortcut's original no-selection-required
+    // design) — a bar in that set only wins Cmd+I when it's actively
+    // selected. Checked against the RAW playhead frame
     // first — a title's own timelineStartFrame is NOT generally one of
     // boundaryPositions's resolvable transcript-segment positions (the
     // title card's own on-screen duration shifts everything after it, see
@@ -312,6 +328,7 @@ export function ChapterStrip({
             if (e.key.toLowerCase() !== "i" || !(e.metaKey || e.ctrlKey)) return;
             const target = e.target as HTMLElement | null;
             if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+            if (activeSelectionBar && BARS_WITH_OWN_INSERT.has(activeSelectionBar)) return;
             if (boundaryPositions.length === 0 || !trackRef.current) return;
 
             const frame = getCurrentFrame();
@@ -336,7 +353,7 @@ export function ChapterStrip({
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [onCreateTitleAt, boundaryPositions, getCurrentFrame, totalFrames, titles]);
+    }, [onCreateTitleAt, boundaryPositions, getCurrentFrame, totalFrames, titles, activeSelectionBar]);
 
     // Delete/Backspace on a selected title shows the inline confirm —
     // mirrors MomentBar's own delete effect. Unlike Cmd+E (which only

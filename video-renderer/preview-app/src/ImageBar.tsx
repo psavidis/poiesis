@@ -126,6 +126,12 @@ export function ImageBar({
         if (dragState) return;
         setSelectedImageId(null);
         setPendingDeleteId(null);
+        // Claims activeSelectionBar even though this click doesn't select a
+        // particular image (#86 follow-up, matches every other bar's own
+        // onTrackClick) — without this, a plain click into this track to
+        // position the playhead left whatever bar was last selected owning
+        // the shared shortcuts instead of this one.
+        onActivateSelection();
         const rect = e.currentTarget.getBoundingClientRect();
         const pct = clamp((e.clientX - rect.left) / rect.width, 0, 1);
         onSeek(Math.round(windowStartFrame + pct * windowFrames));

@@ -207,6 +207,15 @@ export function MomentBar({
         // a stale, confusing leftover (found live: deleting a moment left
         // the insert picker's error message sitting on screen).
         setInsertPickerAnchor(null);
+        // Claims activeSelectionBar even though this click doesn't select
+        // any particular moment (#86 follow-up) — Cmd+I's own handler below
+        // is gated on activeSelectionBar === "moment", so without this, a
+        // plain click into this track to position the playhead left
+        // whatever bar was last selected (often "chapter") owning Cmd+I
+        // instead, silently routing the shortcut to ChapterStrip. Matches
+        // ChapterStrip's own chapter-box click, which claims "chapter" the
+        // same way.
+        onActivateSelection();
         const rect = e.currentTarget.getBoundingClientRect();
         const pct = clamp((e.clientX - rect.left) / rect.width, 0, 1);
         onSeek(Math.round(windowStartFrame + pct * windowFrames));
@@ -345,11 +354,19 @@ export function MomentBar({
     // which only ever gets set by clicking a moment segment and would
     // still be its unset {0,0} default if the user presses Cmd+I before
     // ever clicking one) — always correct regardless of click history.
+    //
+    // Gated on activeSelectionBar === "moment" (#86 follow-up) — ChapterStrip
+    // has its own global Cmd+I listener for inserting a chapter, and without
+    // this gate both fired on every Cmd+I press, opening the moment-insert
+    // picker AND the chapter-insert editor at once. A moment must be
+    // selected for THIS bar's Cmd+I to win; otherwise ChapterStrip's own
+    // (activeSelectionBar !== "moment") gate lets it fire instead.
     useEffect(() => {
         const onKeyDown = (e: KeyboardEvent) => {
             if (e.key.toLowerCase() !== "i" || !(e.metaKey || e.ctrlKey)) return;
             const target = e.target as HTMLElement | null;
             if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+            if (activeSelectionBar !== "moment") return;
             if (!presenterAtPlayhead || !trackRef.current) return;
 
             e.preventDefault();
@@ -361,7 +378,7 @@ export function MomentBar({
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [presenterAtPlayhead?.id, currentFrame, zoom, windowStartFrame]);
+    }, [presenterAtPlayhead?.id, currentFrame, zoom, windowStartFrame, activeSelectionBar]);
 
     // Delete/Backspace on a selected moment shows the inline confirm
     // (pendingDeleteId) rather than deleting immediately — a destructive,

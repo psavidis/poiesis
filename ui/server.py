@@ -44,6 +44,7 @@ from edit_plan import (  # noqa: E402
     apply_operations,
     reflow_timeline,
     resolve_manual_moment_creation,
+    resolve_manual_beat_creation,
 )
 from generate_cut_candidates import (  # noqa: E402
     compute_overridden_cut_fields,
@@ -1109,6 +1110,70 @@ def update_beats(path: str, body: BeatsUpdate):
         raise HTTPException(status_code=409, detail=str(e))
 
     return {"beats": beats}
+
+
+class BeatInsert(BaseModel):
+    sceneId: str
+    offsetInParentFrames: int
+
+
+@app.post("/api/episode/beats/insert")
+def insert_beat(path: str, body: BeatInsert):
+    """Cmd+I: a human-initiated beat insertion at the playhead — appends a
+    minimal, content-empty proposal (resolve_manual_beat_creation) to
+    emphasis.json and re-merges, the same write path update_beats already
+    uses, just with one new proposal appended instead of the client's own
+    edited array round-tripped. Mirrors insert_moment exactly. Returns the
+    new beat's sceneId (scene-beat-{index}, matching beatIndexFromSceneId's
+    convention on the frontend) so the client can select it and open
+    BeatEditorPanel immediately — the beat has no real kind/text yet until
+    that happens."""
+
+    episode = resolve_episode(path)
+    processing = episode / "processing"
+
+    scene_plan_path = processing / "scene-plan.json"
+    beats_path = processing / "emphasis.json"
+
+    if not scene_plan_path.exists():
+        raise HTTPException(status_code=404, detail="scene-plan.json not found — run the pipeline first")
+
+    with scene_plan_path.open("r", encoding="utf-8") as f:
+        scene_plan = json.load(f)
+
+    proposal = resolve_manual_beat_creation(body.sceneId, body.offsetInParentFrames, scene_plan)
+
+    if proposal is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Couldn't insert a beat here — check the scene id and that there's room at this position.",
+        )
+
+    old_beats = []
+    if beats_path.exists():
+        with beats_path.open("r", encoding="utf-8") as f:
+            old_beats = json.load(f).get("beats", [])
+
+    beats = old_beats + [proposal]
+    new_scene_id = f"scene-beat-{len(beats) - 1}"
+
+    def do_write():
+        with scene_plan_path.open("r", encoding="utf-8") as f:
+            fresh_scene_plan = json.load(f)
+
+        merged = merge_beat_scenes(fresh_scene_plan, beats)
+
+        write_json_atomic(beats_path, {"beats": beats})
+        write_json_atomic(scene_plan_path, merged)
+        regenerate_codegen(episode)
+
+    try:
+        with episode_lock(episode, wait=False):
+            wrap_with_checkpoint(processing, [scene_plan_path, beats_path], "beat insert", do_write)
+    except EpisodeBusyError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    return {"beats": beats, "sceneId": new_scene_id}
 
 
 class CutCandidate(BaseModel):

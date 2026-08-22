@@ -331,6 +331,32 @@ export async function insertMoment(
     return res.json();
 }
 
+// Cmd+I: inserts a minimal, content-empty beat at the playhead — the
+// server resolves default kind ("word-pop")/duration/placement
+// (resolve_manual_beat_creation) and appends it, returning the new beat's
+// sceneId so the caller can select it and open BeatEditorPanel
+// immediately. Mirrors insertMoment; no kind param since a beat's kind is
+// changed afterward via the editor, not chosen up front.
+export async function insertBeat(
+    episodePath: string,
+    sceneId: string,
+    offsetInParentFrames: number
+): Promise<{ beats: unknown[]; sceneId: string }> {
+    const res = await fetch(
+        `${API_BASE}/api/episode/beats/insert?path=${encodeURIComponent(episodePath)}`,
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sceneId, offsetInParentFrames }),
+        }
+    );
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || "Insert failed");
+    }
+    return res.json();
+}
+
 // Switches an existing moment among the three code presentations
 // (side-code / content-dominant-code / full-visual+code) while keeping
 // the same codeAssetId — see #62, first slice of #42. Unlike saveMoments'

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { BeatScene, PresenterScene, ScenePlan } from "video-renderer-src/episode/types";
-import { getBeats, saveBeats } from "./api";
+import { getBeats, insertBeat, saveBeats } from "./api";
 import { colors, radius, typography } from "./tokens";
 import type { TimelineZoom } from "./useTimelineZoom";
 
@@ -116,10 +116,7 @@ export function BeatBar({
     // the whole scene-plan merge just for this reset affordance.
     const [selectedOverriddenFields, setSelectedOverriddenFields] = useState<string[]>([]);
     // Delete/Backspace on a selected beat shows this inline confirm —
-    // same pattern as MomentBar/ChapterStrip/ImageBar. Beat CREATION stays
-    // chat-only (a beat's text must be a real contiguous transcript-word
-    // span, not free text — there's no manual insert UI for that, unlike
-    // moments/images), but removal is just as safe here as anywhere else.
+    // same pattern as MomentBar/ChapterStrip/ImageBar.
     const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
     const selectedAnchorRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
@@ -159,6 +156,19 @@ export function BeatBar({
         )
         .sort((a, b) => a.startFrame - b.startFrame);
 
+    // The presenter scene under the playhead right now, if any — Cmd+I
+    // inserts there, at the playhead's own offset into it. Mirrors
+    // MomentBar's identical presenterAtPlayhead: a beat can only be
+    // parented to a presenter scene (resolve_manual_beat_creation rejects
+    // a title parent), so Cmd+I is simply unavailable while the playhead
+    // sits over a title card.
+    const presenterAtPlayhead = scenePlan.scenes.find(
+        (s): s is PresenterScene =>
+            s.type === "presenter" &&
+            currentFrame >= s.timelineStartFrame &&
+            currentFrame < s.timelineStartFrame + s.durationInFrames
+    );
+
     const onTrackClick = (e: React.MouseEvent<HTMLDivElement>) => {
         if (dragBeatId) return;
         // A click that reaches here (not a segment — those stopPropagation)
@@ -167,6 +177,12 @@ export function BeatBar({
         // elsewhere on the timeline.
         setSelectedBeatId(null);
         setPendingDeleteId(null);
+        // Claims activeSelectionBar even though this click doesn't select a
+        // particular beat (#86 follow-up, matches every other bar's own
+        // onTrackClick) — without this, a plain click into this track to
+        // position the playhead left whatever bar was last selected owning
+        // the shared shortcuts (Cmd+I etc.) instead of this one.
+        onActivateSelection();
         const rect = e.currentTarget.getBoundingClientRect();
         const pct = clamp((e.clientX - rect.left) / rect.width, 0, 1);
         onSeek(Math.round(windowStartFrame + pct * windowFrames));
@@ -312,6 +328,56 @@ export function BeatBar({
         return () => window.removeEventListener("keydown", onKeyDown);
     }, [selectedBeatId, onEditRequested]);
 
+    // Cmd+I (Mac) / Ctrl+I (elsewhere) inserts a brand-new, content-empty
+    // beat at the playhead (#86 follow-up) — mirrors MomentBar's own Cmd+I
+    // exactly, including the activeSelectionBar gate (this bar's click
+    // into empty track space now claims "beat" via onActivateSelection,
+    // same as every other bar) that keeps ChapterStrip's own Cmd+I from
+    // firing at the same time. Requires a presenter scene under the
+    // playhead (see presenterAtPlayhead above) — silently does nothing
+    // otherwise, matching MomentBar's identical "no valid target, no-op"
+    // behavior. No type picker (unlike MomentBar's text/image/code/
+    // diagram choice) — a beat has only one meaningful "kind" decision
+    // (word-pop/underline/icon-accent) and it's made in BeatEditorPanel
+    // right after insertion, not up front.
+    useEffect(() => {
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key.toLowerCase() !== "i" || !(e.metaKey || e.ctrlKey)) return;
+            const target = e.target as HTMLElement | null;
+            if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+            if (activeSelectionBar !== "beat") return;
+            if (!presenterAtPlayhead || !trackRef.current) return;
+
+            e.preventDefault();
+            doInsert();
+        };
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [presenterAtPlayhead?.id, currentFrame, activeSelectionBar]);
+
+    // Inserts a content-empty beat at the playhead, then immediately opens
+    // BeatEditorPanel to fill in kind/text — same "insert empty, open
+    // editor" flow as MomentBar's doInsert, just with no kind param (the
+    // server always defaults to word-pop, see insertBeat's own comment).
+    const doInsert = async () => {
+        if (!presenterAtPlayhead) return;
+
+        setSaveError(null);
+
+        try {
+            const offsetInParentFrames = currentFrame - presenterAtPlayhead.timelineStartFrame;
+            const result = await insertBeat(episodePath, presenterAtPlayhead.id, offsetInParentFrames);
+            onSaved();
+            onActivateSelection();
+            setSelectedBeatId(result.sceneId);
+            onEditRequested(result.sceneId, selectedAnchorRef.current);
+        } catch (e) {
+            setSaveError(String(e));
+        }
+    };
+
     // Delete/Backspace on a selected beat shows the inline confirm —
     // mirrors MomentBar's own delete effect.
     useEffect(() => {
@@ -401,7 +467,15 @@ export function BeatBar({
 
     // Every hook above has now run unconditionally on every render — safe
     // to bail on rendering anything from here on.
-    if (totalFrames <= 0 || resolved.length === 0) return null;
+    //
+    // Deliberately does NOT also bail on resolved.length === 0 (#86
+    // follow-up, same fix as #79's MomentBar equivalent) — now that Cmd+I
+    // can insert a beat here, returning null when resolved is empty would
+    // make a beat-less episode's first beat unreachable: this bar's Cmd+I
+    // listener needs trackRef.current to actually be mounted to insert at
+    // all. totalFrames <= 0 is kept as the only bail-out — that's a
+    // genuinely unloaded episode, not an empty-but-valid beats list.
+    if (totalFrames <= 0) return null;
 
     return (
         <div style={styles.wrap}>
@@ -491,6 +565,10 @@ export function BeatBar({
                 <div style={styles.hint}>
                     {selectedBeatId
                         ? `Selected — press ${MOD_KEY_LABEL}+E to edit its text, Delete to remove it.`
+                        : presenterAtPlayhead
+                        ? `Press ${MOD_KEY_LABEL}+I to insert a beat here.${
+                              zoom > 1 ? " Click a beat to select it." : ""
+                          }`
                         : zoom > 1
                         ? "Click a beat to select it, drag its right edge to resize, or click anywhere to seek."
                         : "Zoom in to drag a beat's duration — at full-episode width a 2s beat is too thin to grab reliably."}

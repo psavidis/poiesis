@@ -392,6 +392,12 @@ export function BackgroundBar({
     const onTrackClick = (e: React.MouseEvent<HTMLDivElement>) => {
         setSelectedIndex(null);
         setPendingDeleteIndex(null);
+        // Claims activeSelectionBar even though this click doesn't select a
+        // particular background (#86 follow-up, matches every other bar's
+        // own onTrackClick) — without this, a plain click into this track
+        // to position the playhead left whatever bar was last selected
+        // owning the shared shortcuts instead of this one.
+        onActivateSelection();
         const rect = e.currentTarget.getBoundingClientRect();
         const pct = clamp((e.clientX - rect.left) / rect.width, 0, 1);
         onSeek(Math.round(windowStartFrame + pct * windowFrames));

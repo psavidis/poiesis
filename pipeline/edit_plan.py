@@ -671,6 +671,48 @@ def resolve_manual_moment_creation(scene_id, offset_in_parent_frames, kind, scen
     return proposal
 
 
+def resolve_manual_beat_creation(scene_id, offset_in_parent_frames, scene_plan, style=None):
+    """Resolves a human-initiated (Cmd+I), not AI-proposed, beat insertion
+    into a minimal valid proposal ready to append to emphasis.json — or
+    None if the scene/placement is invalid. Mirrors
+    resolve_manual_moment_creation exactly: no transcript grounding here
+    (resolve_beat_creation's job, for the chat-editing path, which needs
+    real wordIds) since the human is directly authoring this beat — text/
+    kind/icon get filled in afterward through the existing BeatEditorPanel.
+    Defaults to "word-pop", the simplest kind (no icon to pick), same
+    reasoning as moments defaulting to the least visually aggressive
+    treatment (bottom-callout) rather than forcing a choice up front; the
+    user can switch kind/icon via the editor immediately after insertion."""
+
+    if style is None:
+        style = load_style()
+
+    scenes_by_id = {scene["id"]: scene for scene in scene_plan["scenes"]}
+    parent = scenes_by_id.get(scene_id)
+
+    if not parent or parent["type"] != "presenter":
+        return None
+
+    offset = max(0, min(offset_in_parent_frames, parent["durationInFrames"]))
+    duration = min(style["emphasis"]["defaultDurationFrames"], max(0, parent["durationInFrames"] - offset))
+
+    if duration <= 0:
+        return None
+
+    if overlaps_existing_overlay(scene_id, offset, duration, scene_plan):
+        return None
+
+    return {
+        "sceneId": scene_id,
+        "kind": "word-pop",
+        "text": "",
+        "icon": None,
+        "offsetInParentFrames": offset,
+        "durationInFrames": duration,
+        "reason": "",
+    }
+
+
 def _bottom_callout_overlaps_existing_moment(scene_plan, scene_id, offset, duration):
     """Mirrors generate_moments.py's dedupe_overlapping_windows — a moment's
     on-screen window is its own span padded by TRANSITION_FRAMES on both
