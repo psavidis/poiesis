@@ -1940,6 +1940,11 @@ async def ws_run_pipeline(websocket: WebSocket):
         episode = resolve_episode(params["path"])
         force = bool(params.get("force", False))
         skip_captions = bool(params.get("skipCaptions", False))
+        # #88: skips every AI-calling stage (analyze episode, propose title
+        # scenes/storyboard/moments/emphasis beats) — see
+        # pipeline/run_pipeline.py's own --no-ai help text for what still
+        # runs and why the result is still a complete, renderable episode.
+        no_ai = bool(params.get("noAi", False))
 
         command = [str(PROJECT_ROOT / "create_episode.sh"), str(episode)]
 
@@ -1948,6 +1953,9 @@ async def ws_run_pipeline(websocket: WebSocket):
 
         if skip_captions:
             command.append("--skip-captions")
+
+        if no_ai:
+            command.append("--no-ai")
 
         return episode, command, {"kind": "pipeline", "format": None, "resolution": None}
 

@@ -433,3 +433,68 @@ def test_ws_render_run_rejects_invalid_resolution_for_davinci_format(tmp_path):
 
     assert msg["type"] == "error"
     assert "not-a-resolution" in msg["message"]
+
+
+# #88: the UI's "Run without AI" checkbox maps to run_pipeline.py's own
+# --no-ai flag via create_episode.sh, which forwards all args unchanged
+# (see create_episode.sh's own "$@"). Confirms the flag reaches the
+# constructed command exactly the same way --force/--skip-captions already
+# do (see test_ws_render_run_format_davinci_passes_resolution for the
+# equivalent render-side pattern).
+def test_ws_run_pipeline_no_ai_appends_the_flag(tmp_path, monkeypatch):
+    episode = tmp_path / "episode"
+    episode.mkdir()
+
+    monkeypatch.setattr(server, "stream_process", _fake_stream_process)
+
+    with client.websocket_connect("/ws/pipeline/run") as ws:
+        ws.send_json({"path": str(episode), "noAi": True})
+        start_msg = ws.receive_json()
+
+        assert start_msg["type"] == "start"
+        assert "--no-ai" in start_msg["command"]
+
+        msg = ws.receive_json()
+        while msg["type"] == "log":
+            msg = ws.receive_json()
+        assert msg["type"] == "done"
+
+
+def test_ws_run_pipeline_without_no_ai_omits_the_flag(tmp_path, monkeypatch):
+    episode = tmp_path / "episode"
+    episode.mkdir()
+
+    monkeypatch.setattr(server, "stream_process", _fake_stream_process)
+
+    with client.websocket_connect("/ws/pipeline/run") as ws:
+        ws.send_json({"path": str(episode)})
+        start_msg = ws.receive_json()
+
+        assert start_msg["type"] == "start"
+        assert "--no-ai" not in start_msg["command"]
+
+        msg = ws.receive_json()
+        while msg["type"] == "log":
+            msg = ws.receive_json()
+        assert msg["type"] == "done"
+
+
+def test_ws_run_pipeline_no_ai_and_force_and_skip_captions_combine(tmp_path, monkeypatch):
+    episode = tmp_path / "episode"
+    episode.mkdir()
+
+    monkeypatch.setattr(server, "stream_process", _fake_stream_process)
+
+    with client.websocket_connect("/ws/pipeline/run") as ws:
+        ws.send_json({"path": str(episode), "noAi": True, "force": True, "skipCaptions": True})
+        start_msg = ws.receive_json()
+
+        assert start_msg["type"] == "start"
+        assert "--no-ai" in start_msg["command"]
+        assert "--force" in start_msg["command"]
+        assert "--skip-captions" in start_msg["command"]
+
+        msg = ws.receive_json()
+        while msg["type"] == "log":
+            msg = ws.receive_json()
+        assert msg["type"] == "done"
