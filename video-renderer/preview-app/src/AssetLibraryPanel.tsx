@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { BackgroundImageMotion, BackgroundImageMotionSpeed, EpisodeBackground, ScenePlan } from "video-renderer-src/episode/types";
 import { contentTypeAndPresentationFor } from "./MomentEditorPanel";
 import { momentIndexFromSceneId, normalizeMoment } from "./momentDuration";
@@ -72,6 +72,16 @@ interface Props {
 // StoryboardPanel's already-established "always visible, collapsible"
 // pattern in this same header row rather than being buried in a
 // per-moment editor.
+// Autodiscovery poll interval (#92 follow-up) — a file dropped into (or
+// removed from) background/graphics/code while the matching tab is
+// already open (not freshly activated) previously only showed up after
+// leaving the tab and coming back, or a full page reload; reported live
+// against real episode data. Same interval ProgressFlow's own live status
+// poll already uses elsewhere in this app — a directory listing is cheap
+// enough that polling it is simpler than adding a real filesystem
+// watcher, which this app has nowhere else either.
+const ASSET_AUTODISCOVERY_POLL_MS = 2000;
+
 // Human-readable treatment names — shown in the "Editing: …" status line
 // instead of MomentEditorPanel's raw treatment string, since "side-image"/
 // "side-diagram" read as internal jargon to someone just trying to tell
@@ -134,42 +144,85 @@ export function AssetLibraryPanel({
     const [deletingCodeAssetId, setDeletingCodeAssetId] = useState<string | null>(null);
 
     // Autodiscovery (#92/#93/#94): re-scans the episode's background/,
-    // graphics/, or code/ folder every time the corresponding tab is
-    // opened, so a file dropped in since the last visit shows up without
-    // the user having to remember to run the matching "Index …" stage in
-    // Advanced. Cheap (a directory listing), so re-running it on every
-    // activation rather than watching the filesystem is enough — this app
-    // has no background/file-watcher process anywhere else either.
+    // graphics/, or code/ folder so a file dropped in (or removed) shows up
+    // without the user having to remember to run the matching "Index …"
+    // stage in Advanced. Fires immediately on activation, then keeps
+    // polling every ASSET_AUTODISCOVERY_POLL_MS while the tab stays open —
+    // a one-shot reindex on activation only caught a file added BEFORE
+    // opening the tab, not one dropped in while already sitting on it,
+    // which needed a full page reload to notice (reported live against
+    // real episode data, #92 follow-up). Cheap (a directory listing), so
+    // polling it is simpler than adding a real filesystem watcher, which
+    // this app has nowhere else either. Each ref below skips the state
+    // update when the freshly-fetched list is unchanged from the last
+    // fetch, so an idle poll tick never re-renders the list or disrupts
+    // in-progress UI state (an expanded motion picker, a pending delete
+    // confirm) — ids stay stable across a reindex with no new/removed
+    // files (see index_backgrounds.py/index_assets.py/index_code.py's own
+    // docstrings), so this is a plain content comparison, not an id diff.
+    const lastBackgroundsJsonRef = useRef<string | null>(null);
     useEffect(() => {
         if (!isActive || tab !== "backgrounds") return;
-        reindexBackgrounds(episodePath)
-            .then((backgrounds) => {
-                onBackgroundsChanged(backgrounds);
-                setError(null);
-            })
-            .catch((e) => setError(String(e)));
+
+        const poll = () => {
+            reindexBackgrounds(episodePath)
+                .then((backgrounds) => {
+                    const json = JSON.stringify(backgrounds);
+                    if (json === lastBackgroundsJsonRef.current) return;
+                    lastBackgroundsJsonRef.current = json;
+                    onBackgroundsChanged(backgrounds);
+                    setError(null);
+                })
+                .catch((e) => setError(String(e)));
+        };
+
+        poll();
+        const interval = setInterval(poll, ASSET_AUTODISCOVERY_POLL_MS);
+        return () => clearInterval(interval);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [episodePath, isActive, tab]);
 
+    const lastImagesJsonRef = useRef<string | null>(null);
     useEffect(() => {
         if (!isActive || tab !== "images") return;
-        reindexAssets(episodePath)
-            .then((assets) => {
-                setImages(assets);
-                setError(null);
-            })
-            .catch((e) => setError(String(e)));
+
+        const poll = () => {
+            reindexAssets(episodePath)
+                .then((assets) => {
+                    const json = JSON.stringify(assets);
+                    if (json === lastImagesJsonRef.current) return;
+                    lastImagesJsonRef.current = json;
+                    setImages(assets);
+                    setError(null);
+                })
+                .catch((e) => setError(String(e)));
+        };
+
+        poll();
+        const interval = setInterval(poll, ASSET_AUTODISCOVERY_POLL_MS);
+        return () => clearInterval(interval);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [episodePath, isActive, tab]);
 
+    const lastCodeAssetsJsonRef = useRef<string | null>(null);
     useEffect(() => {
         if (!isActive || tab !== "code") return;
-        reindexCodeAssets(episodePath)
-            .then((assets) => {
-                setCodeAssets(assets);
-                setError(null);
-            })
-            .catch((e) => setError(String(e)));
+
+        const poll = () => {
+            reindexCodeAssets(episodePath)
+                .then((assets) => {
+                    const json = JSON.stringify(assets);
+                    if (json === lastCodeAssetsJsonRef.current) return;
+                    lastCodeAssetsJsonRef.current = json;
+                    setCodeAssets(assets);
+                    setError(null);
+                })
+                .catch((e) => setError(String(e)));
+        };
+
+        poll();
+        const interval = setInterval(poll, ASSET_AUTODISCOVERY_POLL_MS);
+        return () => clearInterval(interval);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [episodePath, isActive, tab]);
 
@@ -313,6 +366,11 @@ export function AssetLibraryPanel({
 
         try {
             const backgrounds = await deleteBackground(episodePath, backgroundId);
+            // Keeps the autodiscovery poll's own dedup ref in sync, so the
+            // next poll tick (up to ASSET_AUTODISCOVERY_POLL_MS later)
+            // doesn't see this delete's own result as "changed since last
+            // poll" and redundantly re-apply the identical list.
+            lastBackgroundsJsonRef.current = JSON.stringify(backgrounds);
             onBackgroundsChanged(backgrounds);
             setPendingDeleteBackgroundId(null);
             if (expandedBackgroundId === backgroundId) {
@@ -340,6 +398,10 @@ export function AssetLibraryPanel({
 
         try {
             const updated = await deleteAsset(episodePath, assetId);
+            // See deleteBackgroundCard's identical comment — keeps the
+            // autodiscovery poll's dedup ref in sync so the next poll tick
+            // doesn't redundantly re-apply this delete's own result.
+            lastImagesJsonRef.current = JSON.stringify(updated);
             setImages(updated);
             setPendingDeleteAssetId(null);
         } catch (e) {
@@ -358,6 +420,7 @@ export function AssetLibraryPanel({
 
         try {
             const updated = await deleteCodeAsset(episodePath, codeAssetId);
+            lastCodeAssetsJsonRef.current = JSON.stringify(updated);
             setCodeAssets(updated);
             setPendingDeleteCodeAssetId(null);
         } catch (e) {
