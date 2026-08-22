@@ -1,6 +1,100 @@
 import { useEffect, useRef, useState } from "react";
-import { cancelRender, getRenderStatus, runOverWebSocket, type EpisodeStatus, type RunHandle, type RunMessage } from "./api";
+import {
+    cancelRender,
+    getQaReport,
+    getRenderStatus,
+    getScenePlan,
+    runOverWebSocket,
+    type EpisodeStatus,
+    type QaIssue,
+    type QaReport,
+    type RunHandle,
+    type RunMessage,
+} from "./api";
 import { colors, radius, typography } from "./tokens";
+import type { ScenePlan } from "video-renderer-src/episode/types";
+
+// Plain-language translations of qa_check.py's internal `check` codes
+// (pipeline/qa_check.py) — the report itself is written for a developer
+// (sceneId, frame numbers, internal check names), but per CLAUDE.md the
+// user isn't supposed to need to know what a "scene plan" or "moment
+// window" is. Each entry is the sentence shown on the issue card; a code
+// missing from this map falls back to its raw `detail` string so a new
+// check added to qa_check.py degrades gracefully instead of disappearing.
+const QA_ISSUE_MESSAGES: Record<string, string> = {
+    missing_media: "Some footage this episode needs is missing from disk.",
+    unknown_video_id: "A part of the edit points at footage that no longer exists.",
+    unknown_asset_id: "A part of the edit points at an image or asset that no longer exists.",
+    timeline_gap_or_overlap: "Two parts of the video aren't lined up correctly — there may be a gap or overlap.",
+    overlay_outside_bounds: "A visual (text, diagram, etc.) is positioned outside the scene it belongs to.",
+    moment_presenter_side_mismatch: "The presenter's on-screen position doesn't match the visual treatment for a moment.",
+    moment_windows_overlap: "Two visual moments overlap on screen at the same time.",
+    duration_mismatch: "The rendered video's length doesn't match what the edit expects.",
+    audio_video_duration_mismatch: "The rendered video's audio and picture don't run for the same length of time.",
+    missing_audio_stream: "The rendered video has no audio track at all.",
+    black_frames: "The rendered video has a stretch of solid black — likely missing or broken footage.",
+    silent_audio: "The rendered video has no audible sound.",
+};
+
+// Which stage produced the problem, so the card can point at what fixing
+// it actually requires instead of leaving the user to guess. Checks not
+// listed here operate purely on scene-plan.json/manifest.json (no
+// suggestion needed beyond re-running the pipeline stage that built them).
+const QA_ISSUE_SUGGESTS_RERENDER = new Set([
+    "duration_mismatch",
+    "audio_video_duration_mismatch",
+    "missing_audio_stream",
+    "black_frames",
+    "silent_audio",
+]);
+
+function formatTimestamp(seconds: number): string {
+    const total = Math.max(0, Math.round(seconds));
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+// Resolves an issue's sceneId to a timeline timestamp via scene-plan.json,
+// so "two parts of the video aren't lined up" becomes "around 0:17" —
+// something the user can actually act on (scrub the preview there) instead
+// of a scene id or frame number they have no way to interpret. Not every
+// issue has a sceneId (e.g. missing_audio_stream is about the whole
+// render), and the scene plan may not be loaded yet — both are normal,
+// not errors, so this degrades to no timestamp rather than throwing.
+// Mirrors pipeline/overlay_placement.py's absolute_position: a track scene
+// (presenter/title/background/full-display image) carries
+// timelineStartFrame directly; an overlay scene (moment/caption/beat/inset
+// image) only carries a parent-relative offsetInParentFrames, resolved via
+// its parentSceneId (one level of nesting — overlays don't nest further).
+function absoluteStartFrame(scene: ScenePlan["scenes"][number], scenePlan: ScenePlan): number | null {
+    if ("timelineStartFrame" in scene) return scene.timelineStartFrame;
+
+    if ("parentSceneId" in scene && "offsetInParentFrames" in scene) {
+        const parent = scenePlan.scenes.find((s) => s.id === scene.parentSceneId);
+        if (!parent || !("timelineStartFrame" in parent)) return null;
+        return parent.timelineStartFrame + scene.offsetInParentFrames;
+    }
+
+    return null;
+}
+
+function issueTimestampSeconds(issue: QaIssue, scenePlan: ScenePlan | null): number | null {
+    if (!issue.sceneId || !scenePlan) return null;
+
+    const scene = scenePlan.scenes.find((s) => s.id === issue.sceneId);
+    if (!scene) return null;
+
+    const startFrame = absoluteStartFrame(scene, scenePlan);
+    return startFrame === null ? null : startFrame / scenePlan.fps;
+}
+
+function describeQaIssue(issue: QaIssue, scenePlan: ScenePlan | null): string {
+    const message = QA_ISSUE_MESSAGES[issue.check] ?? issue.detail;
+    const seconds = issueTimestampSeconds(issue, scenePlan);
+
+    return seconds === null ? message : `${message} (around ${formatTimestamp(seconds)})`;
+}
 
 // #83: export (Render/QA check, plus the parameters that shape them —
 // output format, resolution, and whether captions are included on the
@@ -40,6 +134,9 @@ export function ExportPanel({ episodePath, status, includeCaptions, onIncludeCap
     const MAX_LOG_LINES = 200;
 
     const [runningKind, setRunningKind] = useState<"render" | "qa_check" | null>(null);
+    const [qaReport, setQaReport] = useState<QaReport | null>(null);
+    const [qaReportError, setQaReportError] = useState(false);
+    const [scenePlan, setScenePlan] = useState<ScenePlan | null>(null);
     const [logLines, setLogLines] = useState<string[]>([]);
     const [logVisible, setLogVisible] = useState(false);
     const [logExpanded, setLogExpanded] = useState(false);
@@ -126,6 +223,33 @@ export function ExportPanel({ episodePath, status, includeCaptions, onIncludeCap
         setCopied(false);
     }, [logLines]);
 
+    // Show a QA report already on disk from an earlier run (e.g. before
+    // this tab was opened), rather than only ever showing one produced by
+    // a run started from this panel this session.
+    useEffect(() => {
+        setQaReport(null);
+        setQaReportError(false);
+        getQaReport(episodePath)
+            .then(setQaReport)
+            .catch(() => {
+                // qa-report.json not produced yet — normal before QA check has ever run.
+            });
+    }, [episodePath]);
+
+    // Loaded once per episode (not reset per QA run) purely to resolve an
+    // issue's sceneId to a timestamp for display — scene-plan.json is
+    // already required for Export to be usable at all (see ready/
+    // pipelineHasRun below), so it's safe to assume present here too.
+    useEffect(() => {
+        setScenePlan(null);
+        getScenePlan(episodePath)
+            .then((data) => setScenePlan(data as ScenePlan))
+            .catch(() => {
+                // Not ready yet, or this episode's export isn't ready either — the
+                // summary just shows issues without a timestamp in that case.
+            });
+    }, [episodePath]);
+
     const appendLog = (line: string) => {
         setLogLines((prev) => {
             const next = prev.length >= MAX_LOG_LINES ? prev.slice(prev.length - MAX_LOG_LINES + 1) : prev.slice();
@@ -154,6 +278,10 @@ export function ExportPanel({ episodePath, status, includeCaptions, onIncludeCap
         setLogExpanded(false);
         setProgressTotal(null);
         setProgressCurrent(0);
+        if (kind === "qa_check") {
+            setQaReport(null);
+            setQaReportError(false);
+        }
 
         runHandleRef.current = runOverWebSocket(wsPath, params, (msg: RunMessage) => {
             if (msg.type === "start") {
@@ -171,6 +299,15 @@ export function ExportPanel({ episodePath, status, includeCaptions, onIncludeCap
             } else if (msg.type === "done") {
                 appendLog(`(exit code ${msg.exitCode})`);
                 setRunningKind(null);
+                // qa_check.py exits 1 whenever it found issues (that's a
+                // successful check reporting a warning status, not a
+                // crash) — always try to load the report it just wrote,
+                // regardless of exit code.
+                if (kind === "qa_check") {
+                    getQaReport(episodePath)
+                        .then(setQaReport)
+                        .catch(() => setQaReportError(true));
+                }
             } else if (msg.type === "cancelled") {
                 appendLog("Cancelled.");
                 setRunningKind(null);
@@ -255,6 +392,14 @@ export function ExportPanel({ episodePath, status, includeCaptions, onIncludeCap
                     QA check
                 </button>
             </div>
+
+            {runningKind === "qa_check" && <span style={styles.progressLabel}>Checking the episode…</span>}
+
+            {runningKind !== "qa_check" && qaReport && <QaReportSummary report={qaReport} scenePlan={scenePlan} />}
+
+            {runningKind !== "qa_check" && !qaReport && qaReportError && (
+                <span style={styles.qaErrorNote}>Couldn't load the QA report — see details below.</span>
+            )}
 
             {(logVisible || recoveredRender) && (
                 <div style={styles.logSection}>
@@ -344,6 +489,47 @@ export function ExportPanel({ episodePath, status, includeCaptions, onIncludeCap
     );
 }
 
+// Structured, plain-language view of qa-report.json (pipeline/qa_check.py)
+// — replaces asking the user to expand the raw log and read `sceneId`s and
+// frame numbers to find out what's wrong. The raw log is still available
+// under "Show details" for whoever actually wants that.
+function QaReportSummary({ report, scenePlan }: { report: QaReport; scenePlan: ScenePlan | null }) {
+    if (report.status === "ok") {
+        return (
+            <div style={styles.qaSummaryOk}>
+                <span style={{ ...styles.qaStatusDot, background: colors.success }} />
+                No problems found.
+            </div>
+        );
+    }
+
+    const suggestRerender = report.issues.some((issue) => QA_ISSUE_SUGGESTS_RERENDER.has(issue.check));
+    const suggestRepipeline = report.issues.some((issue) => !QA_ISSUE_SUGGESTS_RERENDER.has(issue.check));
+
+    return (
+        <div style={styles.qaSummary}>
+            <div style={styles.qaSummaryHeader}>
+                <span style={{ ...styles.qaStatusDot, background: colors.warning }} />
+                {report.issues_count} {report.issues_count === 1 ? "problem" : "problems"} found
+            </div>
+            <ul style={styles.qaIssueList}>
+                {report.issues.map((issue, i) => (
+                    <li key={i} style={styles.qaIssueItem}>
+                        {describeQaIssue(issue, scenePlan)}
+                    </li>
+                ))}
+            </ul>
+            <p style={styles.qaSuggestion}>
+                {suggestRerender && suggestRepipeline
+                    ? "Try re-running the pipeline and rendering again."
+                    : suggestRerender
+                      ? "Try rendering again — if the problem persists, the footage or edit itself may need fixing."
+                      : "Re-running the pipeline may fix this before your next render."}
+            </p>
+        </div>
+    );
+}
+
 function ProgressBar({ current, total, format }: { current: number; total: number; format: "video" | "davinci" | null }) {
     const pct = total > 0 ? Math.min(100, Math.round((current / total) * 100)) : 0;
     const done = total > 0 && current >= total;
@@ -377,6 +563,62 @@ const styles: Record<string, React.CSSProperties> = {
     },
     notReadyNote: {
         fontSize: typography.size.md,
+        color: colors.textSecondary,
+        fontStyle: "italic",
+    },
+    qaSummary: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        padding: 12,
+        borderRadius: radius.md,
+        border: `1px solid ${colors.border}`,
+        background: colors.background,
+    },
+    qaSummaryOk: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: 12,
+        borderRadius: radius.md,
+        border: `1px solid ${colors.border}`,
+        background: colors.background,
+        fontSize: typography.size.md,
+        color: colors.textPrimary,
+    },
+    qaSummaryHeader: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        fontSize: typography.size.md,
+        fontWeight: "bold" as const,
+        color: colors.textPrimary,
+    },
+    qaStatusDot: {
+        width: 8,
+        height: 8,
+        borderRadius: "50%",
+        flexShrink: 0,
+    },
+    qaIssueList: {
+        margin: 0,
+        paddingLeft: 20,
+        display: "flex",
+        flexDirection: "column",
+        gap: 4,
+    },
+    qaIssueItem: {
+        fontSize: typography.size.md,
+        color: colors.textSecondary,
+    },
+    qaSuggestion: {
+        margin: 0,
+        fontSize: typography.size.sm,
+        color: colors.textSecondary,
+        fontStyle: "italic",
+    },
+    qaErrorNote: {
+        fontSize: typography.size.sm,
         color: colors.textSecondary,
         fontStyle: "italic",
     },

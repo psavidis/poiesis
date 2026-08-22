@@ -234,11 +234,20 @@ def check_timeline_continuity(scene_plan):
 
     issues = []
 
+    # "background" scenes are their own independent underlay layer running
+    # in parallel with the presenter/title track (see
+    # generate_background_scenes.py's merge_background_scenes) — one can
+    # span the entire episode, or several can sit back-to-back reflowing
+    # independently of presenter/title cuts. They deliberately do not tile
+    # with the main track, so they're excluded here specifically rather
+    # than folded into is_overlay_scene (which check_overlay_scenes_within_
+    # bounds also uses, and which requires a parentSceneId/
+    # offsetInParentFrames a background scene doesn't have).
     track_scenes = sorted(
         (
             scene
             for scene in scene_plan["scenes"]
-            if not is_overlay_scene(scene)
+            if not is_overlay_scene(scene) and scene["type"] != "background"
         ),
         key=lambda s: s["timelineStartFrame"]
     )

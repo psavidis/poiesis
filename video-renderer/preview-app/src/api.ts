@@ -138,6 +138,25 @@ async function getArtifact(episodePath: string, name: string) {
 
 export const getScenePlan = (episodePath: string) => getArtifact(episodePath, "scene-plan.json");
 export const getManifest = (episodePath: string) => getArtifact(episodePath, "manifest.json");
+
+export interface QaIssue {
+    check: string;
+    severity: "high" | "medium";
+    sceneId?: string;
+    videoId?: string;
+    detail: string;
+}
+
+export interface QaReport {
+    status: "ok" | "warning";
+    issues_count: number;
+    issues: QaIssue[];
+}
+
+// qa_check.py always writes qa-report.json before exiting (success or
+// warning), so a 404 here only means QA check hasn't been run yet for this
+// episode — not that the check failed.
+export const getQaReport = (episodePath: string): Promise<QaReport> => getArtifact(episodePath, "qa-report.json");
 export const getAssets = (episodePath: string) =>
     getArtifact(episodePath, "assets.json")
         .then((data) => data.assets ?? [])

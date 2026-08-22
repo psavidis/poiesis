@@ -411,6 +411,27 @@ def test_check_timeline_continuity_ignores_inset_image_scenes():
     assert check_timeline_continuity(scene_plan) == []
 
 
+def test_check_timeline_continuity_ignores_background_scenes():
+    # A "background" scene is an independent underlay layer running in
+    # parallel with the presenter/title track (generate_background_scenes.py)
+    # — it can span the entire episode, so it must not be checked for
+    # tiling contiguously with presenter/title scenes (see #133).
+    scene_plan = {
+        "scenes": [
+            {
+                "id": "scene-background-0",
+                "type": "background",
+                "timelineStartFrame": 0,
+                "durationInFrames": 1000,
+            },
+            {"id": "a", "type": "presenter", "timelineStartFrame": 0, "durationInFrames": 100},
+            {"id": "b", "type": "title", "timelineStartFrame": 100, "durationInFrames": 50},
+        ]
+    }
+
+    assert check_timeline_continuity(scene_plan) == []
+
+
 def test_check_timeline_continuity_treats_full_display_image_as_track_scene():
     scene_plan = {
         "scenes": [

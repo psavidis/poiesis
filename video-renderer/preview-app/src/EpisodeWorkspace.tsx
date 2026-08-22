@@ -693,13 +693,6 @@ export function EpisodeWorkspace() {
                 >
                     Advanced
                 </button>
-                <button
-                    className={activeTab === "export" ? undefined : "secondary"}
-                    style={styles.tabStripButton}
-                    onClick={() => setActiveTab((t) => (t === "export" ? null : "export"))}
-                >
-                    Export
-                </button>
                 {hasStoryboard && (
                     <button
                         className={activeTab === "storyboard" ? undefined : "secondary"}
@@ -725,6 +718,13 @@ export function EpisodeWorkspace() {
                         Episode analysis
                     </button>
                 )}
+                <button
+                    className={activeTab === "export" ? undefined : "secondary"}
+                    style={styles.tabStripButton}
+                    onClick={() => setActiveTab((t) => (t === "export" ? null : "export"))}
+                >
+                    Export
+                </button>
             </div>
 
             {/* One shared box for whichever tab is open — each panel below
