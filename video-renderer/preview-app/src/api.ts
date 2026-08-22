@@ -119,6 +119,39 @@ export const getAssets = (episodePath: string) =>
     getArtifact(episodePath, "assets.json")
         .then((data) => data.assets ?? [])
         .catch(() => []); // index_assets hasn't run yet (see #30) — a normal state while the plan is still filling in, not a failure
+
+// Re-scans the episode's graphics/ folder and returns the freshly indexed
+// list (#93, mirrors #92's reindexBackgrounds) — called whenever the
+// Images tab becomes active, so a file dropped into graphics/ since the
+// last visit shows up without the user having to remember to run "Index
+// graphics assets" in Advanced.
+export async function reindexAssets(episodePath: string) {
+    const res = await fetch(
+        `${API_BASE}/api/episode/assets/reindex?path=${encodeURIComponent(episodePath)}`,
+        { method: "POST" }
+    );
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || `Failed to reindex assets: ${res.status}`);
+    }
+    const data = await res.json();
+    return data.assets ?? [];
+}
+
+// Deletes one graphics/ file from disk and re-indexes (#93) — the
+// returned list is the fresh post-delete assets.json content.
+export async function deleteAsset(episodePath: string, assetId: string) {
+    const res = await fetch(
+        `${API_BASE}/api/episode/assets/${encodeURIComponent(assetId)}?path=${encodeURIComponent(episodePath)}`,
+        { method: "DELETE" }
+    );
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || `Failed to delete asset: ${res.status}`);
+    }
+    const data = await res.json();
+    return data.assets ?? [];
+}
 export const getCodeAssets = (episodePath: string) =>
     getArtifact(episodePath, "code_assets.json")
         .then((data) => data.codeAssets ?? [])

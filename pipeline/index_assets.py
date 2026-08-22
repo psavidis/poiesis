@@ -310,22 +310,30 @@ def index_assets(episode: Path):
     output_path = processing / "assets.json"
 
     existing_captions = {}
+    # Keyed by filename, not recomputed positionally — an asset's id used
+    # to be purely positional (see next_index_by_media_type below), so
+    # deleting or adding any OTHER file of the same media type shifted
+    # every later id and silently reattached an existing id (and thus, via
+    # moments.json's own assetId, a moment's rendered image) to a
+    # different file (see #80's real-world case for the equivalent
+    # backgrounds bug, and #93's own delete feature, which would trigger
+    # this on every delete of a non-last file). Same "keyed by filename,
+    # never by position" fix already applied to backgrounds
+    # (index_backgrounds.py) — reused here for the id itself, not just
+    # the caption.
+    existing_ids_by_filename = {}
 
     if output_path.exists():
 
         existing = load_json(output_path)
 
-        # Keyed by filename, not id — an asset's id is purely positional
-        # (see next_index_by_media_type below), so adding or removing any
-        # OTHER file in the folder shifts every later id and would
-        # silently reattach a stale manually-edited caption to the wrong
-        # file if this were keyed by id instead (see #80's real-world
-        # case: removing one video file shifted every later id by one,
-        # and the previous asset's caption followed the id, not the file).
-        existing_captions = {
-            asset["filename"]: asset["caption"]
-            for asset in existing.get("assets", [])
-        }
+        # Keyed by filename, not id — see existing_ids_by_filename above
+        # for why (see #80's real-world case: removing one video file
+        # shifted every later id by one, and the previous asset's caption
+        # followed the id, not the file).
+        for asset in existing.get("assets", []):
+            existing_captions[asset["filename"]] = asset["caption"]
+            existing_ids_by_filename[asset["filename"]] = asset["id"]
 
     files = list_asset_files(graphics_dir)
 
@@ -334,8 +342,20 @@ def index_assets(episode: Path):
     # Separate id sequences per media type ("img-001", "vid-001", ...) —
     # not one running index across both — so adding/removing a video never
     # renumbers (and thus never re-anchors, since ids are what moments.json
-    # references) an existing image's id, and vice versa.
+    # references) an existing image's id, and vice versa. Seeded from the
+    # highest number already in use for each type (not always 1), so a
+    # freshly added file gets a number that's never been used before
+    # rather than reusing one an existing (possibly reordered) file still
+    # holds.
     next_index_by_media_type = {"image": 1, "video": 1}
+    for prefix, media_type in (("img", "image"), ("vid", "video")):
+        used_numbers = [
+            int(match.group(1))
+            for existing_id in existing_ids_by_filename.values()
+            if (match := re.match(rf"^{prefix}-(\d+)$", existing_id))
+        ]
+        if used_numbers:
+            next_index_by_media_type[media_type] = max(used_numbers) + 1
 
     for file in files:
 
@@ -343,8 +363,13 @@ def index_assets(episode: Path):
         media_type = "video" if is_video else "image"
         id_prefix = "vid" if is_video else "img"
 
-        asset_id = f"{id_prefix}-{next_index_by_media_type[media_type]:03d}"
-        next_index_by_media_type[media_type] += 1
+        existing_id = existing_ids_by_filename.get(file.name)
+
+        if existing_id and re.match(rf"^{id_prefix}-\d+$", existing_id):
+            asset_id = existing_id
+        else:
+            asset_id = f"{id_prefix}-{next_index_by_media_type[media_type]:03d}"
+            next_index_by_media_type[media_type] += 1
 
         caption = existing_captions.get(
             file.name,
