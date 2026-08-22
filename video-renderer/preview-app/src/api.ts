@@ -242,9 +242,11 @@ export interface BackgroundSceneProposal {
     // mediaType is "image".
     imageMotion?: "none" | "zoom-in" | "zoom-out" | "palindrome";
     // How much the drift scales (see BackgroundImageMotionSpeed in
-    // episode/types.ts). Absent means "normal", only meaningful when
-    // imageMotion is set.
-    imageMotionSpeed?: "subtle" | "normal" | "strong";
+    // episode/types.ts). Absent means "3", only meaningful when
+    // imageMotion is set. Legacy subtle/normal/strong values kept for
+    // already-saved episodes (#119) — see BackgroundImageMotionSpeed's
+    // own doc comment.
+    imageMotionSpeed?: "1" | "2" | "3" | "4" | "5" | "subtle" | "normal" | "strong";
 }
 
 // The human-authored per-span selections (see

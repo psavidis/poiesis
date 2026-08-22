@@ -151,10 +151,17 @@ export type BackgroundImageMotion = "none" | "zoom-in" | "zoom-out" | "palindrom
 
 // How much the image scales across its drift — a preset, not a tunable
 // number (see BackgroundImageMotion's own doc comment for why). Absent
-// means "normal", the default going forward — "subtle" is kept as the
-// ORIGINAL fixed amount from before speed control existed, for anyone
-// who already picked it and specifically wants the gentler drift.
-export type BackgroundImageMotionSpeed = "subtle" | "normal" | "strong";
+// means "3", the default going forward. Five numbered levels (#119 —
+// replaces the original subtle/normal/strong three-preset scale, whose
+// fastest option ("strong") still read as barely-there motion) each 20%
+// faster than the previous — see BackgroundLayer.tsx's own
+// IMAGE_MOTION_MAX_SCALE_BY_SPEED for the actual scale values. The legacy
+// "subtle"/"normal"/"strong" values are kept in the type (not migrated
+// away) purely so already-saved episodes still resolve to a valid speed
+// without a data migration — BackgroundLayer.tsx maps each to its closest
+// numbered level. New saves always write a numbered level; the UI no
+// longer offers the legacy values as choices.
+export type BackgroundImageMotionSpeed = "1" | "2" | "3" | "4" | "5" | "subtle" | "normal" | "strong";
 
 export interface BackgroundScene {
     type: "background";

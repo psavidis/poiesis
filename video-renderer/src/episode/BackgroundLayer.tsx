@@ -10,18 +10,26 @@ const LOOP_CROSSFADE_FRAMES = 15;
 
 // How far a static image drifts in/out, per speed preset — fixed values,
 // not a free-form dial (see BackgroundImageMotionSpeed's own doc
-// comment: "does not distract" is a hard design constraint here). "subtle"
-// is the ORIGINAL amount from before speed control existed; "normal" and
-// "strong" are raised from their original 1.15/1.25 (#91 — even "strong"
-// read as barely-there motion against a background span running for a
-// whole chapter, since the drift always completes over the WHOLE span
-// regardless of how long that span is) to a clearly noticeable but still
-// smooth drift — all three still complete over the whole span, so
-// "faster" here means a bigger zoom amount in the same time, not a
-// shorter cycle.
+// comment: "does not distract" is a hard design constraint here). Five
+// numbered levels (#119), each exactly 20% faster than the previous —
+// level "1" (1.4) is the OLD "strong" value: even that read as barely-
+// there motion against a background span running for a whole chapter
+// (#91), so the whole scale shifts up from what used to be the fastest
+// option rather than refining around the old middle. All five still
+// complete over the whole span, so "faster" here means a bigger zoom
+// amount in the same time, not a shorter cycle. The legacy subtle/
+// normal/strong keys stay mapped (not removed) so an already-saved
+// episode's speed still resolves without a data migration — subtle and
+// strong land on their nearest numbered equivalent by feel, normal
+// (the old default) maps to the new default level "3".
 const IMAGE_MOTION_MAX_SCALE_BY_SPEED: Record<BackgroundImageMotionSpeed, number> = {
-    subtle: 1.08,
-    normal: 1.25,
+    "1": 1.4,
+    "2": 1.68,
+    "3": 2.016,
+    "4": 2.419,
+    "5": 2.903,
+    subtle: 1.4,
+    normal: 2.016,
     strong: 1.4,
 };
 
@@ -33,7 +41,7 @@ export function imageMotionScale(
 ): number {
     if (!motion || motion === "none" || durationInFrames <= 0) return 1;
 
-    const maxScale = IMAGE_MOTION_MAX_SCALE_BY_SPEED[speed ?? "normal"];
+    const maxScale = IMAGE_MOTION_MAX_SCALE_BY_SPEED[speed ?? "3"];
 
     if (motion === "zoom-in") {
         return interpolate(frame, [0, durationInFrames], [1, maxScale], {
