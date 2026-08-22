@@ -59,11 +59,17 @@ export interface RenderStatus {
     running: boolean;
     current: number | null;
     total: number | null;
+    // Which kind of run this is (#85) — pipeline/stage runs report this
+    // too now, not just renders (see ui/server.py's render_status), so a
+    // client can tell a recovered pipeline run apart from a recovered
+    // render without guessing from format being null.
+    kind: "pipeline" | "stage" | "render" | null;
     // Set once, up front, when the render starts (see ui/server.py's
     // ws_run_render) — recoverable even in the brief window before the
     // first total/progress message has arrived, so a client can show
     // "Rendering DaVinci export (1920x1080)" rather than a bare
     // "Rendering..." with no indication of what's actually being produced.
+    // Always null for pipeline/stage runs, which have no format/resolution.
     format: "video" | "davinci" | null;
     resolution: string | null;
 }
@@ -101,6 +107,21 @@ export async function cancelRender(episodePath: string): Promise<void> {
         const err = await res.json().catch(() => ({ detail: res.statusText }));
         throw new Error(err.detail || `Failed to cancel render: ${res.status}`);
     }
+}
+
+// Whether a pipeline/stage/render run is in progress for ANY episode on
+// this machine (#85) — distinct from getRenderStatus above, which is
+// scoped to one episode. Used to explain up front why starting a run is
+// about to be rejected (a different episode's run is already going),
+// rather than only surfacing the generic "already running" error after
+// the click.
+export async function getMachineStatus(): Promise<{ running: boolean }> {
+    const res = await fetch(`${API_BASE}/api/machine-status`);
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || `Failed to load machine status: ${res.status}`);
+    }
+    return res.json();
 }
 
 async function getArtifact(episodePath: string, name: string) {

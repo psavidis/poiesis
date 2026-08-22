@@ -2,7 +2,13 @@ from pathlib import Path
 
 import pytest
 
-from episode_locks import EpisodeBusyError, episode_lock, is_episode_locked
+from episode_locks import (
+    EpisodeBusyError,
+    episode_lock,
+    is_episode_locked,
+    is_machine_locked,
+    machine_lock,
+)
 
 
 def test_episode_lock_allows_sequential_use(tmp_path):
@@ -112,3 +118,91 @@ def test_is_episode_locked_different_episodes_are_independent(tmp_path):
     with episode_lock(episode_a):
         assert is_episode_locked(episode_a) is True
         assert is_episode_locked(episode_b) is False
+
+
+# #85: only one pipeline/stage/render run allowed on the whole machine at
+# once, regardless of which episode each targets — episode_lock alone
+# (tested above) only ever prevented contention on the SAME episode.
+def test_machine_lock_allows_sequential_use():
+    with machine_lock():
+        pass
+
+    with machine_lock():
+        pass
+
+
+def test_machine_lock_wait_false_raises_when_already_held():
+    with machine_lock():
+        with pytest.raises(EpisodeBusyError):
+            with machine_lock():
+                pass
+
+
+def test_machine_lock_blocks_a_different_episodes_run_too(tmp_path):
+    # The core #85 requirement: machine_lock has no episode identity at
+    # all, unlike episode_lock — held for episode A, it must still reject
+    # a request for episode B.
+    episode_a = tmp_path / "Episode A"
+    episode_b = tmp_path / "Episode B"
+
+    with machine_lock(), episode_lock(episode_a, wait=False):
+        with pytest.raises(EpisodeBusyError):
+            with machine_lock(), episode_lock(episode_b, wait=False):
+                pass
+
+
+def test_machine_lock_releases_on_exception():
+    with pytest.raises(ValueError):
+        with machine_lock():
+            raise ValueError("boom")
+
+    with machine_lock():
+        pass
+
+
+def test_machine_lock_wait_true_blocks_until_released():
+    import threading
+    import time
+
+    released = threading.Event()
+    acquired_second = threading.Event()
+
+    def holder():
+        with machine_lock(wait=True):
+            time.sleep(0.05)
+            released.set()
+
+    t = threading.Thread(target=holder)
+    t.start()
+    time.sleep(0.01)  # let the holder thread actually acquire first
+
+    with machine_lock(wait=True):
+        acquired_second.set()
+
+    t.join()
+
+    assert released.is_set()
+    assert acquired_second.is_set()
+
+
+def test_is_machine_locked_false_when_unlocked():
+    assert is_machine_locked() is False
+
+
+def test_is_machine_locked_true_while_held():
+    with machine_lock():
+        assert is_machine_locked() is True
+
+
+def test_is_machine_locked_false_again_after_release():
+    with machine_lock():
+        pass
+
+    assert is_machine_locked() is False
+
+
+def test_is_machine_locked_does_not_itself_hold_the_lock():
+    is_machine_locked()
+
+    with machine_lock():
+        pass

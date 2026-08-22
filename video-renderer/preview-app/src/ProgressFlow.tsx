@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { getEpisodeStatus, runOverWebSocket, type EpisodeStatus, type RunHandle, type RunMessage } from "./api";
+import { cancelRender, getEpisodeStatus, getRenderStatus, runOverWebSocket, type EpisodeStatus, type RunHandle, type RunMessage } from "./api";
 import { colors, radius, typography } from "./tokens";
 
 // Groups the 15 chained pipeline stages (ui/pipeline_stages.py's
@@ -94,8 +94,30 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
     // place still missing it, unlike the QA-check console it first shipped
     // on.
     const [copied, setCopied] = useState(false);
+    // True when "running" reflects a pipeline run RECOVERED via
+    // getRenderStatus (e.g. after a page refresh mid-run, or a run
+    // started from a different tab) rather than this component's own live
+    // websocket (#85) — mirrors AdvancedPanel's identical recoveredRender
+    // state for the render case. No RunHandle exists for a run this tab
+    // didn't start, so Cancel goes through cancelRender (despite the name,
+    // works for any run kind — see ui/server.py's render_cancel) instead
+    // of runHandleRef.
+    const [recovered, setRecovered] = useState(false);
+    const [cancellingRecovered, setCancellingRecovered] = useState(false);
     const runHandleRef = useRef<RunHandle | null>(null);
     const logRef = useRef<HTMLPreElement>(null);
+    // Mirrors `running` for the recovery-poll effect below, which only
+    // depends on [episodePath] and therefore closes over whatever
+    // `running` was at mount time — a ref always reads the CURRENT value,
+    // so the poll can tell "this tab already has its own live run going"
+    // apart from "nothing here, but something's running elsewhere" on
+    // every tick, not just the first (same reasoning as AdvancedPanel's
+    // own runningIdRef).
+    const runningRef = useRef(false);
+
+    useEffect(() => {
+        runningRef.current = running;
+    }, [running]);
 
     const refreshStatus = () => {
         getEpisodeStatus(episodePath)
@@ -117,6 +139,62 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
         return () => clearInterval(interval);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [running]);
+
+    // On mount (and whenever the episode changes), check whether A
+    // PIPELINE run is already in flight for THIS episode — this tab was
+    // refreshed mid-run, or a run was started from a different tab — and
+    // if so, recover the "Processing…"/Cancel UI instead of showing a
+    // blank Start/Re-run button with no indication anything is happening
+    // (#85). Mirrors AdvancedPanel's identical render-recovery effect;
+    // "kind" distinguishes a recovered PIPELINE run from a recovered
+    // RENDER or single-STAGE run, which this component has no UI for and
+    // must leave alone (episode_lock still protects the files regardless
+    // — this is purely about what this panel shows). Only "pipeline" (the
+    // full "Re-run pipeline"/Start button this component owns) is
+    // recovered here; a single-stage run started from AdvancedPanel has
+    // no equivalent surface in this component and is intentionally left
+    // to show nothing more than the (still-accurate) phase dots.
+    useEffect(() => {
+        let cancelled = false;
+        let pollTimer: ReturnType<typeof setTimeout> | null = null;
+
+        const poll = () => {
+            if (runningRef.current) {
+                pollTimer = setTimeout(poll, 4000);
+                return;
+            }
+
+            getRenderStatus(episodePath)
+                .then((s) => {
+                    if (cancelled) return;
+
+                    if (!s.running || s.kind !== "pipeline") {
+                        setRecovered((wasRecovered) => {
+                            if (wasRecovered) {
+                                setLogVisible(false);
+                            }
+                            return false;
+                        });
+                        pollTimer = setTimeout(poll, 4000);
+                        return;
+                    }
+
+                    setRecovered(true);
+                    setLogVisible(true);
+                    pollTimer = setTimeout(poll, 4000);
+                })
+                .catch(() => {
+                    pollTimer = setTimeout(poll, 4000);
+                });
+        };
+
+        poll();
+
+        return () => {
+            cancelled = true;
+            if (pollTimer) clearTimeout(pollTimer);
+        };
+    }, [episodePath]);
 
     useEffect(() => {
         if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -149,6 +227,8 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
     const allDone = status ? status.stages.every((s) => s.complete !== false) : false;
 
     const start = () => {
+        if (running || recovered) return;
+
         setError(null);
         setRunning(true);
         setLog("");
@@ -209,15 +289,43 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
         runHandleRef.current?.cancel();
     };
 
+    // A recovered run (see the recovery effect above) has no RunHandle —
+    // this tab never opened the websocket that started it, so there's
+    // nothing for cancel's runHandleRef to call. Cancels the actual
+    // subprocess server-side instead, via the episode path alone (see
+    // ui/server.py's render_cancel — works for any run kind despite the
+    // name).
+    const cancelRecoveredRun = () => {
+        if (cancellingRecovered) return;
+        setCancellingRecovered(true);
+        cancelRender(episodePath)
+            .catch(() => {
+                // A 404 here just means the run finished on its own
+                // between the click and this request landing — not worth
+                // surfacing as an error; the next poll tick will notice
+                // `recovered` is no longer true and clear this state.
+            })
+            .finally(() => setCancellingRecovered(false));
+    };
+
+    // Covers both "this tab started a live run" and "a run recovered from
+    // getRenderStatus is still going, started by some OTHER tab/session" —
+    // either way, Start/Re-run pipeline must be locked out the same way,
+    // even though only the first case has a RunHandle to Cancel normally.
+    const busy = running || recovered;
+
     return (
         <div style={styles.wrap}>
             <div style={styles.phases}>
                 {PHASES.map((phase) => {
                     const state = phaseState(phase.stageIds, status);
                     // Only the phase actually running right now pulses —
-                    // running=true alone isn't enough, since Draft edit's
-                    // dot shouldn't animate while Ingest is still going.
-                    const isActive = running && state === "in-progress";
+                    // busy alone isn't enough, since Draft edit's dot
+                    // shouldn't animate while Ingest is still going. Uses
+                    // `busy` (not just `running`) so a RECOVERED run
+                    // (#85) still shows live-feeling phase dots even
+                    // though there's no websocket pushing updates for it.
+                    const isActive = busy && state === "in-progress";
                     return (
                         <div key={phase.label} style={styles.phase}>
                             <span
@@ -231,7 +339,7 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
             </div>
 
             <div style={styles.actions}>
-                {!running && (
+                {!busy && (
                     <button onClick={start} disabled={!status}>
                         {forceRerun ? "Force re-run" : allDone ? "Re-run pipeline" : "Start"}
                     </button>
@@ -246,6 +354,16 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
                         </button>
                     </>
                 )}
+                {recovered && (
+                    <>
+                        <span className="processing-label" style={styles.runningLabel}>
+                            Processing… (started elsewhere)
+                        </span>
+                        <button className="secondary" onClick={cancelRecoveredRun} disabled={cancellingRecovered}>
+                            Cancel
+                        </button>
+                    </>
+                )}
                 {log && (
                     <button className="secondary small" onClick={() => setLogVisible((v) => !v)}>
                         {logVisible ? "Hide output" : "Show output"}
@@ -253,7 +371,7 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
                 )}
             </div>
 
-            {!running && (
+            {!busy && (
                 <label
                     style={styles.forceRow}
                     title="Regenerates every stage from scratch, ignoring existing output — including stages that already finished"
@@ -268,6 +386,20 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
             )}
 
             {error && <div style={styles.error}>{error}</div>}
+
+            {/* Recovered runs have no log to show — this tab never had the
+                live websocket connection that streamed it, and no log text
+                is persisted server-side (only numeric progress is, and
+                pipeline/stage runs don't even emit that — see
+                _render_progress's own comment). The phase dots above still
+                give real, artifact-backed progress; this just explains why
+                the usual Output panel isn't there. */}
+            {recovered && !log && (
+                <div style={styles.recoveredNote}>
+                    Output isn't available for a run recovered after a refresh — the phase indicators above still
+                    reflect real progress.
+                </div>
+            )}
 
             {logVisible && log && (
                 <div style={styles.logSection}>
@@ -350,6 +482,11 @@ const styles: Record<string, React.CSSProperties> = {
     error: {
         fontSize: typography.size.md,
         color: colors.error,
+    },
+    recoveredNote: {
+        fontSize: typography.size.sm,
+        color: colors.textSecondary,
+        fontStyle: "italic",
     },
     logSection: {
         display: "flex",

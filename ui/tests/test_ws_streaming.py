@@ -71,18 +71,22 @@ def test_ws_stage_run_rejects_second_run_for_same_episode_while_first_in_flight(
         start_msg = first_ws.receive_json()
         assert start_msg["type"] == "start"
 
-        # first run is still in flight (holding the episode lock) — a
-        # second run against the SAME episode must be rejected immediately
-        # rather than queued or allowed to race the first
+        # first run is still in flight (holding both the per-episode and
+        # machine-wide locks) — a second run against the SAME episode must
+        # be rejected immediately rather than queued or allowed to race
+        # the first. Rejected on the per-episode lock first (#85 — see
+        # _run_websocket's lock ordering, checked before machine_lock so
+        # this more common case gets the more specific message).
         with client.websocket_connect("/ws/stage/run") as second_ws:
             second_ws.send_json({"path": str(episode), "stage": "slow_stage"})
             second_msg = second_ws.receive_json()
 
         assert second_msg["type"] == "error"
         assert "already running" in second_msg["message"]
+        assert episode.name in second_msg["message"]
 
         # cleanup only — accept either outcome, see the comment in
-        # test_ws_stage_run_allows_concurrent_runs_for_different_episodes
+        # test_ws_stage_run_rejects_a_different_episodes_run_while_first_in_flight
         first_ws.send_json({"type": "cancel"})
         msg = first_ws.receive_json()
         while msg["type"] == "log":
@@ -90,7 +94,14 @@ def test_ws_stage_run_rejects_second_run_for_same_episode_while_first_in_flight(
         assert msg["type"] in ("cancelled", "done")
 
 
-def test_ws_stage_run_allows_concurrent_runs_for_different_episodes(tmp_path, monkeypatch):
+# #85: previously "different episodes never contend with each other" was
+# the intended, tested behavior (see this test's own prior name/body) —
+# only one pipeline/stage/render run is now allowed on the whole machine
+# at once, so a SECOND episode's run must be rejected too while a first is
+# still in flight, not merely a second run against the SAME episode
+# (test_ws_stage_run_rejects_second_run_for_same_episode_while_first_in_flight
+# above already covers that narrower case).
+def test_ws_stage_run_rejects_a_different_episodes_run_while_first_in_flight(tmp_path, monkeypatch):
     episode_a = tmp_path / "episode-a"
     episode_a.mkdir()
     episode_b = tmp_path / "episode-b"
@@ -103,23 +114,12 @@ def test_ws_stage_run_allows_concurrent_runs_for_different_episodes(tmp_path, mo
         start_msg = first_ws.receive_json()
         assert start_msg["type"] == "start"
 
-        # a different episode must not be blocked by episode_a's in-flight
-        # run — the actual thing under test is this second "start" arriving
-        # at all rather than an "error" about the (unrelated) episode being
-        # busy. Cancel both afterward just to clean up the slow subprocess;
-        # accept either "cancelled" or "done" for that cleanup step since
-        # the cancel racing the process's own 30s sleep under a loaded test
-        # run is not what's being tested here.
         with client.websocket_connect("/ws/stage/run") as second_ws:
             second_ws.send_json({"path": str(episode_b), "stage": "slow_stage"})
             second_msg = second_ws.receive_json()
-            assert second_msg["type"] == "start"
 
-            second_ws.send_json({"type": "cancel"})
-            msg = second_ws.receive_json()
-            while msg["type"] == "log":
-                msg = second_ws.receive_json()
-            assert msg["type"] in ("cancelled", "done")
+        assert second_msg["type"] == "error"
+        assert "machine" in second_msg["message"]
 
         first_ws.send_json({"type": "cancel"})
         msg = first_ws.receive_json()
@@ -278,7 +278,7 @@ def test_ws_render_run_second_rejected_request_does_not_corrupt_the_first_runs_m
             second_msg = second_ws.receive_json()
 
         assert second_msg["type"] == "error"
-        assert "already running" in second_msg["message"]
+        assert "already" in second_msg["message"]
 
         with server._render_progress_guard:
             recorded = server._render_progress.get(str(episode.resolve()))
