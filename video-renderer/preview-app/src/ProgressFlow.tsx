@@ -88,6 +88,12 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
     // express. Defaults off so a plain "Start"/accidental click never
     // discards existing work.
     const [forceRerun, setForceRerun] = useState(false);
+    // Mirrors AdvancedPanel's own copy-to-clipboard button (#84) — that
+    // ticket asked for a copy option "anywhere there is a console on the
+    // UI," and this pipeline-run console (running or finished) was the one
+    // place still missing it, unlike the QA-check console it first shipped
+    // on.
+    const [copied, setCopied] = useState(false);
     const runHandleRef = useRef<RunHandle | null>(null);
     const logRef = useRef<HTMLPreElement>(null);
 
@@ -115,6 +121,27 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
     useEffect(() => {
         if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
     }, [log]);
+
+    // Reverts the copy button back to its copyable state as soon as the
+    // output actually changes (#84's own requirement, same as
+    // AdvancedPanel's identical effect) — a still-running pipeline appends
+    // new lines every few moments, so "Copied" must not keep showing once
+    // what's on screen is no longer what got copied.
+    useEffect(() => {
+        setCopied(false);
+    }, [log]);
+
+    const copyLogToClipboard = async () => {
+        try {
+            await navigator.clipboard.writeText(log);
+            setCopied(true);
+        } catch {
+            // Clipboard permission denied, insecure context, etc. — the
+            // button stays in its normal copyable state rather than
+            // falsely claiming success; nothing else to surface here for
+            // what's a low-stakes convenience action.
+        }
+    };
 
     // Same complete === null handling as phaseState below — a stage with
     // no artifact to check (generate_scene_plan_ts) must not permanently
@@ -245,9 +272,21 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
             {logVisible && log && (
                 <div style={styles.logSection}>
                     <span style={styles.logHeader}>Output</span>
-                    <pre style={styles.logPanel} ref={logRef}>
-                        {log}
-                    </pre>
+                    <div style={styles.logPanelWrap}>
+                        <button
+                            type="button"
+                            className="secondary small"
+                            style={styles.copyLogButton}
+                            onClick={copyLogToClipboard}
+                            title="Copy output to clipboard"
+                            aria-label="Copy output to clipboard"
+                        >
+                            {copied ? "✓ Copied" : "Copy"}
+                        </button>
+                        <pre style={styles.logPanel} ref={logRef}>
+                            {log}
+                        </pre>
+                    </div>
                 </div>
             )}
         </div>
@@ -328,10 +367,27 @@ const styles: Record<string, React.CSSProperties> = {
         border: `1px solid ${colors.border}`,
         borderRadius: radius.md,
         padding: 10,
+        // Room for copyLogButton (top-right, absolutely positioned) so it
+        // never overlaps the first line of real output.
+        paddingTop: 34,
         fontSize: typography.size.sm,
         fontFamily: "monospace",
         color: colors.codeText,
         whiteSpace: "pre-wrap",
         margin: 0,
+    },
+    // Anchors copyLogButton to logPanel's own top-right corner (#84's "a
+    // copy option is displayed at the output area top-right corner") —
+    // a plain wrapper div, not logPanel itself, since logPanel is a <pre>
+    // and needs to stay a pure text container. Mirrors AdvancedPanel's
+    // identical logPanelWrap/copyLogButton pair.
+    logPanelWrap: {
+        position: "relative",
+    },
+    copyLogButton: {
+        position: "absolute",
+        top: 6,
+        right: 6,
+        zIndex: 1,
     },
 };
