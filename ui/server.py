@@ -54,6 +54,7 @@ from generate_background_scenes import (  # noqa: E402
 )
 from index_assets import index_assets  # noqa: E402
 from index_backgrounds import index_backgrounds  # noqa: E402
+from index_code import index_code  # noqa: E402
 from llm.client import LLMClient  # noqa: E402
 from overlay_placement import insert_overlay_scene  # noqa: E402
 
@@ -609,6 +610,67 @@ def delete_asset(asset_id: str, path: str):
         raise HTTPException(status_code=409, detail=str(e))
 
     return {"deleted": asset_id, "assets": assets}
+
+
+@app.post("/api/episode/code-assets/reindex")
+def reindex_code_assets(path: str):
+    """Re-scans the episode's code/ folder and rewrites code_assets.json —
+    the same work the "Index code assets" Advanced stage does (see
+    index_code.py), called in-process here so AssetLibraryPanel can call
+    this itself whenever its Code tab becomes active (#94's
+    "autodiscovery", mirroring #92/#93's reindex_backgrounds/
+    reindex_assets). Always safe to re-run — index_code keys existing
+    entries by filename, so already-indexed code assets keep their id/
+    description rather than being renumbered (see its own docstring)."""
+
+    episode = resolve_episode(path)
+
+    code_assets = index_code(episode)
+
+    return {"codeAssets": code_assets}
+
+
+@app.delete("/api/episode/code-assets/{code_asset_id}")
+def delete_code_asset(code_asset_id: str, path: str):
+    """Deletes one code/ file from disk and re-indexes — the deterministic
+    counterpart to reindex_code_assets above, for #94's delete requirement
+    (mirrors #92/#93's delete_background/delete_asset). Only removes the
+    source file; it deliberately does NOT touch moments.json (a moment
+    already using this codeAssetId keeps its own reference, same as
+    deleting a background/image file never retroactively un-applies it
+    from a moment) — a moment referencing a since-deleted code asset is
+    caught by qa_check.py, not silently rewritten here."""
+
+    episode = resolve_episode(path)
+    processing = episode / "processing"
+    code_assets_path = processing / "code_assets.json"
+
+    if not code_assets_path.exists():
+        raise HTTPException(status_code=404, detail="code_assets.json not found — run the pipeline first")
+
+    with code_assets_path.open("r", encoding="utf-8") as f:
+        existing = json.load(f)
+
+    match = next((a for a in existing.get("codeAssets", []) if a["id"] == code_asset_id), None)
+
+    if match is None:
+        raise HTTPException(status_code=404, detail=f"Code asset not found: {code_asset_id}")
+
+    file_path = episode / match["path"]
+
+    try:
+        with episode_lock(episode, wait=False):
+
+            def do_write():
+                if file_path.exists():
+                    file_path.unlink()
+                return index_code(episode)
+
+            code_assets = wrap_with_checkpoint(processing, [code_assets_path], "code asset deletion", do_write)
+    except EpisodeBusyError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    return {"deleted": code_asset_id, "codeAssets": code_assets}
 
 
 class StoryboardChapter(BaseModel):

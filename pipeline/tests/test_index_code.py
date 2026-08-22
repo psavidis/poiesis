@@ -143,9 +143,14 @@ def test_index_code_preserves_manually_edited_description_on_rerun(tmp_path):
 
 
 def test_index_code_description_stays_attached_to_its_file_after_an_earlier_file_is_removed(tmp_path):
-    """Regression test for #80 (same class of bug as index_assets.py's
-    caption cache): descriptions must be matched by filename, not
-    positional id."""
+    """Regression test for #80/#94 (same class of bug as index_assets.py's
+    caption cache): descriptions AND ids must be matched by filename, not
+    position — removing "a.py" must not shift b.py's own id (code-002)
+    down to code-001, since that id is a live foreign key any
+    moments.json's codeAssetId may already hold onto (see #94's
+    delete-asset feature, which would otherwise silently reattach an
+    existing id, and therefore an already-placed moment's rendered code,
+    to a different file on every delete of a non-last asset)."""
 
     episode = tmp_path / "episode"
     code = episode / "code"
@@ -169,8 +174,37 @@ def test_index_code_description_stays_attached_to_its_file_after_an_earlier_file
 
     assert len(code_assets) == 1
     assert code_assets[0]["filename"] == "b.py"
-    assert code_assets[0]["id"] == "code-001"
+    assert code_assets[0]["id"] == "code-002"
     assert code_assets[0]["description"] == "b's own real description"
+
+
+def test_index_code_new_file_after_a_deletion_gets_a_fresh_unused_id(tmp_path):
+    """A file added AFTER an earlier one was deleted must not reuse the
+    deleted file's old id number — code-001 (a.py) stays retired once
+    a.py is gone, rather than being handed to the next new file, which
+    would otherwise collide with any stale moments.json codeAssetId still
+    referencing "code-001" as a.py."""
+
+    episode = tmp_path / "episode"
+    code = episode / "code"
+    code.mkdir(parents=True)
+
+    (code / "a.py").write_text("x = 1\n")
+    (code / "b.py").write_text("y = 2\n")
+
+    first_pass = index_code(episode)
+    by_filename = {a["filename"]: a for a in first_pass}
+    assert by_filename["a.py"]["id"] == "code-001"
+    assert by_filename["b.py"]["id"] == "code-002"
+
+    (code / "a.py").unlink()
+    (code / "c.py").write_text("z = 3\n")
+
+    second_pass = index_code(episode)
+    by_filename = {a["filename"]: a for a in second_pass}
+
+    assert by_filename["b.py"]["id"] == "code-002"
+    assert by_filename["c.py"]["id"] == "code-003"
 
 
 def test_index_code_stamps_default_display_for_full_screen_folder_assets(tmp_path):

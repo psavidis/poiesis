@@ -152,10 +152,44 @@ export async function deleteAsset(episodePath: string, assetId: string) {
     const data = await res.json();
     return data.assets ?? [];
 }
+
 export const getCodeAssets = (episodePath: string) =>
     getArtifact(episodePath, "code_assets.json")
         .then((data) => data.codeAssets ?? [])
         .catch(() => []); // code_assets.json is optional — no code/ folder is a normal, common case
+
+// Re-scans the episode's code/ folder and returns the freshly indexed
+// list (#94, mirrors #92/#93's reindexBackgrounds/reindexAssets) —
+// called whenever the Code tab becomes active, so a file dropped into
+// code/ since the last visit shows up without the user having to
+// remember to run "Index code assets" in Advanced.
+export async function reindexCodeAssets(episodePath: string) {
+    const res = await fetch(
+        `${API_BASE}/api/episode/code-assets/reindex?path=${encodeURIComponent(episodePath)}`,
+        { method: "POST" }
+    );
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || `Failed to reindex code assets: ${res.status}`);
+    }
+    const data = await res.json();
+    return data.codeAssets ?? [];
+}
+
+// Deletes one code/ file from disk and re-indexes (#94) — the returned
+// list is the fresh post-delete code_assets.json content.
+export async function deleteCodeAsset(episodePath: string, codeAssetId: string) {
+    const res = await fetch(
+        `${API_BASE}/api/episode/code-assets/${encodeURIComponent(codeAssetId)}?path=${encodeURIComponent(episodePath)}`,
+        { method: "DELETE" }
+    );
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || `Failed to delete code asset: ${res.status}`);
+    }
+    const data = await res.json();
+    return data.codeAssets ?? [];
+}
 
 // The selectable background library (see index_backgrounds.py) — every
 // image/video discovered under background/. Optional/empty is a normal,

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { BackgroundImageMotion, BackgroundImageMotionSpeed, EpisodeBackground, ScenePlan } from "video-renderer-src/episode/types";
 import { contentTypeAndPresentationFor } from "./MomentEditorPanel";
 import { momentIndexFromSceneId, normalizeMoment } from "./momentDuration";
-import { deleteAsset, deleteBackground, getCodeAssets, getMoments, reindexAssets, reindexBackgrounds, saveMoments } from "./api";
+import { deleteAsset, deleteBackground, deleteCodeAsset, getMoments, reindexAssets, reindexBackgrounds, reindexCodeAssets, saveMoments } from "./api";
 import { insertBackgroundAtFrame } from "./backgroundInsert";
 import { IMAGE_MOTION_OPTIONS, IMAGE_MOTION_SPEED_OPTIONS } from "./BackgroundBar";
 import { colors, radius, typography } from "./tokens";
@@ -122,20 +122,18 @@ export function AssetLibraryPanel({
     // Images tab's own x-to-delete (#93).
     const [pendingDeleteAssetId, setPendingDeleteAssetId] = useState<string | null>(null);
     const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null);
+    // Same pending-delete-confirm pattern, for the Code tab's own
+    // x-to-delete (#94).
+    const [pendingDeleteCodeAssetId, setPendingDeleteCodeAssetId] = useState<string | null>(null);
+    const [deletingCodeAssetId, setDeletingCodeAssetId] = useState<string | null>(null);
 
-    useEffect(() => {
-        if (!isActive) return;
-        getCodeAssets(episodePath).then(setCodeAssets).catch(() => setCodeAssets([]));
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [episodePath, isActive]);
-
-    // Autodiscovery (#92/#93): re-scans the episode's background/ or
-    // graphics/ folder every time the corresponding tab is opened, so a
-    // file dropped in since the last visit shows up without the user
-    // having to remember to run the matching "Index …" stage in Advanced.
-    // Cheap (a directory listing), so re-running it on every activation
-    // rather than watching the filesystem is enough — this app has no
-    // background/file-watcher process anywhere else either.
+    // Autodiscovery (#92/#93/#94): re-scans the episode's background/,
+    // graphics/, or code/ folder every time the corresponding tab is
+    // opened, so a file dropped in since the last visit shows up without
+    // the user having to remember to run the matching "Index …" stage in
+    // Advanced. Cheap (a directory listing), so re-running it on every
+    // activation rather than watching the filesystem is enough — this app
+    // has no background/file-watcher process anywhere else either.
     useEffect(() => {
         if (!isActive || tab !== "backgrounds") return;
         reindexBackgrounds(episodePath)
@@ -152,6 +150,17 @@ export function AssetLibraryPanel({
         reindexAssets(episodePath)
             .then((assets) => {
                 setImages(assets);
+                setError(null);
+            })
+            .catch((e) => setError(String(e)));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [episodePath, isActive, tab]);
+
+    useEffect(() => {
+        if (!isActive || tab !== "code") return;
+        reindexCodeAssets(episodePath)
+            .then((assets) => {
+                setCodeAssets(assets);
                 setError(null);
             })
             .catch((e) => setError(String(e)));
@@ -334,6 +343,24 @@ export function AssetLibraryPanel({
         }
     };
 
+    // Deletes the code/ file from disk and re-indexes (#94) — mirrors
+    // deleteAssetCard above.
+    const deleteCodeAssetCard = async (codeAssetId: string) => {
+        setDeletingCodeAssetId(codeAssetId);
+        setError(null);
+        setHint(null);
+
+        try {
+            const updated = await deleteCodeAsset(episodePath, codeAssetId);
+            setCodeAssets(updated);
+            setPendingDeleteCodeAssetId(null);
+        } catch (e) {
+            setError(String(e));
+        } finally {
+            setDeletingCodeAssetId(null);
+        }
+    };
+
     if (!isActive) return null;
 
     return (
@@ -479,35 +506,74 @@ export function AssetLibraryPanel({
                             {codeAssets.map((asset) => {
                                 const disabled = !!selectedMoment && selectedContentType !== "code";
                                 const isCurrent = !!selectedMoment && currentCodeAssetId === asset.id;
+                                const isPendingDelete = pendingDeleteCodeAssetId === asset.id;
+                                const isDeleting = deletingCodeAssetId === asset.id;
                                 return (
-                                    <button
-                                        key={asset.id}
-                                        style={{
-                                            ...styles.codeCard,
-                                            ...(disabled ? styles.cardDisabled : {}),
-                                            ...(isCurrent ? styles.cardCurrent : {}),
-                                        }}
-                                        onClick={() => applyAsset(asset.id, "codeAssetId", asset.filename)}
-                                        disabled={applyingId === asset.id}
-                                        title={disabled ? "Selected moment doesn't use a code asset" : asset.filename}
-                                    >
-                                        {isCurrent && <span style={styles.currentBadge}>Currently used</span>}
-                                        {asset.kind === "recording" ? (
-                                            <video src={`/${asset.renderPath}`} muted playsInline style={styles.thumb} />
-                                        ) : asset.kind === "screenshot" ? (
-                                            <img src={`/${asset.renderPath}`} alt="" style={styles.thumb} />
-                                        ) : null}
-                                        <span style={styles.codeFilename}>{asset.filename}</span>
-                                        {asset.description && <span style={styles.cardCaption}>{asset.description}</span>}
-                                        <span style={styles.codeMeta}>
-                                            {asset.kind === "recording"
-                                                ? "screen recording"
-                                                : asset.kind === "screenshot"
-                                                ? "screenshot"
-                                                : asset.language}
-                                            {asset.lineCount ? ` · ${asset.lineCount} lines` : ""}
-                                        </span>
-                                    </button>
+                                    <div key={asset.id} style={{ ...styles.codeCard, ...styles.cardWithDelete }}>
+                                        <button
+                                            type="button"
+                                            style={styles.deleteBadge}
+                                            disabled={isDeleting}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                setPendingDeleteCodeAssetId(asset.id);
+                                            }}
+                                            title="Delete this code asset"
+                                            aria-label="Delete this code asset"
+                                        >
+                                            ×
+                                        </button>
+                                        <button
+                                            style={{
+                                                ...styles.cardInnerButton,
+                                                ...(disabled ? styles.cardDisabled : {}),
+                                                ...(isCurrent ? styles.cardCurrent : {}),
+                                            }}
+                                            onClick={() => applyAsset(asset.id, "codeAssetId", asset.filename)}
+                                            disabled={applyingId === asset.id}
+                                            title={disabled ? "Selected moment doesn't use a code asset" : asset.filename}
+                                        >
+                                            {isCurrent && <span style={styles.currentBadge}>Currently used</span>}
+                                            {asset.kind === "recording" ? (
+                                                <video src={`/${asset.renderPath}`} muted playsInline style={styles.thumb} />
+                                            ) : asset.kind === "screenshot" ? (
+                                                <img src={`/${asset.renderPath}`} alt="" style={styles.thumb} />
+                                            ) : null}
+                                            <span style={styles.codeFilename}>{asset.filename}</span>
+                                            {asset.description && <span style={styles.cardCaption}>{asset.description}</span>}
+                                            <span style={styles.codeMeta}>
+                                                {asset.kind === "recording"
+                                                    ? "screen recording"
+                                                    : asset.kind === "screenshot"
+                                                    ? "screenshot"
+                                                    : asset.language}
+                                                {asset.lineCount ? ` · ${asset.lineCount} lines` : ""}
+                                            </span>
+                                        </button>
+                                        {isPendingDelete && (
+                                            <div style={styles.deleteConfirm}>
+                                                <span>Delete this code asset?</span>
+                                                <div style={styles.deleteConfirmActions}>
+                                                    <button
+                                                        type="button"
+                                                        className="secondary small"
+                                                        disabled={isDeleting}
+                                                        onClick={() => deleteCodeAssetCard(asset.id)}
+                                                    >
+                                                        {isDeleting ? "Deleting…" : "Delete"}
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="secondary small"
+                                                        disabled={isDeleting}
+                                                        onClick={() => setPendingDeleteCodeAssetId(null)}
+                                                    >
+                                                        Cancel
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
                                 );
                             })}
                         </div>
@@ -820,12 +886,10 @@ const styles: Record<string, React.CSSProperties> = {
         fontSize: typography.size.sm,
         color: colors.error,
     },
-    // A background/image card is a plain div (styles.card, reused as a
-    // container here) wrapping this actual clickable button, the delete
-    // badge, and an optional expanded row below (background motion
-    // options, or the delete confirm) — unlike the Code cards, which are
-    // still the whole clickable button with nothing else inside (no
-    // delete support yet, see #94).
+    // A background/image/code card is a plain div (styles.card or
+    // styles.codeCard, reused as a container here) wrapping this actual
+    // clickable button, the delete badge, and an optional expanded row
+    // below (background motion options, or the delete confirm).
     cardInnerButton: {
         display: "flex",
         flexDirection: "column",
