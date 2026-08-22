@@ -48,6 +48,20 @@ def main():
              "are more tiresome than helpful"
     )
 
+    parser.add_argument(
+        "--no-ai",
+        action="store_true",
+        help="Skip every stage that calls an LLM (analyze episode, propose "
+             "title scenes/storyboard/moments/emphasis beats) — for when AI "
+             "is unavailable (no quota, no connectivity) or simply not "
+             "wanted (#88). The pipeline still produces a complete, "
+             "renderable episode: scene cuts, backgrounds, and captions are "
+             "all deterministic/mechanical, not AI-proposed, and the editor "
+             "UI already supports adding titles/moments/beats by hand. "
+             "Later runs without --no-ai can still fill in the skipped "
+             "stages afterward."
+    )
+
     args = parser.parse_args()
 
     episode = Path(args.episode_folder).resolve()
@@ -124,17 +138,21 @@ def main():
     # proposals can be grounded in the episode's overall topics/key
     # concepts instead of only ever seeing an isolated local window. It only
     # needs episode_transcript.json + transcript_validation.json, both
-    # already produced by this point.
-    episode_analysis_command = [
-        sys.executable,
-        str(pipeline / "analyze_episode.py"),
-        str(episode)
-    ]
+    # already produced by this point. Skipped under --no-ai (#88) — this
+    # context is additive (see episode_context.py's own fallback text) and
+    # generate_episode_assets.py below already tolerates its absence.
+    if not args.no_ai:
 
-    if args.force:
-        episode_analysis_command.append("--force")
+        episode_analysis_command = [
+            sys.executable,
+            str(pipeline / "analyze_episode.py"),
+            str(episode)
+        ]
 
-    run(episode_analysis_command)
+        if args.force:
+            episode_analysis_command.append("--force")
+
+        run(episode_analysis_command)
 
 
     # 6. Analyze scenes and trim dead air
@@ -206,44 +224,59 @@ def main():
     run(cut_candidates_command)
 
 
-    # 6b. Propose title scenes
-    title_scenes_command = [
-        sys.executable,
-        str(pipeline / "generate_title_scenes.py"),
-        str(episode)
-    ]
+    # 6b. Propose title scenes. Skipped under --no-ai (#88) — chapters can
+    # still be added by hand afterward (ChapterStrip's Cmd+I / the title
+    # editor already support creating one with no AI proposal to start
+    # from).
+    if not args.no_ai:
 
-    if args.force:
-        title_scenes_command.append("--force")
+        title_scenes_command = [
+            sys.executable,
+            str(pipeline / "generate_title_scenes.py"),
+            str(episode)
+        ]
 
-    run(title_scenes_command)
+        if args.force:
+            title_scenes_command.append("--force")
+
+        run(title_scenes_command)
 
 
     # 6c. Propose chapter-level visual storyboard reasoning (runs before
-    # moment treatments are decided, so they can be judged against it)
-    storyboard_command = [
-        sys.executable,
-        str(pipeline / "generate_storyboard.py"),
-        str(episode)
-    ]
+    # moment treatments are decided, so they can be judged against it).
+    # Skipped under --no-ai (#88) — generate_moments.py below hard-requires
+    # storyboard.json to exist when it itself runs (see that script's own
+    # missing-storyboard check), which is why both are skipped together
+    # rather than independently.
+    if not args.no_ai:
 
-    if args.force:
-        storyboard_command.append("--force")
+        storyboard_command = [
+            sys.executable,
+            str(pipeline / "generate_storyboard.py"),
+            str(episode)
+        ]
 
-    run(storyboard_command)
+        if args.force:
+            storyboard_command.append("--force")
+
+        run(storyboard_command)
 
 
-    # 6d. Propose moment overlay scenes (bottom-callout/side-text/side-image)
-    moments_command = [
-        sys.executable,
-        str(pipeline / "generate_moments.py"),
-        str(episode)
-    ]
+    # 6d. Propose moment overlay scenes (bottom-callout/side-text/side-image).
+    # Skipped under --no-ai (#88) — moments can still be added by hand
+    # afterward via the Moment editor's own insert flow.
+    if not args.no_ai:
 
-    if args.force:
-        moments_command.append("--force")
+        moments_command = [
+            sys.executable,
+            str(pipeline / "generate_moments.py"),
+            str(episode)
+        ]
 
-    run(moments_command)
+        if args.force:
+            moments_command.append("--force")
+
+        run(moments_command)
 
 
     # 6e. Generate caption overlay scenes from trimmed transcripts
@@ -263,17 +296,21 @@ def main():
 
     # 6f. Propose kinetic emphasis ("beat") overlay scenes from word-level
     # transcript timing — runs after moments/captions so it can see (and
-    # avoid colliding with) whatever they already placed.
-    emphasis_command = [
-        sys.executable,
-        str(pipeline / "generate_emphasis.py"),
-        str(episode)
-    ]
+    # avoid colliding with) whatever they already placed. Skipped under
+    # --no-ai (#88) — beats can still be added by hand afterward via the
+    # Beat editor's own insert flow.
+    if not args.no_ai:
 
-    if args.force:
-        emphasis_command.append("--force")
+        emphasis_command = [
+            sys.executable,
+            str(pipeline / "generate_emphasis.py"),
+            str(episode)
+        ]
 
-    run(emphasis_command)
+        if args.force:
+            emphasis_command.append("--force")
+
+        run(emphasis_command)
 
 
     # 6g. Re-merge any human-authored background selections on top of the

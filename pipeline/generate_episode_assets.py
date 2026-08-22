@@ -167,13 +167,27 @@ def main():
         sys.exit(1)
 
 
+    # episode_analysis.json is AI-produced (analyze_episode.py) and, like
+    # episode_context.py's own narrative text, is additive review context,
+    # not a hard requirement — a --no-ai pipeline run that skips
+    # analyze_episode.py entirely must still be able to produce subtitles/
+    # review notes/chapters (#88). Falls back to an empty analysis (no
+    # issues detected) rather than failing the whole stage.
     if not analysis_file.exists():
 
         print(
-            f"Missing analysis: {analysis_file}"
+            f"No analysis found at {analysis_file} — review notes will "
+            f"report no issues (this is expected when analyze_episode.py "
+            f"was skipped, e.g. a --no-ai run)."
         )
 
-        sys.exit(1)
+        analysis = {"analysis": {}}
+
+    else:
+
+        analysis = load_json(
+            analysis_file
+        )
 
 
     print(
@@ -185,10 +199,6 @@ def main():
 
         transcript = load_json(
             transcript_file
-        )
-
-        analysis = load_json(
-            analysis_file
         )
 
 

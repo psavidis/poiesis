@@ -88,6 +88,12 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
     // express. Defaults off so a plain "Start"/accidental click never
     // discards existing work.
     const [forceRerun, setForceRerun] = useState(false);
+    // #88: explicit opt-in, same reasoning as forceRerun above — skips
+    // every AI-calling stage (see pipeline/run_pipeline.py's own --no-ai
+    // help text). Defaults off so AI proposals stay the normal default
+    // behavior; the user ticks this only when AI is genuinely unavailable
+    // or unwanted for this run.
+    const [noAi, setNoAi] = useState(false);
     // Mirrors AdvancedPanel's own copy-to-clipboard button (#84) — that
     // ticket asked for a copy option "anywhere there is a console on the
     // UI," and this pipeline-run console (running or finished) was the one
@@ -249,7 +255,7 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
             // Stage.is_complete check skips it) rather than a silent
             // full regenerate — the user must explicitly tick the
             // checkbox to force anything.
-            { path: episodePath, skipCaptions, force: forceRerun },
+            { path: episodePath, skipCaptions, force: forceRerun, noAi },
             (msg: RunMessage) => {
                 if (msg.type === "start") {
                     setLog((prev) => prev + `$ ${msg.command}\n`);
@@ -382,6 +388,16 @@ export function ProgressFlow({ episodePath, skipCaptions, onStatusChange }: Prop
                         onChange={(e) => setForceRerun(e.target.checked)}
                     />
                     Force regenerate all stages
+                </label>
+            )}
+
+            {!busy && (
+                <label
+                    style={styles.forceRow}
+                    title="Skips every stage that calls an LLM (analyze episode, propose title scenes/storyboard/moments/emphasis beats) — for when AI is unavailable or you'd rather not use it. Scene cuts, backgrounds, and captions are unaffected, and titles/moments/beats can still be added by hand in the editor afterward."
+                >
+                    <input type="checkbox" checked={noAi} onChange={(e) => setNoAi(e.target.checked)} />
+                    Run without AI
                 </label>
             )}
 
