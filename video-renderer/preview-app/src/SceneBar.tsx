@@ -89,6 +89,22 @@ export function SceneBar({
     const [selectedPresenterId, setSelectedPresenterId] = useState<string | null>(null);
     const selectedAnchorRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
     const trackRef = useRef<HTMLDivElement>(null);
+    // Tracks the track div's own on-screen width for the label-fit check
+    // below (#115) — reading trackRef.current.getBoundingClientRect()
+    // directly during render would return 0 on the very first render (the
+    // ref only attaches AFTER that render commits), hiding every label
+    // until some unrelated state change happened to force a re-render.
+    // ResizeObserver keeps this correct across window resizes too, not
+    // just the initial mount.
+    const [trackWidthPx, setTrackWidthPx] = useState(0);
+
+    useEffect(() => {
+        const el = trackRef.current;
+        if (!el) return;
+        const observer = new ResizeObserver(([entry]) => setTrackWidthPx(entry.contentRect.width));
+        observer.observe(el);
+        return () => observer.disconnect();
+    }, []);
 
     // See BeatBar's identical effect's own doc comment — clears this bar's
     // selection once a different bar takes over the shared selection.
@@ -303,7 +319,6 @@ export function SceneBar({
                     // reads as a missing name, not a legitimately truncated
                     // one). The full label is still always available via this
                     // segment's title tooltip below.
-                    const trackWidthPx = trackRef.current?.getBoundingClientRect().width ?? 0;
                     const segmentWidthPx = (widthPct / 100) * trackWidthPx;
                     const labelFits = segmentWidthPx >= label.length * 7 + 12;
 
