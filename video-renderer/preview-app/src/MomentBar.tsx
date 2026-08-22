@@ -487,7 +487,20 @@ export function MomentBar({
 
     // Every hook above has now run unconditionally on every render — safe
     // to bail on rendering anything from here on.
-    if (totalFrames <= 0 || resolved.length === 0) return null;
+    //
+    // Deliberately does NOT also bail on resolved.length === 0 (#79):
+    // this bar must always render (docs/specs — "the Moments Bar must
+    // always be visible... an empty result is still meaningful state"),
+    // and unlike ImageBar/BeatBar's own identical-looking totalFrames/
+    // resolved.length guard, MomentBar's Cmd+I keydown listener above
+    // needs trackRef.current to actually be mounted to open the insert
+    // picker at all — returning null here when resolved is empty was
+    // exactly what made "there is no moments bar at all to add a moment"
+    // true: zero AI-proposed moments meant the one control that lets a
+    // user create their FIRST moment was itself unreachable. totalFrames
+    // <= 0 is kept as the only bail-out — that's a genuinely unloaded
+    // episode, not an empty-but-valid moments list.
+    if (totalFrames <= 0) return null;
 
     return (
         <div style={styles.wrap}>
