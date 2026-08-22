@@ -244,3 +244,61 @@ def test_validate_original_footage_orders_bare_chapter_before_parts(tmp_path):
     result = [f.name for f in validate_original_footage(footage)]
 
     assert result == ["6.mov", "6.1.mov", "6.2.mov", "6.3.mov", "8.mov", "8.1.mov"]
+
+
+# Regression coverage for #95: filenames carrying a "#" (e.g. "Question #1")
+# alongside sibling "N.part" clips from the same chapter, exactly as reported
+# against episode 10. footage_sort_key ignores everything after the numeric
+# prefix, so the "#" character is irrelevant to ordering, but the issue's
+# reporter saw these clips missing from the merged episode and this is the
+# closest reproducible surface for that filename set — verifying nothing is
+# dropped and the order matches Finder's alphanumerical ascending order.
+def test_footage_sort_key_orders_hash_named_parts_within_a_chapter():
+    names = [
+        "1.7 Bridge to Plato.mov",
+        "1.3 Question #3.mov",
+        "1. Socrates - Intro.mov",
+        "1.5 Socrates Part2.mov",
+        "1.1 Question #1.mov",
+        "1.6 Socrates Part3.mov",
+        "1.2 Question #2.mov",
+    ]
+
+    assert sorted(names, key=footage_sort_key) == [
+        "1. Socrates - Intro.mov",
+        "1.1 Question #1.mov",
+        "1.2 Question #2.mov",
+        "1.3 Question #3.mov",
+        "1.5 Socrates Part2.mov",
+        "1.6 Socrates Part3.mov",
+        "1.7 Bridge to Plato.mov",
+    ]
+
+
+def test_validate_original_footage_drops_no_clips_from_issue_95_footage_set(tmp_path):
+    footage = tmp_path / "original_footage"
+    footage.mkdir()
+
+    names = [
+        "0. Welcome.mov",
+        "1. Socrates - Intro.mov",
+        "1.1 Question #1.mov",
+        "1.2 Question #2.mov",
+        "1.3 Question #3.mov",
+        "1.5 Socrates Part2.mov",
+        "1.6 Socrates Part3.mov",
+        "1.7 Bridge to Plato.mov",
+        "2. Plato Intro.mov",
+        "2.1 Plato and theory of ideas.mov",
+        "3. Aristotle.mov",
+    ]
+
+    for name in names:
+        (footage / name).write_bytes(b"fake")
+
+    result = [f.name for f in validate_original_footage(footage)]
+
+    # Every clip placed in original_footage must survive validation/ordering
+    # — no omissions, matching macOS's alphanumerical ascending order.
+    assert result == names
+    assert len(result) == len(names)
