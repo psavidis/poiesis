@@ -1,6 +1,7 @@
 from episode_context import NO_CONTEXT_TEXT
 from generate_title_scenes import (
     compute_overridden_fields,
+    default_title_duration_frames,
     format_transcript_for_prompt,
     indexed_segments,
     merge_title_scenes,
@@ -8,9 +9,36 @@ from generate_title_scenes import (
     propose_title_scenes,
     resolvable_segment_positions,
 )
-from style import load_style
 
-TITLE_DURATION_FRAMES = load_style()["titles"]["durationFrames"]
+# "Second Topic" / "New Topic" / "First" / "Second" / "Intro" are the title
+# texts every merge_title_scenes test below uses — all <= 3 words, so they
+# share the same read-time-based default duration (#89). Computed once here
+# rather than hardcoded so these tests don't silently drift from
+# default_title_duration_frames's actual behavior.
+TITLE_DURATION_FRAMES = default_title_duration_frames("Second Topic", fps=30)
+
+
+def test_default_title_duration_frames_scales_with_word_count():
+    # Mirrors the bucket boundaries from #89's algorithm (wordCount <= 3 ->
+    # 2.5s, <= 6 -> 3.0s, <= 9 -> 3.5s, <= 12 -> 4.0s, else 5.0s).
+    assert default_title_duration_frames("Introduction", fps=30) == 75  # 2.5s, 1 word
+    assert default_title_duration_frames("Software Architecture", fps=30) == 75  # 2.5s, 2 words
+    assert default_title_duration_frames(
+        "Designing Software Through Greek Philosophy", fps=30
+    ) == 90  # 3.0s, 5 words
+    assert default_title_duration_frames(
+        "Why Event Driven Architecture Changes Everything", fps=30
+    ) == 90  # 3.0s, 6 words (<= 6 bucket)
+
+
+def test_default_title_duration_frames_falls_back_for_very_long_titles():
+    long_title = " ".join(["word"] * 13)
+
+    assert default_title_duration_frames(long_title, fps=30) == 150  # 5.0s fallback
+
+
+def test_default_title_duration_frames_scales_with_fps():
+    assert default_title_duration_frames("Introduction", fps=60) == 150  # 2.5s at 60fps
 
 
 def _manifest_two_videos():
@@ -328,10 +356,10 @@ def test_merge_title_scenes_uses_per_title_duration_override_when_present():
     assert scenes[2]["timelineStartFrame"] == 300 + custom_duration
 
 
-def test_merge_title_scenes_falls_back_to_global_duration_when_override_absent():
-    # Every title before this field existed (or one that never had a
-    # per-title override set) must keep using the shared config default —
-    # no behavior change for existing episodes.
+def test_merge_title_scenes_falls_back_to_read_time_duration_when_override_absent():
+    # A title with no per-title override (every title before #83's field
+    # existed, or one that never had it set) uses the read-time-based
+    # default (#89) instead of a fixed value.
     transcript = {
         "segments": [
             {"source": "a.mp4", "start": 0.0, "end": 2.0, "text": "first clip"},
@@ -345,6 +373,43 @@ def test_merge_title_scenes_falls_back_to_global_duration_when_override_absent()
     scenes = result["scenes"]
 
     assert scenes[1]["durationInFrames"] == TITLE_DURATION_FRAMES
+
+
+def test_merge_title_scenes_gives_longer_titles_more_duration_when_override_absent():
+    # Regression for #89: a fixed durationFrames left long titles with no
+    # more read time than short ones. A longer title (word count in a
+    # higher bucket) must resolve to a longer default duration.
+    transcript = {
+        "segments": [
+            {"source": "a.mp4", "start": 0.0, "end": 2.0, "text": "clip"},
+        ]
+    }
+
+    manifest = {"videos": [{"id": "001", "filename": "a.mp4"}]}
+
+    long_title_text = "Why Event Driven Architecture Changes Everything"
+    titles = [{"segmentId": "s0", "text": long_title_text}]
+
+    scene_plan = {
+        "fps": 30,
+        "scenes": [
+            {
+                "id": "scene-001",
+                "type": "presenter",
+                "videoId": "001",
+                "sourceStartFrame": 0,
+                "sourceEndFrame": 60,
+                "durationInFrames": 60,
+                "effects": {"captions": True, "transition": "none"},
+            },
+        ],
+    }
+
+    result = merge_title_scenes(scene_plan, titles, transcript, manifest)
+    title_scene = next(s for s in result["scenes"] if s["type"] == "title")
+
+    assert title_scene["durationInFrames"] == default_title_duration_frames(long_title_text, fps=30)
+    assert title_scene["durationInFrames"] > TITLE_DURATION_FRAMES
 
 
 def test_merge_title_scenes_splits_presenter_scene_mid_clip():

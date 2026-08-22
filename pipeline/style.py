@@ -45,7 +45,6 @@ DEFAULTS = {
     },
     "titles": {
         "minSpacingSeconds": 20,
-        "durationFrames": 60,
     },
     "emphasis": {
         # Beats are meant to be a constant light rhythm, much more frequent

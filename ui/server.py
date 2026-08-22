@@ -256,9 +256,10 @@ class TitleScene(BaseModel):
     text: str
     # Human-set override for this title's own on-screen display duration
     # (#83) — set by dragging the title's segment edge in SceneBar. Absent
-    # means "use the shared config default" (style.titles.durationFrames),
-    # same as every title before this field existed — see
-    # merge_title_scenes's own doc comment for the reflow this produces.
+    # means "use the read-time-based default" (#89, see
+    # default_title_duration_frames), same as every title before this field
+    # existed — see merge_title_scenes's own doc comment for the reflow
+    # this produces.
     durationFrames: int | None = None
     # Field names a human has explicitly changed since the AI last proposed
     # this title (see #59) — recomputed on every save in

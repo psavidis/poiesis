@@ -28,6 +28,32 @@ PROMPT_FILE = PIPELINE_DIR / "prompts" / "title_scenes.txt"
 # topic shift, long enough that no sliver piece is ever visible.
 MIN_PIECE_FRAMES_SECONDS = 1.0
 
+# Read-time buckets by word count (#89) — a fixed duration (previously a
+# single global durationFrames) left almost no time to read a longer title
+# before the scene moved on. Thresholds/seconds are a simple, defensible
+# reading-speed heuristic rather than a precise WPM model.
+TITLE_DURATION_SECONDS_BY_MAX_WORDS = (
+    (3, 2.5),
+    (6, 3.0),
+    (9, 3.5),
+    (12, 4.0),
+)
+TITLE_DURATION_SECONDS_FALLBACK = 5.0
+
+
+def default_title_duration_frames(text, fps):
+    """A title's own on-screen duration when no per-title override is set
+    (see OVERRIDABLE_TITLE_FIELDS) — scaled to how long the title actually
+    takes to read, not a single fixed value every title shared before."""
+
+    word_count = len(text.split())
+
+    for max_words, seconds in TITLE_DURATION_SECONDS_BY_MAX_WORDS:
+        if word_count <= max_words:
+            return round(seconds * fps)
+
+    return round(TITLE_DURATION_SECONDS_FALLBACK * fps)
+
 
 def load_json(path: Path):
     with path.open("r", encoding="utf-8") as f:
@@ -312,8 +338,6 @@ def merge_title_scenes(scene_plan, titles, transcript, manifest, style=None):
     if style is None:
         style = load_style()
 
-    title_duration_frames = style["titles"]["durationFrames"]
-
     fps = scene_plan.get("fps", 30)
 
     segments_by_id = {s["segmentId"]: s for s in indexed_segments(transcript, manifest)}
@@ -346,14 +370,15 @@ def merge_title_scenes(scene_plan, titles, transcript, manifest, style=None):
                 "text": title["text"],
                 "sourceFrame": round(segment["start"] * fps),
                 # Human-set override for THIS title's own on-screen display
-                # duration (#83) — falls back to the shared config default
-                # when absent, same as every episode before this field
-                # existed. Growing/shrinking one title shifts every LATER
-                # scene's timelineStartFrame by the same amount (the running
-                # `timeline_frame` cursor below already does this for the
-                # existing global-duration case; a per-title override just
-                # changes which number that cursor advances by).
-                "durationFrames": title.get("durationFrames") or title_duration_frames,
+                # duration (#83) — falls back to a read-time-based default
+                # (#89) when absent, same as every episode before this
+                # field existed. Growing/shrinking one title shifts every
+                # LATER scene's timelineStartFrame by the same amount (the
+                # running `timeline_frame` cursor below already does this
+                # for the existing default-duration case; a per-title
+                # override just changes which number that cursor advances
+                # by).
+                "durationFrames": title.get("durationFrames") or default_title_duration_frames(title["text"], fps),
             }
         )
 
