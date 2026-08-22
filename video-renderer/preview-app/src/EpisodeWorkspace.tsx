@@ -378,6 +378,17 @@ export function EpisodeWorkspace() {
         setRefreshKey((k) => k + 1);
     };
 
+    // Applies a freshly (re)indexed backgrounds list straight into
+    // episodeProps (#92) — AssetLibraryPanel calls this both after an
+    // autodiscovery reindex (opening the Backgrounds tab) and after a
+    // delete, so BackgroundBar/AssetLibraryPanel/ChapterStrip's own
+    // background pickers all reflect the change immediately without a
+    // full episodeProps refetch (reloadScenePlan only re-reads
+    // scene-plan.json, not backgrounds.json).
+    const handleBackgroundsChanged = (backgrounds: EpisodeProps["backgrounds"]) => {
+        setEpisodeProps((prev) => (prev ? { ...prev, backgrounds } : prev));
+    };
+
     // #54 — reloads the plan (same as any other applied edit) and records
     // which scene ids the chat instruction actually touched, so each bar
     // below can seed its own selection/highlight state from whichever of
@@ -635,6 +646,7 @@ export function EpisodeWorkspace() {
                             onSaved={reloadScenePlan}
                             isActive={activeTab === "assets"}
                             backgrounds={episodeProps.backgrounds ?? []}
+                            onBackgroundsChanged={handleBackgroundsChanged}
                             getCurrentFrame={getCurrentFrame}
                         />
                     )}
