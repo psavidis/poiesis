@@ -1683,6 +1683,127 @@ def test_delete_scene_returns_409_when_episode_is_locked(tmp_path):
     assert response.status_code == 409
 
 
+def test_reindex_backgrounds_returns_empty_when_no_background_folder(tmp_path):
+    episode = _make_episode(tmp_path)
+
+    response = client.post(
+        "/api/episode/backgrounds/reindex",
+        params={"path": str(episode)},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["backgrounds"] == []
+
+
+def test_reindex_backgrounds_discovers_a_newly_added_file(tmp_path):
+    episode = _make_episode(tmp_path)
+    background_dir = episode / "background"
+    background_dir.mkdir()
+    (background_dir / "sky.png").write_bytes(b"fake-png-bytes")
+
+    response = client.post(
+        "/api/episode/backgrounds/reindex",
+        params={"path": str(episode)},
+    )
+
+    assert response.status_code == 200
+    backgrounds = response.json()["backgrounds"]
+    assert len(backgrounds) == 1
+    assert backgrounds[0]["filename"] == "sky.png"
+    assert backgrounds[0]["mediaType"] == "image"
+
+    on_disk = json.loads((episode / "processing" / "backgrounds.json").read_text())
+    assert on_disk["backgrounds"][0]["filename"] == "sky.png"
+
+
+def test_delete_background_returns_404_without_backgrounds_json(tmp_path):
+    episode = _make_episode(tmp_path)
+
+    response = client.delete(
+        "/api/episode/backgrounds/bg-001",
+        params={"path": str(episode)},
+    )
+
+    assert response.status_code == 404
+
+
+def test_delete_background_returns_404_for_unknown_id(tmp_path):
+    episode = _make_episode(tmp_path)
+    background_dir = episode / "background"
+    background_dir.mkdir()
+    (background_dir / "sky.png").write_bytes(b"fake-png-bytes")
+    client.post("/api/episode/backgrounds/reindex", params={"path": str(episode)})
+
+    response = client.delete(
+        "/api/episode/backgrounds/bg-999",
+        params={"path": str(episode)},
+    )
+
+    assert response.status_code == 404
+
+
+def test_delete_background_removes_file_and_reindexes(tmp_path):
+    episode = _make_episode(tmp_path)
+    background_dir = episode / "background"
+    background_dir.mkdir()
+    (background_dir / "sky.png").write_bytes(b"fake-png-bytes")
+    reindex_response = client.post("/api/episode/backgrounds/reindex", params={"path": str(episode)})
+    background_id = reindex_response.json()["backgrounds"][0]["id"]
+
+    response = client.delete(
+        f"/api/episode/backgrounds/{background_id}",
+        params={"path": str(episode)},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["deleted"] == background_id
+    assert response.json()["backgrounds"] == []
+    assert not (background_dir / "sky.png").exists()
+
+    on_disk = json.loads((episode / "processing" / "backgrounds.json").read_text())
+    assert on_disk["backgrounds"] == []
+
+
+def test_delete_background_leaves_other_backgrounds_untouched(tmp_path):
+    episode = _make_episode(tmp_path)
+    background_dir = episode / "background"
+    background_dir.mkdir()
+    (background_dir / "sky.png").write_bytes(b"fake-png-bytes")
+    (background_dir / "grid.png").write_bytes(b"fake-png-bytes-2")
+    reindex_response = client.post("/api/episode/backgrounds/reindex", params={"path": str(episode)})
+    backgrounds = reindex_response.json()["backgrounds"]
+    sky_id = next(b["id"] for b in backgrounds if b["filename"] == "sky.png")
+    grid_id = next(b["id"] for b in backgrounds if b["filename"] == "grid.png")
+
+    response = client.delete(
+        f"/api/episode/backgrounds/{sky_id}",
+        params={"path": str(episode)},
+    )
+
+    remaining = response.json()["backgrounds"]
+    assert len(remaining) == 1
+    assert remaining[0]["id"] == grid_id
+    assert (background_dir / "grid.png").exists()
+
+
+def test_delete_background_returns_409_when_episode_is_locked(tmp_path):
+    episode = _make_episode(tmp_path)
+    background_dir = episode / "background"
+    background_dir.mkdir()
+    (background_dir / "sky.png").write_bytes(b"fake-png-bytes")
+    reindex_response = client.post("/api/episode/backgrounds/reindex", params={"path": str(episode)})
+    background_id = reindex_response.json()["backgrounds"][0]["id"]
+
+    with episode_lock(episode):
+        response = client.delete(
+            f"/api/episode/backgrounds/{background_id}",
+            params={"path": str(episode)},
+        )
+
+    assert response.status_code == 409
+    assert (background_dir / "sky.png").exists()
+
+
 def test_edit_scene_plan_returns_404_without_scene_plan(tmp_path):
     episode = _make_episode(tmp_path)
 

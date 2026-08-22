@@ -52,6 +52,7 @@ from generate_background_scenes import (  # noqa: E402
     background_insertable_positions,
     merge_background_scenes,
 )
+from index_backgrounds import index_backgrounds  # noqa: E402
 from llm.client import LLMClient  # noqa: E402
 from overlay_placement import insert_overlay_scene  # noqa: E402
 
@@ -484,6 +485,68 @@ def background_insertable_positions_route(path: str):
         manifest = json.load(f)
 
     return {"positions": background_insertable_positions(scene_plan, episode_transcript, manifest)}
+
+
+@app.post("/api/episode/backgrounds/reindex")
+def reindex_backgrounds(path: str):
+    """Re-scans the episode's background/ folder and rewrites
+    backgrounds.json — the same work the "Index backgrounds" Advanced
+    stage does (see index_backgrounds.py), called in-process here instead
+    of shelling out so AssetLibraryPanel can call this itself whenever its
+    Backgrounds tab becomes active (#92's "autodiscovery": a file dropped
+    into background/ shows up without the user having to remember to run
+    the Advanced stage by hand). Always safe to re-run — index_backgrounds
+    keys existing entries by filename, so already-indexed backgrounds keep
+    their id/caption rather than being renumbered (see its own docstring)."""
+
+    episode = resolve_episode(path)
+
+    backgrounds = index_backgrounds(episode)
+
+    return {"backgrounds": backgrounds}
+
+
+@app.delete("/api/episode/backgrounds/{background_id}")
+def delete_background(background_id: str, path: str):
+    """Deletes one background/ file from disk and re-indexes — the
+    deterministic counterpart to reindex_backgrounds above, for #92's
+    delete requirement. Only removes the source file; it deliberately does
+    NOT touch background_scenes.json/scene-plan.json (a background already
+    placed on the timeline keeps its own backgroundId reference, same as
+    deleting an image/code asset file never retroactively un-applies it
+    from a moment) — a scene referencing a since-deleted background is
+    caught by qa_check.py, not silently rewritten here."""
+
+    episode = resolve_episode(path)
+    processing = episode / "processing"
+    backgrounds_path = processing / "backgrounds.json"
+
+    if not backgrounds_path.exists():
+        raise HTTPException(status_code=404, detail="backgrounds.json not found — run the pipeline first")
+
+    with backgrounds_path.open("r", encoding="utf-8") as f:
+        existing = json.load(f)
+
+    match = next((bg for bg in existing.get("backgrounds", []) if bg["id"] == background_id), None)
+
+    if match is None:
+        raise HTTPException(status_code=404, detail=f"Background not found: {background_id}")
+
+    file_path = episode / match["path"]
+
+    try:
+        with episode_lock(episode, wait=False):
+
+            def do_write():
+                if file_path.exists():
+                    file_path.unlink()
+                return index_backgrounds(episode)
+
+            backgrounds = wrap_with_checkpoint(processing, [backgrounds_path], "background deletion", do_write)
+    except EpisodeBusyError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    return {"deleted": background_id, "backgrounds": backgrounds}
 
 
 class StoryboardChapter(BaseModel):

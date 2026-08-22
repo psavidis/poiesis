@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { BackgroundImageMotion, BackgroundImageMotionSpeed, EpisodeBackground, ScenePlan } from "video-renderer-src/episode/types";
 import { contentTypeAndPresentationFor } from "./MomentEditorPanel";
 import { momentIndexFromSceneId, normalizeMoment } from "./momentDuration";
-import { getAssets, getCodeAssets, getMoments, saveMoments } from "./api";
+import { deleteBackground, getAssets, getCodeAssets, getMoments, reindexBackgrounds, saveMoments } from "./api";
 import { insertBackgroundAtFrame } from "./backgroundInsert";
 import { IMAGE_MOTION_OPTIONS, IMAGE_MOTION_SPEED_OPTIONS } from "./BackgroundBar";
 import { colors, radius, typography } from "./tokens";
@@ -42,6 +42,13 @@ interface Props {
     // selected moment" the way Images/Code do, since a background has no
     // per-moment concept at all.
     backgrounds: EpisodeBackground[];
+    // Applies a freshly (re)indexed/deleted-from backgrounds list back
+    // into EpisodeWorkspace's episodeProps (#92) — this panel never owns
+    // the backgrounds list itself (it's threaded down from
+    // episodeProps.backgrounds, shared with BackgroundBar/ChapterStrip),
+    // so autodiscovery and delete both report their result up rather than
+    // keeping a second, locally-fetched copy.
+    onBackgroundsChanged: (backgrounds: EpisodeBackground[]) => void;
     // Live read of the player's actual current frame, used at insert time
     // — `frameupdate`-derived state only updates on the next event and
     // can lag the true playhead by a couple of frames, which showed up as
@@ -81,6 +88,7 @@ export function AssetLibraryPanel({
     onSaved,
     isActive,
     backgrounds: backgroundLibrary,
+    onBackgroundsChanged,
     getCurrentFrame,
 }: Props) {
     const [images, setImages] = useState<ImageAsset[]>([]);
@@ -106,6 +114,10 @@ export function AssetLibraryPanel({
     const [expandedBackgroundId, setExpandedBackgroundId] = useState<string | null>(null);
     const [expandedBackgroundMotion, setExpandedBackgroundMotion] = useState<BackgroundImageMotion | null>(null);
     const [insertingBackgroundId, setInsertingBackgroundId] = useState<string | null>(null);
+    // Which background card's delete confirm is showing — mirrors
+    // ImageBar's own pendingDeleteId pattern.
+    const [pendingDeleteBackgroundId, setPendingDeleteBackgroundId] = useState<string | null>(null);
+    const [deletingBackgroundId, setDeletingBackgroundId] = useState<string | null>(null);
 
     useEffect(() => {
         if (!isActive) return;
@@ -113,6 +125,21 @@ export function AssetLibraryPanel({
         getCodeAssets(episodePath).then(setCodeAssets).catch(() => setCodeAssets([]));
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [episodePath, isActive]);
+
+    // Autodiscovery (#92): re-scans the episode's background/ folder every
+    // time the Backgrounds tab is opened, so a file dropped in since the
+    // last visit shows up without the user having to remember to run
+    // "Index backgrounds" in Advanced. Cheap (a directory listing), so
+    // re-running it on every activation rather than watching the
+    // filesystem is enough — this app has no background/file-watcher
+    // process anywhere else either.
+    useEffect(() => {
+        if (!isActive || tab !== "backgrounds") return;
+        reindexBackgrounds(episodePath)
+            .then(onBackgroundsChanged)
+            .catch((e) => setError(String(e)));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [episodePath, isActive, tab]);
 
     useEffect(() => {
         if (!isActive || !selectedMomentSceneId) {
@@ -240,6 +267,31 @@ export function AssetLibraryPanel({
         }
 
         setInsertingBackgroundId(null);
+    };
+
+    // Deletes the background/ file from disk and re-indexes (#92) — does
+    // not touch any scene that already references this backgroundId (see
+    // ui/server.py's delete_background docstring), matching how deleting
+    // an image/code asset file never retroactively un-applies it from a
+    // moment either.
+    const deleteBackgroundCard = async (backgroundId: string) => {
+        setDeletingBackgroundId(backgroundId);
+        setError(null);
+        setHint(null);
+
+        try {
+            const backgrounds = await deleteBackground(episodePath, backgroundId);
+            onBackgroundsChanged(backgrounds);
+            setPendingDeleteBackgroundId(null);
+            if (expandedBackgroundId === backgroundId) {
+                setExpandedBackgroundId(null);
+                setExpandedBackgroundMotion(null);
+            }
+        } catch (e) {
+            setError(String(e));
+        } finally {
+            setDeletingBackgroundId(null);
+        }
     };
 
     if (!isActive) return null;
@@ -394,9 +446,24 @@ export function AssetLibraryPanel({
                                 const isImage = bg.mediaType === "image";
                                 const isExpanded = expandedBackgroundId === bg.id;
                                 const isInserting = insertingBackgroundId === bg.id;
+                                const isPendingDelete = pendingDeleteBackgroundId === bg.id;
+                                const isDeleting = deletingBackgroundId === bg.id;
 
                                 return (
-                                    <div key={bg.id} style={styles.card}>
+                                    <div key={bg.id} style={{ ...styles.card, ...styles.cardWithDelete }}>
+                                        <button
+                                            type="button"
+                                            style={styles.deleteBadge}
+                                            disabled={isDeleting}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                setPendingDeleteBackgroundId(bg.id);
+                                            }}
+                                            title="Delete this background"
+                                            aria-label="Delete this background"
+                                        >
+                                            ×
+                                        </button>
                                         <button
                                             type="button"
                                             style={styles.backgroundCardButton}
@@ -418,6 +485,29 @@ export function AssetLibraryPanel({
                                             )}
                                             <span style={styles.cardCaption}>{bg.caption || bg.filename}</span>
                                         </button>
+                                        {isPendingDelete && (
+                                            <div style={styles.deleteConfirm}>
+                                                <span>Delete this background asset?</span>
+                                                <div style={styles.deleteConfirmActions}>
+                                                    <button
+                                                        type="button"
+                                                        className="secondary small"
+                                                        disabled={isDeleting}
+                                                        onClick={() => deleteBackgroundCard(bg.id)}
+                                                    >
+                                                        {isDeleting ? "Deleting…" : "Delete"}
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="secondary small"
+                                                        disabled={isDeleting}
+                                                        onClick={() => setPendingDeleteBackgroundId(null)}
+                                                    >
+                                                        Cancel
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
                                         {isExpanded && (
                                             <div style={styles.motionRow}>
                                                 {IMAGE_MOTION_OPTIONS.map((option) => {
@@ -570,6 +660,48 @@ const styles: Record<string, React.CSSProperties> = {
     cardCurrent: {
         borderColor: colors.accent,
         borderWidth: 2,
+    },
+    // Positions the delete badge (#92) relative to the card — only
+    // backgrounds get an x-to-delete today (images/code assets don't yet
+    // have a delete endpoint), so this is a separate modifier rather than
+    // added onto the base `card` style every card uses.
+    cardWithDelete: {
+        position: "relative",
+    },
+    // Top-right x icon, visible on hover — matches the issue's "small x
+    // icon on the top right corner" requirement. Kept visible always
+    // (not opacity:0 until :hover) since these inline style objects can't
+    // express a :hover pseudo-class; a small always-present control here
+    // is a reasonable trade rather than adding a CSS class just for this.
+    deleteBadge: {
+        position: "absolute",
+        top: 4,
+        right: 4,
+        zIndex: 1,
+        width: 18,
+        height: 18,
+        lineHeight: "16px",
+        padding: 0,
+        borderRadius: "50%",
+        border: `1px solid ${colors.border}`,
+        background: colors.surface,
+        color: colors.textSecondary,
+        fontSize: typography.size.sm,
+        cursor: "pointer",
+    },
+    deleteConfirm: {
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        marginTop: 6,
+        paddingTop: 6,
+        borderTop: `1px solid ${colors.border}`,
+        fontSize: typography.size.xs,
+        color: colors.textPrimary,
+    },
+    deleteConfirmActions: {
+        display: "flex",
+        gap: 6,
     },
     currentBadge: {
         alignSelf: "flex-start",

@@ -132,6 +132,40 @@ export const getBackgrounds = (episodePath: string) =>
         .then((data) => data.backgrounds ?? [])
         .catch(() => []);
 
+// Re-scans the episode's background/ folder and returns the freshly
+// indexed list (#92) — called whenever the Backgrounds tab becomes
+// active, so a file dropped into background/ since the last visit shows
+// up without the user having to remember to run "Index backgrounds" in
+// Advanced. Cheap (a directory listing plus optional video-metadata
+// probe), safe to call every time the tab is opened.
+export async function reindexBackgrounds(episodePath: string) {
+    const res = await fetch(
+        `${API_BASE}/api/episode/backgrounds/reindex?path=${encodeURIComponent(episodePath)}`,
+        { method: "POST" }
+    );
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || `Failed to reindex backgrounds: ${res.status}`);
+    }
+    const data = await res.json();
+    return data.backgrounds ?? [];
+}
+
+// Deletes one background/ file from disk and re-indexes (#92) — the
+// returned list is the fresh post-delete backgrounds.json content.
+export async function deleteBackground(episodePath: string, backgroundId: string) {
+    const res = await fetch(
+        `${API_BASE}/api/episode/backgrounds/${encodeURIComponent(backgroundId)}?path=${encodeURIComponent(episodePath)}`,
+        { method: "DELETE" }
+    );
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || `Failed to delete background: ${res.status}`);
+    }
+    const data = await res.json();
+    return data.backgrounds ?? [];
+}
+
 export interface BackgroundSceneProposal {
     segmentId: string;
     backgroundId: string;
