@@ -1757,6 +1757,34 @@ def test_reindex_backgrounds_discovers_a_newly_added_file(tmp_path):
     assert on_disk["backgrounds"][0]["filename"] == "sky.png"
 
 
+def test_concurrent_reindex_backgrounds_does_not_race(tmp_path):
+    # Regression: AssetLibraryPanel fires reindexBackgrounds on every
+    # Backgrounds-tab activation, including React StrictMode's dev-mode
+    # double-mount — two overlapping calls both writing
+    # backgrounds.tmp.json raced on temp.replace()/temp.unlink() inside
+    # write_json_atomic (unlocked before this fix), throwing
+    # FileNotFoundError and leaving the tab empty. Both concurrent calls
+    # must now succeed and leave backgrounds.json valid.
+    episode = _make_episode(tmp_path)
+    background_dir = episode / "background"
+    background_dir.mkdir()
+    (background_dir / "sky.png").write_bytes(b"fake-png-bytes")
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    def do_reindex():
+        return client.post("/api/episode/backgrounds/reindex", params={"path": str(episode)})
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(do_reindex) for _ in range(2)]
+        responses = [f.result() for f in futures]
+
+    assert all(r.status_code == 200 for r in responses)
+
+    on_disk = json.loads((episode / "processing" / "backgrounds.json").read_text())
+    assert on_disk["backgrounds"][0]["filename"] == "sky.png"
+
+
 def test_delete_background_returns_404_without_backgrounds_json(tmp_path):
     episode = _make_episode(tmp_path)
 
@@ -1873,6 +1901,29 @@ def test_reindex_assets_discovers_a_newly_added_file(tmp_path):
     assert len(assets) == 1
     assert assets[0]["filename"] == "logo.png"
     assert assets[0]["mediaType"] == "image"
+
+    on_disk = json.loads((episode / "processing" / "assets.json").read_text())
+    assert on_disk["assets"][0]["filename"] == "logo.png"
+
+
+def test_concurrent_reindex_assets_does_not_race(tmp_path):
+    # Regression: same race as test_concurrent_reindex_backgrounds_does_not_race,
+    # for the Images tab's own reindexAssets (#93).
+    episode = _make_episode(tmp_path)
+    graphics_dir = episode / "graphics"
+    graphics_dir.mkdir()
+    (graphics_dir / "logo.png").write_bytes(b"fake-png-bytes")
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    def do_reindex():
+        return client.post("/api/episode/assets/reindex", params={"path": str(episode)})
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(do_reindex) for _ in range(2)]
+        responses = [f.result() for f in futures]
+
+    assert all(r.status_code == 200 for r in responses)
 
     on_disk = json.loads((episode / "processing" / "assets.json").read_text())
     assert on_disk["assets"][0]["filename"] == "logo.png"
@@ -1997,6 +2048,29 @@ def test_reindex_code_assets_discovers_a_newly_added_file(tmp_path):
     assert len(code_assets) == 1
     assert code_assets[0]["filename"] == "example.py"
     assert code_assets[0]["language"] == "python"
+
+    on_disk = json.loads((episode / "processing" / "code_assets.json").read_text())
+    assert on_disk["codeAssets"][0]["filename"] == "example.py"
+
+
+def test_concurrent_reindex_code_assets_does_not_race(tmp_path):
+    # Regression: same race as test_concurrent_reindex_backgrounds_does_not_race,
+    # for the Code tab's own reindexCodeAssets (#94).
+    episode = _make_episode(tmp_path)
+    code_dir = episode / "code"
+    code_dir.mkdir()
+    (code_dir / "example.py").write_text("x = 1\n")
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    def do_reindex():
+        return client.post("/api/episode/code-assets/reindex", params={"path": str(episode)})
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(do_reindex) for _ in range(2)]
+        responses = [f.result() for f in futures]
+
+    assert all(r.status_code == 200 for r in responses)
 
     on_disk = json.loads((episode / "processing" / "code_assets.json").read_text())
     assert on_disk["codeAssets"][0]["filename"] == "example.py"

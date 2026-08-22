@@ -499,11 +499,25 @@ def reindex_backgrounds(path: str):
     into background/ shows up without the user having to remember to run
     the Advanced stage by hand). Always safe to re-run — index_backgrounds
     keys existing entries by filename, so already-indexed backgrounds keep
-    their id/caption rather than being renumbered (see its own docstring)."""
+    their id/caption rather than being renumbered (see its own docstring).
+
+    Locked (wait=True, blocking rather than failing fast) because
+    AssetLibraryPanel fires this on every tab activation, including
+    React StrictMode's dev-mode double-mount — two overlapping calls
+    both writing backgrounds.tmp.json raced on temp.replace()/temp.unlink()
+    in write_json_atomic, throwing FileNotFoundError and leaving the tab
+    empty (confirmed live, root cause of a regression report against
+    #92). wait=True queues the second call a few milliseconds behind the
+    first instead of erroring — appropriate here the same way it's
+    appropriate for the other quick edit endpoints (see episode_lock's
+    own doc comment); wait=False's fail-fast 409 would surface a scary
+    "already running" error for a routine double-mount, not a genuine
+    conflict with a long-running pipeline stage."""
 
     episode = resolve_episode(path)
 
-    backgrounds = index_backgrounds(episode)
+    with episode_lock(episode):
+        backgrounds = index_backgrounds(episode)
 
     return {"backgrounds": backgrounds}
 
@@ -560,11 +574,17 @@ def reindex_assets(path: str):
     "autodiscovery", mirroring #92's reindex_backgrounds). Always safe to
     re-run — index_assets keys existing entries by filename, so
     already-indexed assets keep their id/caption rather than being
-    renumbered (see its own docstring)."""
+    renumbered (see its own docstring).
+
+    Locked (wait=True) for the same reason as reindex_backgrounds above —
+    two overlapping calls (e.g. React StrictMode's dev-mode double-mount)
+    both writing assets.tmp.json raced in write_json_atomic and threw
+    FileNotFoundError."""
 
     episode = resolve_episode(path)
 
-    assets = index_assets(episode)
+    with episode_lock(episode):
+        assets = index_assets(episode)
 
     return {"assets": assets}
 
@@ -621,11 +641,17 @@ def reindex_code_assets(path: str):
     "autodiscovery", mirroring #92/#93's reindex_backgrounds/
     reindex_assets). Always safe to re-run — index_code keys existing
     entries by filename, so already-indexed code assets keep their id/
-    description rather than being renumbered (see its own docstring)."""
+    description rather than being renumbered (see its own docstring).
+
+    Locked (wait=True) for the same reason as reindex_backgrounds/
+    reindex_assets above — two overlapping calls both writing
+    code_assets.tmp.json raced in write_json_atomic and threw
+    FileNotFoundError."""
 
     episode = resolve_episode(path)
 
-    code_assets = index_code(episode)
+    with episode_lock(episode):
+        code_assets = index_code(episode)
 
     return {"codeAssets": code_assets}
 
