@@ -80,6 +80,12 @@ export const colors = {
     // kept as its own named array (not folded into the flat token list
     // above) since it's used by index, not by semantic name.
     chapterPalette: ["#4a8fd1", "#c9873a", "#4aad7a", "#9868e0", "#e0645a", "#3aafaf"],
+
+    // SceneBar's per-clip rotation (#115) — shades of timelinePresenter
+    // rather than chapterPalette's own varied hues, so adjacent presenter
+    // clips are distinguishable from each other without the strip being
+    // mistaken for ChapterStrip's topic-level grouping just above it.
+    presenterPalette: ["#2f8f78", "#3aa88c", "#267a66", "#45bb9c"],
 } as const;
 
 export const spacing = {
